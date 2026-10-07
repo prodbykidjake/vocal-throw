@@ -178,7 +178,7 @@
       <td>${fmtT(w.close_time)}</td><td class="mono">${w.strike != null ? "$" + w.strike.toFixed(2) : "--"}</td>
       <td class="${w.result === "yes" ? "up" : w.result === "no" ? "down" : "muted"}">${w.result === "yes" ? "UP" : w.result === "no" ? "DOWN" : w.status || "--"}</td>
       <td>${fmtP(w.p_at_10min)}</td><td>${fmtP(w.p_at_3min)}</td><td>${fmtP(w.p_market_at_close)}</td>
-      <td>${w.feed_error == null ? "--" : w.feed_error === 0 ? "ok" : "≥$" + w.feed_error.toFixed(2)}</td>
+      <td>${w.settle_price != null ? "$" + w.settle_price.toFixed(2) : ""} ${w.feed_error == null ? "--" : (w.feed_error >= 0 ? "+" : "") + w.feed_error.toFixed(2)}</td>
       <td>${w.buy_signals || 0}</td><td class="${(w.paper_pnl || 0) >= 0 ? "up" : "down"}">${w.paper_pnl == null ? "--" : fmtUsd(w.paper_pnl)}</td></tr>`).join("");
     $("paper-table").querySelector("tbody").innerHTML = d.paper.map((t) => `<tr><td class="mono">${t.ticker}</td><td class="${t.side === "UP" ? "up" : "down"}">${t.side}</td>
       <td>${fmtC(t.entry_price)}</td><td>${t.size}</td><td>${t.exit_price == null ? "open" : fmtC(t.exit_price)}</td><td>${t.exit_reason || ""}</td>
@@ -191,7 +191,8 @@
     const b = d.brier || {};
     $("brier").innerHTML = Object.keys(b).length ? `<table class="table"><thead><tr><th>time left</th><th>n</th><th>model</th><th>market</th></tr></thead><tbody>` +
       Object.entries(b).map(([k, v]) => `<tr><td>${k}</td><td>${v.n}</td><td>${v.model}</td><td>${v.market ?? "--"}</td></tr>`).join("") + "</tbody></table>" +
-      `<div class="sub">Settled windows: ${d.settled_windows} · Up share ${fmtP(d.up_share)} · feed disagreed with settlement in ${d.feed_error.n ? d.feed_error.n : 0} windows (max gap ${d.feed_error.max_abs == null ? "--" : "$" + d.feed_error.max_abs.toFixed(2)})</div>`
+      `<div class="sub">Settled windows: ${d.settled_windows} · Up share ${fmtP(d.up_share)} · feed vs settlement: mean error ${d.feed_error.mean_abs == null ? "--" : "$" + d.feed_error.mean_abs.toFixed(3)} over ${d.feed_error.n} windows (max $${(d.feed_error.max_abs ?? 0).toFixed(2)})` +
+      (d.feed_error.n_lag ? ` · candle-lag check: feed at the close is off by $${d.feed_error.lag0_mean_abs.toFixed(3)}, one candle later by $${d.feed_error.lag60_mean_abs.toFixed(3)} (the smaller one is the right settle_lag_s)` : "") + `</div>`
       : `<div class="sub">No settled windows yet. Leave the app running; this fills in after each 15-minute window settles.</div>`;
     const c = d.calibration || {};
     $("calibration").innerHTML = Object.keys(c).length ? `<table class="table"><thead><tr><th>model said</th><th>n</th><th>actually Up</th></tr></thead><tbody>` +

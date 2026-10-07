@@ -147,8 +147,8 @@ class DecisionEngine:
         gap = price - strike
         rel = "above" if gap > 0 else "below" if gap < 0 else "at"
         move = pred.expected_move
-        return (f"Price ${price:.2f} is {abs(gap) * 100:.0f}¢ {rel} the ${strike:.2f} target with {mmss(seconds_left)} left; "
-                f"typical move over the time left ≈ ±${move:.2f} (z = {pred.z:+.2f}).")
+        return (f"Price ${price:.2f} is {abs(gap) * 100:.0f}¢ {rel} the ${strike:.2f} target with {mmss(seconds_left)} of trading left; "
+                f"typical move until the settlement candle closes ≈ ±${move:.2f} (z = {pred.z:+.2f}).")
 
     # ------------------------------------------------------------------ main entry
     def decide(self, pred: Prediction, quotes: Quotes, price: float, strike: float | None, seconds_left: float | None,
@@ -216,9 +216,9 @@ class DecisionEngine:
         triggers: dict = {"side": side, "max_ask": max_ask, "current_ask": ask}
         needed_p = ask + cfg.edge_min + fee
         if side == "UP":
-            trig_price = price_for_probability(needed_p, strike, pred.sigma, seconds_left, cfg.tie_adj)
+            trig_price = price_for_probability(needed_p, strike, pred.sigma, pred.tau_s, cfg.tie_adj)
         else:
-            trig_price = price_for_probability(1 - needed_p, strike, pred.sigma, seconds_left, cfg.tie_adj)
+            trig_price = price_for_probability(1 - needed_p, strike, pred.sigma, pred.tau_s, cfg.tie_adj)
         if trig_price is not None:
             triggers["price_needed"] = round(trig_price, 2)
         edge_line = (f"Best side: {side} at {cents(ask)} ask → model {pct(p)} − price − ~{cents(fee)} fee = "

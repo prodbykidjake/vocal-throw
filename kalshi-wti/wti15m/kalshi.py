@@ -85,6 +85,15 @@ def parse_strike(d: dict) -> tuple[float | None, str]:
     return None, "none"
 
 
+def _float_or_none(value) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(str(value).replace(",", "").replace("$", ""))
+    except (TypeError, ValueError):
+        return None
+
+
 def _int(d: dict, *keys) -> int | None:
     for key in keys:
         value = d.get(key)
@@ -117,6 +126,7 @@ class Market:
     volume: int | None = None
     open_interest: int | None = None
     result: str | None = None  # "yes" | "no" | None
+    settle_value: float | None = None  # numeric expiration_value once settled (the settlement price)
     rules_primary: str = ""
     raw: dict = field(default_factory=dict, repr=False)
 
@@ -158,6 +168,7 @@ class Market:
             volume=_int(d, "volume_fp", "volume"),
             open_interest=_int(d, "open_interest_fp", "open_interest"),
             result=result,
+            settle_value=_float_or_none(d.get("expiration_value")),
             rules_primary=str(d.get("rules_primary") or ""),
             raw=d,
         )
@@ -212,6 +223,7 @@ class Market:
             "volume": self.volume,
             "open_interest": self.open_interest,
             "result": self.result,
+            "settle_value": self.settle_value,
         }
 
 

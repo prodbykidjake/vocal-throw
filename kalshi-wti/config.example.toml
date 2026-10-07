@@ -26,6 +26,7 @@ hold_to_settle_prob = 0.90      # with <= 2 min left and p >= this: hold, don't 
 stop_prob = 0.35                # if p for your side drops below this: sell
 profit_target = 0.20            # sell when the bid is this far above your entry and the edge is gone
 max_spread = 0.10               # yes_ask - yes_bid wider than this = don't trade
+settle_lag_s = 60               # settlement = close of the 1-min Pyth candle AT the close time (~60 s after trading stops)
 
 [server]
 host = "127.0.0.1"

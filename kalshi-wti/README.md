@@ -34,17 +34,23 @@ pip install -r requirements.txt
 cp config.example.toml config.toml     # edit bankroll / edge_min if you like
 ```
 
-## First run: confirm the API shapes
+## What the live APIs look like (confirmed 2026-10-07 with `python -m wti15m probe`)
 
-Kalshi's and Hyperliquid's APIs were researched, not exercised, when this was written (the development
-environment could not reach either). Run the probe once and send the output back to Claude:
+- Series `KXWTI15M`: `fee_type=quadratic`, `fee_multiplier=1.0`, settlement source **Pyth - WTI**
+  (`Commodities.Index.PYTHOIL/USD`).
+- Rules: *"If the close price of the 1-minute candlestick for WTI Oil at 7:00 PM EDT is at least the close
+  price of the 1-minute Pyth PYTHOIL candlestick at 6:45 PM EDT, the market resolves to Yes."*
+  So the target is the close of the 1-minute candle at the open time, settlement is the close of the
+  1-minute candle at the close time (about 60 s after trading stops; `settle_lag_s` in the config), a tie
+  pays Up, and **the next window's target is the previous window's settlement price**. The app uses that
+  to measure the feed's error exactly.
+- Market fields: prices only as dollar strings (`yes_bid_dollars`, …, sub-cent values like `0.012`),
+  sizes as `*_fp` strings, `floor_strike` holds the target, `status` is `open` then `finalized`,
+  `expiration_value` holds the settlement price, tickers look like `KXWTI15M-26OCT071900-00`.
+- Hyperliquid: dex `xyz`, symbol `xyz:CL`, `allMids` keys carry the `xyz:` prefix, 1-minute candles
+  with `t`/`T`/`c` fields. Its mid tracked the Kalshi market's implied direction at probe time.
 
-```bash
-python -m wti15m probe
-```
-
-It prints the series' settlement source and fee type, the live market with its field names, the
-Hyperliquid WTI symbol it detected, and writes the raw JSON to `fixtures/probe-<timestamp>/`.
+`python -m wti15m probe` re-dumps all of this to `fixtures/probe-<timestamp>/` if anything changes.
 
 ## Running
 
@@ -87,11 +93,14 @@ if auto-detection picks the wrong market.
 
 ## Caveats
 
-- **Feed ≠ settlement feed.** Kalshi settles this series on a Pyth WTI price series (confirm in the
-  Rules tab, which shows `settlement_sources` from Kalshi's API). The free Hyperliquid perp tracks it
-  closely but not exactly. The app records the feed's price at each close and whether it agreed with the
-  settlement; the model widens its uncertainty by the measured disagreement when the price sits near
-  the target. Pyth itself now needs a paid/trial API key; a Pyth adapter can be added later.
+- **Feed ≠ settlement feed.** Kalshi settles on Pyth's PYTHOIL index. The free Hyperliquid `xyz:CL` perp
+  tracks it closely but not exactly. Because the next target equals the previous settlement price, the
+  app measures the feed's error in dollars at every window (Stats tab, both at the close and one candle
+  later) and widens the model's uncertainty by the typical error. Pyth itself now needs a paid/trial API
+  key; a Pyth adapter can be added later if the measured error turns out to matter.
+- **Settlement candle lag.** `settle_lag_s` (default 60) is added to the model's horizon because the
+  settlement candle closes about a minute after trading stops. The Stats tab shows which lag fits the
+  measured errors better; set it to 0 if the 0-second column is clearly smaller.
 - **Fees.** Taker fee = `multiplier × 0.07 × contracts × price × (1 − price)`, rounded up to the cent per
   order. At 99¢ that 1¢ round-up wipes out the gain, which is why the coach says WAIT in the last seconds.
 - **Learning.** The learner is deliberately small (9 weights) and shrunk toward the base model until it

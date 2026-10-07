@@ -28,7 +28,8 @@ def test_parse_strike_sources():
 
 def test_market_from_fixture():
     m = Market.from_api(load("synthetic-markets-open.json")["markets"][0])
-    assert m.ticker == "KXWTI15M-26OCT070745"
+    assert m.ticker == "KXWTI15M-26OCT070745-45"
+    assert m.volume == 9200 and m.open_interest == 4100
     assert m.strike == 90.21
     assert m.yes_bid == 0.48 and m.yes_ask == 0.49
     assert m.no_ask == 0.52
@@ -46,13 +47,20 @@ def test_derives_missing_no_side():
 
 def test_settled_market():
     m = Market.from_api(load("synthetic-market-settled.json")["market"])
-    assert m.is_settled and m.result == "no"
+    assert m.is_settled and m.result == "no" and m.status == "finalized"
+    assert m.settle_value == 90.16
+
+
+def test_settle_value_only_when_numeric():
+    assert Market.from_api({"ticker": "X", "expiration_value": ""}).settle_value is None
+    assert Market.from_api({"ticker": "X", "expiration_value": "yes"}).settle_value is None
+    assert Market.from_api({"ticker": "X", "expiration_value": "88.83"}).settle_value == 88.83
 
 
 def test_series_fixture():
     s = Series.from_api(load("synthetic-series.json"))
     assert s.ticker == "KXWTI15M" and s.fee_type == "quadratic" and s.fee_multiplier == 1.0
-    assert s.settlement_sources[0]["name"] == "Pyth"
+    assert s.settlement_sources[0]["name"] == "Pyth - WTI"
 
 
 def test_select_live_market_prefers_current_window_then_next():

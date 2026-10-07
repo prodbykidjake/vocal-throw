@@ -46,6 +46,9 @@ class TradingCfg:
     profit_target: float = 0.20
     max_spread: float = 0.10
     tie_adj: float = 0.005  # settlement rounds to the cent and a tie pays Up
+    # Kalshi settles on the CLOSE of the 1-minute Pyth candle AT the close time (e.g. the 7:00 PM candle,
+    # which ends at 7:00:59), so the price keeps moving ~60 s after trading stops. Added to the horizon.
+    settle_lag_s: float = 60.0
 
 
 @dataclass

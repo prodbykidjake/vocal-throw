@@ -49,6 +49,7 @@ class Engine:
         self._last_tick_store = 0.0
         self._paper_done: set[str] = set()
         self._close_capture: dict[str, dict] = {}
+        self._window_strikes: dict[int, float] = {}  # open_time (epoch s, rounded) -> target; targets double as prior settles
         self._stats_cache: tuple[float, dict] = (0.0, {})
         self.feed.subscribe(self.on_tick)
         self.feed.subscribe_warmup(self.on_warmup)
@@ -62,8 +63,16 @@ class Engine:
         self.model.vol.update(tick.ts, tick.price)
 
     # ------------------------------------------------------------------ market callbacks
+    def _note_strike(self, m: Market | None):
+        if m is not None and m.strike is not None and m.open_time is not None:
+            self._window_strikes[int(round(m.open_time.timestamp()))] = m.strike
+            if len(self._window_strikes) > 500:
+                for key in sorted(self._window_strikes)[:-200]:
+                    del self._window_strikes[key]
+
     async def on_market_event(self, kind: str, m: Market):
         now = time.time()
+        self._note_strike(m)
         if kind == "quote":
             self.store.add_quote(now, m)
             if now - self._last_window_upsert > 30:
@@ -81,8 +90,9 @@ class Engine:
         elif kind == "window_close":
             close_ts = m.close_time.timestamp() if m.close_time else now
             price = self.feed.buffer.price_at(close_ts) or (self.feed.latest().price if self.feed.latest() else None)
-            self._close_capture[m.ticker] = {"feed_price": price, "p_market": m.yes_mid,
-                                             "p_model": self.pred.p_final if self.pred else None, "strike": m.strike}
+            self._close_capture[m.ticker] = {"feed_price": price, "p_market": m.yes_mid, "close_ts": close_ts,
+                                             "p_model": self.pred.p_final if self.pred else None, "strike": m.strike,
+                                             "settle_price": None, "err_lag0": None, "err_lag60": None}
             self.store.upsert_window(m, self.pred.p_final if self.pred else None)
             self.log_event("window", f"window {m.ticker} closed; feed price at close "
                                      f"{('$%.2f' % price) if price else '?'} vs target {('$%.2f' % m.strike) if m.strike else '?'}")
@@ -92,18 +102,56 @@ class Engine:
             self.log_event("window", f"no settlement result for {m.ticker} after 20 min")
 
     # ------------------------------------------------------------------ settlement + learning
+    def _resolve_closed_windows(self, now: float):
+        """The next window's target IS the previous window's settlement price (same 1-minute Pyth candle).
+        Use it to measure the feed's error exactly, at the close and one candle later. Order-independent:
+        works whether Kalshi's result, the next target, or the feed data arrives first."""
+        self._note_strike(self.tracker.current)
+        lag = self.cfg.trading.settle_lag_s
+        for ticker, cap in list(self._close_capture.items()):
+            close_ts = cap.get("close_ts", 0)
+            if now - close_ts > 40 * 60:
+                del self._close_capture[ticker]  # nothing more will arrive for this window
+                continue
+            if cap.get("settle_price") is not None:
+                continue
+            settle = self._window_strikes.get(int(round(close_ts)))
+            if settle is None:
+                continue  # next window's target not published yet
+            latest = self.feed.latest()
+            if latest is None or (latest.ts < close_ts + lag and now < close_ts + lag + 30):
+                continue  # wait until the feed covers the settlement candle (or give up after 30 s grace)
+            p0 = self.feed.buffer.price_at(close_ts)
+            p_lag = self.feed.buffer.price_at(close_ts + max(lag - 1, 0))
+            err0 = None if p0 is None else round(p0 - settle, 4)
+            err_lag = None if p_lag is None else round(p_lag - settle, 4)
+            chosen = err_lag if lag > 0 else err0
+            cap.update({"settle_price": settle, "err_lag0": err0, "err_lag60": err_lag})
+            self.store.set_settle_price(ticker, settle, p0, err0, err_lag, chosen)
+            msg = f"{ticker} settlement price ${settle:.2f} (= next target)"
+            if p0 is not None:
+                msg += f"; feed said ${p0:.2f} at the close"
+            if p_lag is not None:
+                msg += f", ${p_lag:.2f} at the candle close"
+            self.log_event("settle", msg)
+            self._update_basis_error()
+
     def handle_settlement(self, m: Market):
         now = time.time()
         label = 1 if m.result == "yes" else 0
-        cap = self._close_capture.pop(m.ticker, {})
+        cap = self._close_capture.get(m.ticker, {})  # kept until resolved; _resolve_closed_windows expires it
         strike = m.strike if m.strike is not None else cap.get("strike")
         feed_px = cap.get("feed_price")
-        feed_error = None
-        if feed_px is not None and strike is not None:
+        settle = m.settle_value if m.settle_value is not None else cap.get("settle_price")
+        feed_error = cap.get("err_lag60") if self.cfg.trading.settle_lag_s > 0 else cap.get("err_lag0")
+        if feed_error is None and settle is not None and feed_px is not None:
+            feed_error = round(feed_px - settle, 4)
+        if feed_error is None and feed_px is not None and strike is not None:
+            # no settlement price known: at least record whether the feed called the outcome right
             feed_said_up = feed_px >= strike - self.cfg.trading.tie_adj
             feed_error = 0.0 if feed_said_up == bool(label) else abs(feed_px - strike)
         self.store.label_snapshots(m.ticker, label)
-        self.store.settle_window(m.ticker, m.result or "", feed_px, feed_error, now)
+        self.store.settle_window(m.ticker, m.result or "", feed_px, feed_error, now, settle)
         # learn
         X, y, _ = self.store.training_rows(m.ticker)
         if len(X) >= 3:
@@ -130,13 +178,16 @@ class Engine:
         msg = f"{m.ticker} settled {outcome}"
         if p_model is not None:
             msg += f" · model had Up at {pct(p_model)} near the close"
+        if settle is not None:
+            msg += f" · settled at ${settle:.2f}"
         if feed_error:
-            msg += f" · feed disagreed with settlement by ≥ ${feed_error:.2f}"
+            msg += f" · feed off by ${feed_error:+.2f}"
         self.log_event("settled", msg)
 
     def _update_basis_error(self):
+        """Typical |feed − settlement| in dollars: 75th percentile over the last 200 windows (max if < 4)."""
         rows = self.store.recent_windows(200)
-        errs = sorted(abs(r["feed_error"]) for r in rows if r.get("feed_error"))
+        errs = sorted(abs(r["feed_error"]) for r in rows if r.get("feed_error") is not None)
         if not errs:
             basis = 0.0
         elif len(errs) < 4:
@@ -206,12 +257,15 @@ class Engine:
             self.store.add_tick(tick.ts, self.feed.name, tick.price)
         pred = sig = None
         tau = elapsed = None
+        self._resolve_closed_windows(now)
         if m is not None and tick is not None:
             at = clock.now()
             tau = m.seconds_left(at)
             elapsed = m.seconds_elapsed(at)
             buf = self.feed.buffer
-            pred = self.model.predict(tick.price, m.strike, tau if tau is not None else 0.0, m.yes_mid, health.age_s,
+            # horizon = trading time left + the settlement candle (settles on that candle's close)
+            tau_eff = (tau if tau is not None else 0.0) + self.cfg.trading.settle_lag_s
+            pred = self.model.predict(tick.price, m.strike, tau_eff, m.yes_mid, health.age_s,
                                       buf.price_at(now - 60), buf.price_at(now - 180), buf.price_at(now - 300))
             pos = self.position if (self.position and self.position.ticker == m.ticker) else None
             sig = self.decider.decide(pred, Quotes.from_market(m), tick.price, m.strike, tau, elapsed, pos)
@@ -287,7 +341,8 @@ class Engine:
                         "pending_settlements": list(self.tracker.pending.keys())},
             "events": list(self.events)[:25],
             "config": {"bankroll": self.cfg.trading.bankroll, "edge_min": self.cfg.trading.edge_min,
-                       "min_warmup_minutes": self.cfg.trading.min_warmup_minutes, "feed": self.cfg.feed.source},
+                       "min_warmup_minutes": self.cfg.trading.min_warmup_minutes, "feed": self.cfg.feed.source,
+                       "settle_lag_s": self.cfg.trading.settle_lag_s},
         }
 
     def chart(self, minutes: float = 20) -> dict:
