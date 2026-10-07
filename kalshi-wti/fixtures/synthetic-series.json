@@ -1,0 +1,13 @@
+{
+  "series": {
+    "ticker": "KXWTI15M",
+    "frequency": "15min",
+    "title": "WTI Oil 15 min",
+    "category": "Commodities",
+    "tags": ["Oil", "WTI"],
+    "settlement_sources": [{"name": "Pyth", "url": "https://www.pyth.network/"}],
+    "contract_url": "https://kalshi.com/markets/kxwti15m",
+    "fee_type": "quadratic",
+    "fee_multiplier": 1.0
+  }
+}

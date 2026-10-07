@@ -1,0 +1,40 @@
+# Copy to config.toml (config.toml is git-ignored). Every key is optional; these are the defaults.
+
+[kalshi]
+base_url = "https://api.elections.kalshi.com/trade-api/v2"
+series_ticker = "KXWTI15M"
+poll_interval_s = 1.0
+
+[feed]
+source = "hyperliquid"          # hyperliquid | sim
+hyperliquid_dex = "xyz"         # trade.xyz HIP-3 markets live on the "xyz" dex
+hyperliquid_symbol = ""         # leave blank to auto-detect the WTI market (e.g. "xyz:CL")
+stale_after_s = 3.0             # feed older than this = "stale", no new entries
+
+[trading]
+bankroll = 200.0                # dollars you are willing to put at risk in total
+edge_min = 0.05                 # required (model prob - ask - fee) before a BUY, in probability points
+kelly_fraction = 0.25           # fraction of full Kelly to size with
+max_contracts = 20
+max_stake_fraction = 0.10       # never suggest more than this share of bankroll on one window
+confident_margin = 0.20         # |p - 0.5| needed to call something "confident"
+min_warmup_minutes = 30         # feed history needed before any BUY signal
+no_entry_first_s = 60           # no entries in the first minute of a window (target just set)
+late_entry_s = 60               # in the last N seconds only very lopsided entries are allowed
+late_entry_min_z = 2.0
+hold_to_settle_prob = 0.90      # with <= 2 min left and p >= this: hold, don't pay to exit
+stop_prob = 0.35                # if p for your side drops below this: sell
+profit_target = 0.20            # sell when the bid is this far above your entry and the edge is gone
+max_spread = 0.10               # yes_ask - yes_bid wider than this = don't trade
+
+[server]
+host = "127.0.0.1"
+port = 8787
+open_browser = true
+
+[notify]
+desktop = true                  # macOS Notification Center via osascript
+sound = true                    # afplay system sound on BUY/SELL
+
+[storage]
+db_path = "data/wti15m.db"

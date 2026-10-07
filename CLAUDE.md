@@ -156,3 +156,9 @@ Some useful CPM libraries:
 ## Code Style
 
 Uses `.clang-format` with Allman-style braces, 4-space indentation, no column limit.
+
+## Side project: `kalshi-wti/`
+
+`kalshi-wti/` is a separate, self-contained Python app (not part of the JUCE build): a local dashboard
+that follows Kalshi's WTI Oil 15-minute market and coaches entries/exits. See `kalshi-wti/README.md`.
+Run its tests with `cd kalshi-wti && pytest`. It never touches the plugin's CMake targets.

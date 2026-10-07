@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WTI 15-min coach</title>
+<link rel="stylesheet" href="/ui/vendor/uPlot.min.css">
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="logo">🛢️</span>
+    <div>
+      <div class="title">WTI 15 min <span id="ticker" class="muted mono"></span></div>
+      <div class="sub" id="series-line">connecting…</div>
+    </div>
+  </div>
+  <div class="countdown-wrap">
+    <div class="countdown" id="countdown">--:--</div>
+    <div class="sub" id="close-label"></div>
+  </div>
+  <div class="badges">
+    <span class="badge" id="feed-badge">feed</span>
+    <span class="badge" id="kalshi-badge">kalshi</span>
+    <span class="badge" id="warm-badge">warm-up</span>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="live">Live</button>
+  <button class="tab" data-tab="history">History</button>
+  <button class="tab" data-tab="stats">Stats</button>
+  <button class="tab" data-tab="rules">Rules &amp; setup</button>
+</nav>
+
+<main>
+<section id="tab-live" class="tab-pane active">
+  <div class="grid">
+    <div class="card prices">
+      <div class="price-block">
+        <div class="label">Target</div>
+        <div class="big mono" id="strike">--</div>
+        <div class="sub" id="strike-source"></div>
+      </div>
+      <div class="price-block">
+        <div class="label">Now</div>
+        <div class="big mono" id="price">--</div>
+        <div class="sub mono" id="delta"></div>
+      </div>
+      <div class="price-block">
+        <div class="label">Kalshi odds</div>
+        <div class="odds"><span class="up" id="odds-up">Up --</span><span class="down" id="odds-down">Down --</span></div>
+        <div class="sub mono" id="book"></div>
+      </div>
+      <div class="price-block">
+        <div class="label">Model</div>
+        <div class="odds"><span class="up" id="model-up">Up --</span><span class="down" id="model-down">Down --</span></div>
+        <div class="sub" id="model-sub"></div>
+      </div>
+    </div>
+
+    <div class="card" id="signal-card">
+      <div class="signal-head">
+        <span class="pill" id="signal-action">WAIT</span>
+        <span id="signal-headline" class="headline">waiting for data…</span>
+      </div>
+      <ul id="signal-details" class="details"></ul>
+      <div class="sub" id="signal-triggers"></div>
+    </div>
+
+    <div class="card chart-card">
+      <div class="card-title">WTI vs target <span class="muted" id="chart-note"></span></div>
+      <div id="chart"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Your position <span class="muted">(tell the coach what you did)</span></div>
+      <div id="position-none">
+        <form id="pos-form" class="row">
+          <select name="side"><option>UP</option><option>DOWN</option></select>
+          <input name="qty" type="number" min="1" value="1" placeholder="contracts">
+          <input name="price" type="number" step="0.01" min="0.01" max="0.99" placeholder="price e.g. 0.47">
+          <button type="submit">I bought this</button>
+          <button type="button" id="use-signal" class="ghost">use the signal</button>
+        </form>
+      </div>
+      <div id="position-open" class="hidden">
+        <div id="position-text"></div>
+        <form id="close-form" class="row">
+          <input name="price" type="number" step="0.01" min="0.01" max="0.99" placeholder="sold at e.g. 0.80">
+          <button type="submit">I sold</button>
+          <button type="button" id="cancel-pos" class="ghost">remove entry</button>
+        </form>
+      </div>
+      <div class="sub" id="paper-line"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Log</div>
+      <ul id="events" class="events"></ul>
+    </div>
+  </div>
+</section>
+
+<section id="tab-history" class="tab-pane">
+  <div class="card">
+    <div class="card-title">Windows</div>
+    <table id="history-table" class="table">
+      <thead><tr><th>Close (ET)</th><th>Target</th><th>Result</th><th>Model Up @10m</th><th>@3m</th><th>Market Up @close</th><th>Feed err</th><th>Buys</th><th>Paper P&amp;L</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <div class="card-title">Paper trades (what the coach would have done)</div>
+    <table id="paper-table" class="table">
+      <thead><tr><th>Window</th><th>Side</th><th>Entry</th><th>Size</th><th>Exit</th><th>Reason</th><th>P&amp;L</th><th>Conf.</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <div class="card-title">Your reported trades</div>
+    <table id="pos-table" class="table">
+      <thead><tr><th>Window</th><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>P&amp;L</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="tab-stats" class="tab-pane">
+  <div class="grid two">
+    <div class="card"><div class="card-title">Is the model any good? (Brier score, lower is better, 0.25 = coin flip)</div><div id="brier"></div></div>
+    <div class="card"><div class="card-title">Calibration (when it says X%, how often Up?)</div><div id="calibration"></div></div>
+    <div class="card"><div class="card-title">Paper P&amp;L by confidence</div><div id="paper-stats"></div></div>
+    <div class="card"><div class="card-title">Learner</div><div id="learner"></div></div>
+  </div>
+</section>
+
+<section id="tab-rules" class="tab-pane">
+  <div class="grid two">
+    <div class="card"><div class="card-title">Series &amp; settlement (from Kalshi's API)</div><pre id="rules-series" class="pre"></pre></div>
+    <div class="card"><div class="card-title">Market rules text</div><pre id="rules-text" class="pre"></pre></div>
+    <div class="card"><div class="card-title">Running config</div><pre id="rules-config" class="pre"></pre></div>
+    <div class="card"><div class="card-title">How to read this</div>
+      <ul class="details">
+        <li><b>Target</b> is the WTI price when the window opened. Up pays if the price at the close is at or above it.</li>
+        <li><b>Model</b> = chance the price ends above target given the gap, time left and recent volatility, nudged by what it has learned from past windows.</li>
+        <li><b>Edge</b> = model chance − contract price − Kalshi fee. The coach only says BUY when the edge clears your minimum.</li>
+        <li><b>WAIT</b> is the normal state. The line under it says exactly what would turn it into a trade.</li>
+        <li>Paper trades are what the coach would have done. Compare them with your own before trusting it.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+</main>
+
+<script src="/ui/vendor/uPlot.iife.min.js"></script>
+<script src="/ui/app.js"></script>
+</body>
+</html>

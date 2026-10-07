@@ -1,0 +1,13 @@
+{
+  "market": {
+    "ticker": "KXWTI15M-26OCT070745",
+    "event_ticker": "KXWTI15M-26OCT070745",
+    "status": "settled",
+    "open_time": "2026-10-07T11:30:00Z",
+    "close_time": "2026-10-07T11:45:00Z",
+    "floor_strike": 90.21,
+    "yes_bid_dollars": "0.0000", "yes_ask_dollars": "1.0000",
+    "last_price_dollars": "0.0300",
+    "result": "no"
+  }
+}
