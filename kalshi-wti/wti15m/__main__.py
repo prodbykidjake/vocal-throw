@@ -24,6 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("probe", help="dump raw Kalshi + Hyperliquid API responses to confirm fields")
     q = sub.add_parser("quotes", help="compare Kalshi price sources (list vs market vs orderbook) once a second")
     q.add_argument("--seconds", type=int, default=20)
+    ld = sub.add_parser("livedata", help="compare Kalshi's live price series with the Hyperliquid mid once a second")
+    ld.add_argument("--seconds", type=int, default=20)
     w = sub.add_parser("watch", help="terminal-only live view (no browser)")
     w.add_argument("--sim", action="store_true", help="use the simulated market + feed")
     s = sub.add_parser("serve", help="run the dashboard at http://127.0.0.1:8787")
@@ -55,9 +57,23 @@ def make_engine(cfg, sim: bool = False, window_s: int = 900, db_path: str | None
     else:
         from .feeds.hyperliquid import HyperliquidFeed
         from .kalshi import KalshiClient
-        feed = HyperliquidFeed(cfg.feed.hyperliquid_rest, cfg.feed.hyperliquid_ws, cfg.feed.hyperliquid_dex,
-                               cfg.feed.hyperliquid_symbol, cfg.feed.warmup_candles_min)
+
+        def hyperliquid():
+            return HyperliquidFeed(cfg.feed.hyperliquid_rest, cfg.feed.hyperliquid_ws, cfg.feed.hyperliquid_dex,
+                                   cfg.feed.hyperliquid_symbol, cfg.feed.warmup_candles_min)
+
         client = KalshiClient(cfg.kalshi.base_url, cfg.kalshi.timeout_s)
+        if cfg.feed.source == "kalshi_live":
+            from .feeds.composite import CompositeFeed
+            from .feeds.kalshi_live import KalshiLiveFeed, event_ticker_for
+            primary = KalshiLiveFeed(cfg.kalshi.base_url, poll_s=cfg.feed.kalshi_live_poll_s)
+            fallback = hyperliquid() if cfg.feed.fallback == "hyperliquid" else None
+            feed = CompositeFeed(primary, fallback, cfg.feed.stale_after_s)
+            engine = Engine(cfg, store, client, feed, Notifier(cfg.notify.desktop, cfg.notify.sound))
+            primary.event_ticker_fn = lambda: (event_ticker_for(engine.tracker.current.ticker, engine.tracker.current.event_ticker)
+                                               if engine.tracker.current else None)
+            return engine
+        feed = hyperliquid()
     return Engine(cfg, store, client, feed, Notifier(cfg.notify.desktop, cfg.notify.sound))
 
 
@@ -129,6 +145,9 @@ def main(argv=None) -> int:
     if args.cmd == "quotes":
         from . import probe
         return asyncio.run(probe.quotes_check(cfg, args.seconds))
+    if args.cmd == "livedata":
+        from . import probe
+        return asyncio.run(probe.livedata_check(cfg, args.seconds))
     if args.cmd == "watch":
         try:
             asyncio.run(run_watch(cfg, args.sim))

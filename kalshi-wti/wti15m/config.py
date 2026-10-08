@@ -20,7 +20,9 @@ class KalshiCfg:
 
 @dataclass
 class FeedCfg:
-    source: str = "hyperliquid"  # hyperliquid | sim
+    source: str = "kalshi_live"  # kalshi_live (Kalshi's own Pyth series) | hyperliquid | sim
+    fallback: str = "hyperliquid"  # used automatically when the primary is stale; "" for none
+    kalshi_live_poll_s: float = 1.0
     hyperliquid_dex: str = "xyz"
     hyperliquid_symbol: str = ""
     hyperliquid_rest: str = "https://api.hyperliquid.xyz/info"

@@ -421,6 +421,10 @@ class KalshiClient:
         data = await self._get(f"/markets/{ticker}")
         return data.get("market", data)
 
+    async def get_live_data_raw(self, event_ticker: str, range_: str = "15min") -> dict:
+        """Kalshi's own live price series for an event (the Pyth value it settles on)."""
+        return await self._get(f"/live_data/events/{event_ticker}", {"range": range_})
+
     async def get_orderbook_raw(self, ticker: str, depth: int = 5) -> dict:
         return await self._get(f"/markets/{ticker}/orderbook", {"depth": depth})
 

@@ -6,7 +6,8 @@ series_ticker = "KXWTI15M"
 poll_interval_s = 1.0
 
 [feed]
-source = "hyperliquid"          # hyperliquid | sim
+source = "kalshi_live"          # kalshi_live = Kalshi's own live Pyth series (what it settles on) | hyperliquid | sim
+fallback = "hyperliquid"        # used automatically when the primary feed goes stale ("" = none)
 hyperliquid_dex = "xyz"         # trade.xyz HIP-3 markets live on the "xyz" dex
 hyperliquid_symbol = ""         # leave blank to auto-detect the WTI market (e.g. "xyz:CL")
 stale_after_s = 8.0             # feed older than this = "stale", no new entries (Hyperliquid updates every 1-3 s)

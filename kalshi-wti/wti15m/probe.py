@@ -49,6 +49,16 @@ async def run(cfg: Config, out_dir: str | None = None) -> int:
             single = await kc.get_market_raw(live.ticker)
             _dump(folder, "kalshi_market_single", single)
             try:
+                from .feeds.kalshi_live import event_ticker_for, parse_series
+                ev = event_ticker_for(live.ticker, live.event_ticker)
+                ld_raw = await kc.get_live_data_raw(ev, "15min")
+                _dump(folder, "kalshi_live_data", ld_raw)
+                pts = parse_series(ld_raw)
+                print(f"[kalshi] live_data for {ev}: keys={list(ld_raw.keys()) if isinstance(ld_raw, dict) else type(ld_raw)} "
+                      f"points={len(pts)} last={[(dt.datetime.fromtimestamp(t).strftime('%H:%M:%S'), v) for t, v in pts[-3:]]}")
+            except Exception as exc:
+                print(f"[kalshi] live_data FAILED: {exc}")
+            try:
                 book_raw = await kc.get_orderbook_raw(live.ticker)
                 _dump(folder, "kalshi_orderbook", book_raw)
                 from .kalshi import parse_orderbook
@@ -138,3 +148,48 @@ async def quotes_check(cfg: Config, seconds: int = 20) -> int:
         return 0
     finally:
         await kc.aclose()
+
+
+async def livedata_check(cfg: Config, seconds: int = 20) -> int:
+    """`livedata`: once a second, print Kalshi's own live price (the settlement feed) next to the Hyperliquid mid."""
+    import asyncio
+
+    from .feeds.hyperliquid import lookup_mid, pick_wti_symbol
+    from .feeds.kalshi_live import event_ticker_for, parse_series
+
+    kc = KalshiClient(cfg.kalshi.base_url, cfg.kalshi.timeout_s)
+    async with httpx.AsyncClient(timeout=10) as http:
+        try:
+            markets = await kc.get_markets(cfg.kalshi.series_ticker, status="open")
+            live = select_live_market(markets)
+            if live is None:
+                print("no live market right now")
+                return 1
+            ev = event_ticker_for(live.ticker, live.event_ticker)
+            sym = cfg.feed.hyperliquid_symbol
+            if not sym:
+                meta = (await http.post(cfg.feed.hyperliquid_rest, json={"type": "meta", "dex": cfg.feed.hyperliquid_dex})).json()
+                sym = pick_wti_symbol([u.get("name") for u in meta.get("universe", [])]) or "xyz:CL"
+            print(f"{live.ticker}  target={live.strike}  event={ev}\n")
+            print(f"{'time':>8}  {'KALSHI live (t)':>22}  {'HYPERLIQUID mid':>16}  {'gap':>7}")
+            for _ in range(seconds):
+                t0 = dt.datetime.now().strftime("%H:%M:%S")
+                try:
+                    pts = parse_series(await kc.get_live_data_raw(ev, "15min"))
+                    k_txt = f"{pts[-1][1]:.3f} ({dt.datetime.fromtimestamp(pts[-1][0]).strftime('%H:%M:%S')})" if pts else "--"
+                    k_val = pts[-1][1] if pts else None
+                except Exception as exc:
+                    k_txt, k_val = f"err {str(exc)[:30]}", None
+                try:
+                    mids = (await http.post(cfg.feed.hyperliquid_rest, json={"type": "allMids", "dex": cfg.feed.hyperliquid_dex})).json()
+                    h_val = lookup_mid(mids, sym)
+                    h_txt = f"{h_val:.3f}" if h_val is not None else "--"
+                except Exception as exc:
+                    h_txt, h_val = f"err {str(exc)[:30]}", None
+                gap = f"{(h_val - k_val) * 100:+.1f}¢" if (k_val is not None and h_val is not None) else ""
+                print(f"{t0:>8}  {k_txt:>22}  {h_txt:>16}  {gap:>7}", flush=True)
+                await asyncio.sleep(1.0)
+            print("\nThe KALSHI column should match the price on the Kalshi website; the gap is the fallback feed's error.")
+            return 0
+        finally:
+            await kc.aclose()

@@ -110,7 +110,7 @@ class Engine:
     def _feed_price_near(self, ts: float, window_s: float = 5.0) -> float | None:
         price = self.feed.buffer.price_near(ts, window_s)
         if price is None:
-            price = self.store.last_tick_before(ts, self.feed.name, window_s)
+            price = self.store.last_tick_before(ts, getattr(self.feed, "active_name", self.feed.name), window_s)
         return price
 
     async def on_market_event(self, kind: str, m: Market):
@@ -348,7 +348,7 @@ class Engine:
         health = self.feed.health()
         if tick and tick.ts != self._last_stored_tick_ts:
             self._last_stored_tick_ts = tick.ts
-            self.store.add_tick(tick.ts, self.feed.name, tick.price)
+            self.store.add_tick(tick.ts, getattr(self.feed, "active_name", self.feed.name), tick.price)
         pred = sig = None
         tau = elapsed = None
         quotes_fresh = self.tracker.quotes_fresh(QUOTE_MAX_AGE_S, now)
