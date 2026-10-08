@@ -51,7 +51,8 @@
     if (px != null && m && m.strike != null) {
       const adj = p && p.price_adj != null ? p.price_adj : px;
       const d = adj - m.strike;
-      $("delta").textContent = `${d >= 0 ? "▲" : "▼"} ${Math.abs(d).toFixed(2)} vs target` + (p && Math.abs(p.basis_signed || 0) >= 0.005 ? ` (feed adj ${(-p.basis_signed * 100).toFixed(1)}¢)` : "");
+      $("delta").textContent = `${d >= 0 ? "▲" : "▼"} ${Math.abs(d).toFixed(2)} vs target` + (p && Math.abs(p.basis_signed || 0) >= 0.005 ? ` (feed adj ${(-p.basis_signed * 100).toFixed(1)}¢)` : "")
+        + (p && p.implied_price != null ? ` · Kalshi odds imply ≈ $${p.implied_price.toFixed(2)}` : "");
       $("delta").className = "sub mono " + (d >= 0 ? "up" : "down");
       $("price").className = "big mono " + (d >= 0 ? "up" : "down");
     } else { $("delta").textContent = ""; $("price").className = "big mono"; }

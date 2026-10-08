@@ -357,14 +357,19 @@ class DecisionEngine:
             return sell("take_profit", f"SELL NOW {side} at {cents(bid)} · target hit, {money(pnl)}, edge is gone")
         # 5. model flipped against you (only if selling still gets you something close to its value)
         if p <= cfg.stop_prob:
-            if sell_val >= hold_val - cfg.edge_min:
-                return sell("stop", f"SELL NOW {side} at {cents(bid)} · model flipped against you ({side} {pct(p)} ≤ {pct(cfg.stop_prob)})")
+            if sell_val >= hold_val - cfg.edge_min or pred.disagree:
+                return sell("stop", f"SELL NOW {side} at {cents(bid)} · model flipped against you ({side} {pct(p)} ≤ {pct(cfg.stop_prob)})"
+                            + (" and the market agrees it's gone" if pred.disagree else ""))
             details.append(f"Model has flipped ({side} {pct(p)}), but the bid ({cents(bid)}) is far below even that value; "
                            f"selling would lock in more loss than holding is worth.")
             return hold("too_late_to_cut", f"HOLD {side} · too late to cut; ride it as a {pct(p)} lottery ticket",
                         scalp("HOLD", None, "too_late_to_cut"), hold_val - sell_val)
         # 6. otherwise: a concrete sell target where the market would have caught up to the model
         target = min(tp, hold_val - fee_pc - cfg.edge_min / 2)
+        if pred.disagree:
+            # the model and the market disagree a lot (feed probably off): don't promise a target far from the book
+            target = min(target, bid + max(0.02, bid * 0.5))
+            details.append("Target capped near the current bid because the model and the market disagree a lot right now.")
         target = clamp(target, bid + 0.005, 0.99)
         if target <= bid + 0.006:
             return sell("fair_exit", f"SELL NOW {side} at {cents(bid)} · bid is already at the model's fair exit ({money(pnl)})")

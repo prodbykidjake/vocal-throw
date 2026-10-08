@@ -13,8 +13,11 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
+from statistics import NormalDist
 
 import numpy as np
+
+_ND = NormalDist()
 
 SQRT2 = math.sqrt(2.0)
 FEATURE_NAMES = ["bias", "logit_base", "logit_market", "mom_60", "mom_180", "mom_300", "tau_frac", "vol_ratio", "prev_outcome"]
@@ -268,6 +271,8 @@ class Prediction:
     sigma_eff: float = 0.0  # the sigma actually used (basis-widened)
     price_adj: float | None = None  # feed price after the measured basis correction
     basis_signed: float = 0.0
+    implied_price: float | None = None  # where Kalshi's odds say the settlement feed is
+    disagree: bool = False
 
     @property
     def p_down(self) -> float:
@@ -281,6 +286,7 @@ class Prediction:
             "tau_s": round(self.tau_s, 1), "gap": round(self.gap, 4), "expected_move": round(self.expected_move, 4),
             "confidence": self.confidence, "shrink": round(self.shrink, 3), "notes": self.notes, "sigma_eff": self.sigma_eff,
             "price_adj": None if self.price_adj is None else round(self.price_adj, 4), "basis_signed": round(self.basis_signed, 4),
+            "implied_price": None if self.implied_price is None else round(self.implied_price, 3), "disagree": self.disagree,
         }
 
 
@@ -344,12 +350,21 @@ class Model:
             conf = "lean"
         else:
             conf = "coinflip"
-        if p_market is not None and abs(p_final - p_market) > self.disagreement_cap and conf == "confident":
-            conf = "lean"
-            notes.append(f"model ({round(p_final * 100)}% Up) and market ({round(p_market * 100)}% Up) disagree a lot: "
-                         f"the price feed may be off from Pyth right now; not calling this confident")
+        implied = None
+        disagree = False
+        if p_market is not None and tau_s > 0.5:
+            # invert the base model on the market's probability: where Kalshi's odds say the Pyth price is
+            pm = clamp(p_market, 0.02, 0.98)
+            implied = strike - self.tie_adj + _ND.inv_cdf(pm) * sigma_eff * math.sqrt(tau_s)
+            if abs(p_final - p_market) > self.disagreement_cap:
+                disagree = True
+                notes.append(f"model ({round(p_final * 100)}% Up) and market ({round(p_market * 100)}% Up) disagree a lot: "
+                             f"Kalshi's odds imply the Pyth price is near ${implied:.2f}, our feed says ${price:.2f}; "
+                             f"trust the market's price for exits")
+                if conf == "confident":
+                    conf = "lean"
         if abs(self.basis_signed) >= 0.005:
             notes.append(f"feed adjusted by {-self.basis_signed * 100:+.1f}¢ (measured vs recent settlements)")
         return Prediction(p_final, p_base, p_learner, p_market, z, sigma, self.vol.sigma_slow(), self.vol.sigma_fast(),
                           tau_s, price_adj - strike, sigma_eff * math.sqrt(max(tau_s, 0)), conf, self.cal.shrink,
-                          [float(v) for v in x], notes, sigma_eff, price_adj, self.basis_signed)
+                          [float(v) for v in x], notes, sigma_eff, price_adj, self.basis_signed, implied, disagree)

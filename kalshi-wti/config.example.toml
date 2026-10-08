@@ -9,7 +9,7 @@ poll_interval_s = 1.0
 source = "hyperliquid"          # hyperliquid | sim
 hyperliquid_dex = "xyz"         # trade.xyz HIP-3 markets live on the "xyz" dex
 hyperliquid_symbol = ""         # leave blank to auto-detect the WTI market (e.g. "xyz:CL")
-stale_after_s = 3.0             # feed older than this = "stale", no new entries
+stale_after_s = 8.0             # feed older than this = "stale", no new entries (Hyperliquid updates every 1-3 s)
 
 [trading]
 bankroll = 200.0                # dollars you are willing to put at risk in total

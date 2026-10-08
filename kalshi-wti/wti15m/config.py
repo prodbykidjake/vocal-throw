@@ -25,7 +25,7 @@ class FeedCfg:
     hyperliquid_symbol: str = ""
     hyperliquid_rest: str = "https://api.hyperliquid.xyz/info"
     hyperliquid_ws: str = "wss://api.hyperliquid.xyz/ws"
-    stale_after_s: float = 3.0
+    stale_after_s: float = 8.0  # Hyperliquid mids arrive every 1-3 s; only call it stale well beyond that
     warmup_candles_min: int = 60
 
 

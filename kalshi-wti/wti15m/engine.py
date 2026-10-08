@@ -257,10 +257,11 @@ class Engine:
         self.store.set_state("basis_error", str(basis))
         recent = list(reversed(signed[:12]))  # oldest -> newest
         bias = 0.0
-        if len(recent) >= 3:
+        if recent:
             bias = recent[0]
             for e in recent[1:]:
                 bias = 0.7 * bias + 0.3 * e
+            bias *= len(recent) / (len(recent) + 1.0)  # one sample counts half, three count 3/4, ...
         self.model.basis_signed = round(bias, 4)
         self.store.set_state("basis_signed", str(self.model.basis_signed))
 
