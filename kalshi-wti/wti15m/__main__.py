@@ -22,6 +22,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("probe", help="dump raw Kalshi + Hyperliquid API responses to confirm fields")
+    q = sub.add_parser("quotes", help="compare Kalshi price sources (list vs market vs orderbook) once a second")
+    q.add_argument("--seconds", type=int, default=20)
     w = sub.add_parser("watch", help="terminal-only live view (no browser)")
     w.add_argument("--sim", action="store_true", help="use the simulated market + feed")
     s = sub.add_parser("serve", help="run the dashboard at http://127.0.0.1:8787")
@@ -124,6 +126,9 @@ def main(argv=None) -> int:
     if args.cmd == "probe":
         from . import probe
         return asyncio.run(probe.run(cfg))
+    if args.cmd == "quotes":
+        from . import probe
+        return asyncio.run(probe.quotes_check(cfg, args.seconds))
     if args.cmd == "watch":
         try:
             asyncio.run(run_watch(cfg, args.sim))

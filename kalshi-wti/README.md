@@ -16,7 +16,7 @@ Nothing here needs a Kalshi API key.
 
 | Piece | What it does |
 | --- | --- |
-| Kalshi public REST API | finds the live `KXWTI15M` window (target, open/close time, Up/Down bid/ask), picks up the result after settlement, reads the series' settlement source and fee parameters |
+| Kalshi public REST API | finds the live `KXWTI15M` window every few seconds (target, open/close time), reads the live **order book** every second for Up/Down bid/ask (the market-list prices can lag the real book by a lot), picks up the result after settlement, reads the series' settlement source and fee parameters |
 | Hyperliquid WTI perp feed | free real-time WTI price used for the chart line and the model (not Kalshi's settlement feed, see Caveats) |
 | Model | `P(Up) = Φ((price − target) / (σ·√time left))` with σ = realized volatility of recent price changes, then a tiny online logistic learner nudges it using what settled windows taught it (its weight grows with data, starting at 0) |
 | Decision engine | edge = model chance − contract ask − Kalshi fee; BUY only above your minimum edge; ¼-Kelly sizing; exit rules for a position you report; every WAIT says exactly what would turn it into a trade |
@@ -56,6 +56,7 @@ cp config.example.toml config.toml     # edit bankroll / edge_min if you like
 
 ```bash
 python -m wti15m serve        # dashboard, opens your browser
+python -m wti15m quotes       # 20 s side-by-side check of Kalshi's price sources (list / market / order book)
 python -m wti15m watch        # terminal-only live view
 python -m wti15m demo         # offline demo on a simulated market (90-second windows)
 python -m wti15m replay       # re-score recorded windows (Brier model vs base vs market)
@@ -101,10 +102,13 @@ if auto-detection picks the wrong market.
 ## Caveats
 
 - **Feed ≠ settlement feed.** Kalshi settles on Pyth's PYTHOIL index. The free Hyperliquid `xyz:CL` perp
-  tracks it closely but not exactly. Because the next target equals the previous settlement price, the
-  app measures the feed's error in dollars at every window (Stats tab, both at the close and one candle
-  later) and widens the model's uncertainty by the typical error. Pyth itself now needs a paid/trial API
-  key; a Pyth adapter can be added later if the measured error turns out to matter.
+  tracks it closely but not exactly, and the gap can be several cents, which matters when the price sits
+  near the target. Because the next target equals the previous settlement price, the app measures the
+  feed's error in dollars at every window (Stats tab, both at the close and one candle later). After three
+  windows it **shifts the feed price by the recent measured bias** (shown as "feed adj" under the price)
+  and widens the model's uncertainty by the typical error. When the model and the Kalshi book disagree by
+  more than 40 points it refuses to call anything "confident" and says why. Pyth itself needs a paid or
+  trial API key; a Pyth adapter is the next step if the measured error stays large.
 - **Settlement candle lag.** `settle_lag_s` (default 60) is added to the model's horizon because the
   settlement candle closes about a minute after trading stops. The Stats tab shows which lag fits the
   measured errors better; set it to 0 if the 0-second column is clearly smaller.

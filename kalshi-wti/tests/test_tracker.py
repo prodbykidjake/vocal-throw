@@ -47,8 +47,9 @@ async def test_tracker_rollover_and_settlement():
     await tracker.poll_once()
     assert tracker.series is not None and tracker.current.ticker == "A"
     assert events[:2] == [("window_open", "A"), ("quote", "A")]
-    # A closes, B is live
+    # A closes, B is live (force a list re-read: live windows only re-list every 5 s)
     client.markets = [mk("B", -1, 899)]
+    tracker._last_discovery = 0
     await tracker.poll_once()
     kinds = [e[0] for e in events]
     assert ("window_close", "A") in events and ("window_open", "B") in events
@@ -74,3 +75,33 @@ async def test_tracker_keeps_current_on_transient_empty_response():
     # the stale fallback must not count as a fresh quote
     tracker.last_quote_ts -= 20
     assert not tracker.quotes_fresh(10)
+
+
+class BookClient(FakeClient):
+    def __init__(self):
+        super().__init__()
+        self.book = {"orderbook": {"yes_dollars": [["0.6000", "50"], ["0.6300", "120"]], "no_dollars": [["0.3400", "80"], ["0.3500", "60"]]}}
+        self.book_calls = 0
+
+    async def get_orderbook(self, ticker, depth=5):
+        from wti15m.kalshi import parse_orderbook
+        self.book_calls += 1
+        return parse_orderbook(self.book)
+
+
+@pytest.mark.asyncio
+async def test_tracker_uses_orderbook_for_live_quotes():
+    client = BookClient()
+    tracker = MarketTracker(client, "KXWTI15M")
+    client.markets = [mk("A", -60, 60)]  # list says yes 0.48/0.49
+    await tracker.poll_once()
+    cur = tracker.current
+    assert client.book_calls == 1
+    assert cur.quote_source == "orderbook"
+    assert cur.yes_bid == 0.63 and cur.no_bid == 0.35
+    assert cur.yes_ask == 0.65 and cur.no_ask == 0.37  # 1 - best no bid, 1 - best yes bid
+    assert tracker.quotes_fresh(10)
+    # next second: no list re-read, but the book is polled and quotes stay fresh
+    client.markets = []
+    await tracker.poll_once()
+    assert client.book_calls == 2 and tracker.quotes_fresh(10) and tracker.current.ticker == "A"

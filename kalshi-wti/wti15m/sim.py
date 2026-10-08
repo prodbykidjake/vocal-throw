@@ -76,6 +76,10 @@ class SimKalshi:
         start, end = self._window_bounds(at)
         return [Market.from_api(self._build(start, end, at))]
 
+    async def get_orderbook(self, ticker: str, depth: int = 5) -> dict | None:
+        m = await self.get_market(ticker)
+        return {"yes_bid": m.yes_bid, "yes_ask": m.yes_ask, "no_bid": m.no_bid, "no_ask": m.no_ask, "yes_depth": 100.0, "no_depth": 100.0}
+
     async def get_market(self, ticker: str) -> Market:
         at = time.time()
         for close_epoch in (self._window_bounds(at)[1], self._window_bounds(at)[0]):

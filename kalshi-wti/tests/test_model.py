@@ -132,3 +132,20 @@ def test_fit_pooled_is_stable_across_single_label_windows():
     x[0] = 1.0
     p_final, _ = cal.predict(0.5, x)
     assert 0.35 < p_final < 0.65
+
+
+def test_signed_basis_shifts_price_and_disagreement_caps_confidence():
+    m = Model(min_warmup_s=600, confident_margin=0.2)
+    for t, px in brownian(1200, 0.005, seed=9):
+        m.vol.update(t, px)
+    # Hyperliquid reads 5c below the target, but recent settlements showed the feed reads 6c LOW vs Pyth:
+    m.basis_signed = -0.06
+    pred = m.predict(price=88.78, strike=88.83, tau_s=353, p_market=0.82, feed_age_s=0.5)
+    assert abs(pred.price_adj - 88.84) < 1e-9 and pred.p_final > 0.5  # adjusted price is above the target
+    assert any("feed adjusted" in n for n in pred.notes)
+    # no correction yet, but the market disagrees by 50+ points: confidence is capped at "lean"
+    m.basis_signed = 0.0
+    pred = m.predict(price=88.78, strike=88.83, tau_s=353, p_market=0.82, feed_age_s=0.5)
+    assert pred.p_final < 0.5
+    if abs(pred.p_final - 0.82) > 0.40:
+        assert pred.confidence == "lean" and any("disagree" in n for n in pred.notes)

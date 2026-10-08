@@ -34,6 +34,7 @@ class Engine:
                            min_warmup_s=t.min_warmup_minutes * 60, confident_margin=t.confident_margin,
                            stale_after_s=cfg.feed.stale_after_s)
         self.model.basis_error = _float(store.get_state("basis_error"), 0.0)
+        self.model.basis_signed = _float(store.get_state("basis_signed"), 0.0)
         self.model.prev_outcome = _float(store.get_state("prev_outcome"), 0.0)
         self.fees = FeeSchedule()
         self.decider = DecisionEngine(t, self.fees)
@@ -240,9 +241,12 @@ class Engine:
         self.position = None
 
     def _update_basis_error(self):
-        """Typical |feed − settlement| in dollars: 75th percentile over the last 200 windows (max if < 4)."""
+        """From measured feed − settlement errors: the typical size (75th percentile of |err| over the last 200
+        windows; max if < 4) widens the model's uncertainty, and the recent signed bias (EWMA over the last 12
+        windows, needs ≥ 3) shifts the feed price before it is compared with the target."""
         rows = self.store.recent_windows(200)
-        errs = sorted(abs(r["feed_error"]) for r in rows if r.get("feed_error") is not None)
+        signed = [r["feed_error"] for r in rows if r.get("feed_error") is not None]  # newest first
+        errs = sorted(abs(e) for e in signed)
         if not errs:
             basis = 0.0
         elif len(errs) < 4:
@@ -251,6 +255,14 @@ class Engine:
             basis = errs[int(0.75 * (len(errs) - 1))]
         self.model.basis_error = basis
         self.store.set_state("basis_error", str(basis))
+        recent = list(reversed(signed[:12]))  # oldest -> newest
+        bias = 0.0
+        if len(recent) >= 3:
+            bias = recent[0]
+            for e in recent[1:]:
+                bias = 0.7 * bias + 0.3 * e
+        self.model.basis_signed = round(bias, 4)
+        self.store.set_state("basis_signed", str(self.model.basis_signed))
 
     # ------------------------------------------------------------------ user positions
     def open_position(self, side: str, amount: float, price: float | None = None, note: str = "") -> Position:
@@ -458,6 +470,7 @@ class Engine:
             "paper": paper,
             "tracker": {"last_error": self.tracker.last_error, "polls": self.tracker.poll_count,
                         "pending_settlements": list(self.tracker.pending.keys()),
+                        "quote_source": self.tracker.quote_source, "orderbook_errors": self.tracker.orderbook_errors,
                         "quote_age_s": None if self.tracker.last_quote_ts is None else round(now - self.tracker.last_quote_ts, 1)},
             "events": list(self.events)[:25],
             "config": {"bankroll": self.cfg.trading.bankroll, "edge_min": self.cfg.trading.edge_min,

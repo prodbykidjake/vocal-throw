@@ -100,6 +100,64 @@ def _float_or_none(value) -> float | None:
         return None
 
 
+def _best_level(levels, in_cents: bool) -> tuple[float | None, float]:
+    """Best (highest) resting bid price and total quantity from an orderbook side."""
+    best_px, depth = None, 0.0
+    for lvl in levels or []:
+        try:
+            if isinstance(lvl, dict):
+                px = lvl.get("price_dollars", lvl.get("price"))
+                qty = lvl.get("quantity_fp", lvl.get("quantity", lvl.get("count", 0)))
+            else:
+                px = lvl[0]
+                qty = lvl[1] if len(lvl) > 1 else 0
+            px = float(px)
+            qty = float(qty or 0)
+        except (TypeError, ValueError, IndexError):
+            continue
+        if in_cents and px >= 1.0:
+            px = px / 100.0
+        if px <= 0 or px >= 1:
+            continue
+        depth += qty
+        if best_px is None or px > best_px:
+            best_px = px
+    return best_px, depth
+
+
+def parse_orderbook(d: dict) -> dict | None:
+    """Top of book from GET /markets/{ticker}/orderbook.
+
+    Kalshi returns resting BIDS per side: 'yes' (or 'yes_dollars' with fixed-point strings) and 'no'.
+    The yes ask is therefore 1 - best no bid, and the no ask is 1 - best yes bid.
+    """
+    ob = d.get("orderbook", d) if isinstance(d, dict) else None
+    if not isinstance(ob, dict):
+        return None
+    sides = {}
+    for side in ("yes", "no"):
+        levels, in_cents = None, False
+        for key in (f"{side}_dollars", f"{side}_fp"):
+            if ob.get(key) is not None:
+                levels = ob.get(key)
+                break
+        if levels is None and ob.get(side) is not None:
+            levels, in_cents = ob.get(side), True
+        sides[side] = _best_level(levels, in_cents)
+    yes_bid, yes_depth = sides["yes"]
+    no_bid, no_depth = sides["no"]
+    if yes_bid is None and no_bid is None:
+        return None
+    return {
+        "yes_bid": yes_bid,
+        "yes_ask": None if no_bid is None else round(1.0 - no_bid, 4),
+        "no_bid": no_bid,
+        "no_ask": None if yes_bid is None else round(1.0 - yes_bid, 4),
+        "yes_depth": yes_depth,
+        "no_depth": no_depth,
+    }
+
+
 def _int(d: dict, *keys) -> int | None:
     for key in keys:
         value = d.get(key)
@@ -134,7 +192,22 @@ class Market:
     result: str | None = None  # "yes" | "no" | None
     settle_value: float | None = None  # numeric expiration_value once settled (the settlement price)
     rules_primary: str = ""
+    quote_source: str = "list"  # list | orderbook
+    quote_ts: float | None = None
     raw: dict = field(default_factory=dict, repr=False)
+
+    def apply_quotes(self, book: dict, ts: float):
+        """Overwrite bid/ask with a fresh top of book from the orderbook endpoint."""
+        if book.get("yes_bid") is not None:
+            self.yes_bid = book["yes_bid"]
+        if book.get("yes_ask") is not None:
+            self.yes_ask = book["yes_ask"]
+        if book.get("no_bid") is not None:
+            self.no_bid = book["no_bid"]
+        if book.get("no_ask") is not None:
+            self.no_ask = book["no_ask"]
+        self.quote_source = "orderbook"
+        self.quote_ts = ts
 
     @classmethod
     def from_api(cls, d: dict) -> "Market":
@@ -230,6 +303,7 @@ class Market:
             "open_interest": self.open_interest,
             "result": self.result,
             "settle_value": self.settle_value,
+            "quote_source": self.quote_source,
         }
 
 
@@ -343,6 +417,12 @@ class KalshiClient:
         data = await self._get(f"/markets/{ticker}")
         return data.get("market", data)
 
+    async def get_orderbook_raw(self, ticker: str, depth: int = 5) -> dict:
+        return await self._get(f"/markets/{ticker}/orderbook", {"depth": depth})
+
+    async def get_orderbook(self, ticker: str, depth: int = 5) -> dict | None:
+        return parse_orderbook(await self.get_orderbook_raw(ticker, depth))
+
     async def get_market(self, ticker: str) -> Market:
         return Market.from_api(await self.get_market_raw(ticker))
 
@@ -373,7 +453,11 @@ class MarketTracker:
         self.pending: dict[str, tuple[Market, float]] = {}  # ticker -> (market, closed_at_epoch)
         self.last_error: str | None = None
         self.last_poll: float | None = None
-        self.last_quote_ts: float | None = None  # last poll that actually returned the current market
+        self.last_quote_ts: float | None = None  # last poll that actually returned fresh prices
+        self.quote_source: str = "list"
+        self.discovery_interval_s = 5.0  # how often to re-read the market list while a window is live
+        self._last_discovery = 0.0
+        self.orderbook_errors = 0
         self.poll_count = 0
         self._settle_checked: dict[str, float] = {}
 
@@ -397,20 +481,29 @@ class MarketTracker:
             except KalshiError as exc:
                 self.last_error = str(exc)
                 log.warning("series fetch failed: %s", exc)
-        try:
-            markets = await self.client.get_markets(self.series_ticker, status="open")
-            self.last_error = None
-        except KalshiError as exc:
-            self.last_error = str(exc)
-            log.warning("markets fetch failed: %s", exc)
-            markets = []
-        self.last_poll = at.timestamp()
+        now_ts = at.timestamp()
+        self.last_poll = now_ts
         self.poll_count += 1
+        # The market LIST is only needed to find the window (every few seconds); live prices come from the
+        # orderbook endpoint every poll, because the list's bid/ask can lag the real book.
+        have_live = self.current is not None and self.current.is_live(at)
+        discover = (not have_live) or (now_ts - self._last_discovery >= self.discovery_interval_s)
+        markets: list[Market] = []
+        listed = False
+        if discover:
+            self._last_discovery = now_ts
+            try:
+                markets = await self.client.get_markets(self.series_ticker, status="open")
+                self.last_error = None
+                listed = True
+            except KalshiError as exc:
+                self.last_error = str(exc)
+                log.warning("markets fetch failed: %s", exc)
 
-        live = select_live_market(markets, at)
+        live = select_live_market(markets, at) if listed else None
         stale = False
         if live is None and self.current is not None and self.current.is_live(at):
-            live = self.current  # transient empty/failed response: keep the window, but its quotes are stale
+            live = self.current  # not re-listed this poll (or the list failed): keep the window
             stale = True
         if live is not None and (self.current is None or live.ticker != self.current.ticker):
             if self.current is not None:
@@ -426,12 +519,35 @@ class MarketTracker:
             self.current = None
             await self._emit("window_close", closed)
 
-        if self.current is not None and live is not None and not stale:
-            self.last_quote_ts = at.timestamp()
+        fresh = (not stale) and listed
+        if self.current is not None and live is not None and self.current.is_live(at):
+            book = await self._fetch_book(self.current.ticker)
+            if book:
+                self.current.apply_quotes(book, now_ts)
+                self.quote_source = "orderbook"
+                fresh = True
+            elif fresh:
+                self.quote_source = "list"
+        if self.current is not None and live is not None and fresh:
+            self.last_quote_ts = now_ts
             await self._emit("quote", self.current)
 
         if self.pending:
-            await self._check_settlements(at.timestamp())
+            await self._check_settlements(now_ts)
+
+    async def _fetch_book(self, ticker: str) -> dict | None:
+        getter = getattr(self.client, "get_orderbook", None)
+        if getter is None:
+            return None
+        try:
+            book = await getter(ticker)
+            self.orderbook_errors = 0
+            return book
+        except Exception as exc:  # the list quotes remain as a fallback
+            self.orderbook_errors += 1
+            if self.orderbook_errors in (1, 10, 100):
+                log.warning("orderbook fetch failed (%d): %s", self.orderbook_errors, exc)
+            return None
 
     def quotes_fresh(self, max_age_s: float = 10.0, at: float | None = None) -> bool:
         return self.last_quote_ts is not None and ((at or clock.now().timestamp()) - self.last_quote_ts) <= max_age_s

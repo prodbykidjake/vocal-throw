@@ -266,6 +266,8 @@ class Prediction:
     features: list[float] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     sigma_eff: float = 0.0  # the sigma actually used (basis-widened)
+    price_adj: float | None = None  # feed price after the measured basis correction
+    basis_signed: float = 0.0
 
     @property
     def p_down(self) -> float:
@@ -278,6 +280,7 @@ class Prediction:
             "z": round(self.z, 3), "sigma": self.sigma, "sigma_slow": self.sigma_slow, "sigma_fast": self.sigma_fast,
             "tau_s": round(self.tau_s, 1), "gap": round(self.gap, 4), "expected_move": round(self.expected_move, 4),
             "confidence": self.confidence, "shrink": round(self.shrink, 3), "notes": self.notes, "sigma_eff": self.sigma_eff,
+            "price_adj": None if self.price_adj is None else round(self.price_adj, 4), "basis_signed": round(self.basis_signed, 4),
         }
 
 
@@ -291,7 +294,9 @@ class Model:
         self.confident_margin = confident_margin
         self.stale_after_s = stale_after_s
         self.prev_outcome = 0.0  # +1 last window Up, -1 Down, 0 unknown
-        self.basis_error = 0.0  # measured |feed - settlement| typical size, dollars
+        self.basis_error = 0.0  # measured |feed - settlement| typical size, dollars (widens uncertainty)
+        self.basis_signed = 0.0  # measured feed - settlement bias, dollars (shifts the price); 0 until ~3 windows
+        self.disagreement_cap = 0.40  # |model - market| above this caps confidence at "lean"
 
     def features(self, p_base: float, p_market: float | None, price: float, sigma: float, tau_s: float,
                  price_60: float | None, price_180: float | None, price_300: float | None) -> np.ndarray:
@@ -322,7 +327,8 @@ class Model:
             return Prediction(0.5, 0.5, 0.5, p_market, 0.0, sigma, self.vol.sigma_slow(), self.vol.sigma_fast(), tau_s,
                               0.0, sigma_eff * math.sqrt(max(tau_s, 0)), "no_target", self.cal.shrink, [], ["no target yet"],
                               sigma_eff)
-        p_base, z = base_probability(price, strike, sigma_eff, tau_s, self.tie_adj)
+        price_adj = price - self.basis_signed
+        p_base, z = base_probability(price_adj, strike, sigma_eff, tau_s, self.tie_adj)
         x = self.features(p_base, p_market, price, sigma, tau_s, price_60, price_180, price_300)
         p_final, p_learner = self.cal.predict(p_base, x)
         warm = self.vol.seconds_seen
@@ -338,6 +344,12 @@ class Model:
             conf = "lean"
         else:
             conf = "coinflip"
+        if p_market is not None and abs(p_final - p_market) > self.disagreement_cap and conf == "confident":
+            conf = "lean"
+            notes.append(f"model ({round(p_final * 100)}% Up) and market ({round(p_market * 100)}% Up) disagree a lot: "
+                         f"the price feed may be off from Pyth right now; not calling this confident")
+        if abs(self.basis_signed) >= 0.005:
+            notes.append(f"feed adjusted by {-self.basis_signed * 100:+.1f}¢ (measured vs recent settlements)")
         return Prediction(p_final, p_base, p_learner, p_market, z, sigma, self.vol.sigma_slow(), self.vol.sigma_fast(),
-                          tau_s, price - strike, sigma_eff * math.sqrt(max(tau_s, 0)), conf, self.cal.shrink,
-                          [float(v) for v in x], notes, sigma_eff)
+                          tau_s, price_adj - strike, sigma_eff * math.sqrt(max(tau_s, 0)), conf, self.cal.shrink,
+                          [float(v) for v in x], notes, sigma_eff, price_adj, self.basis_signed)

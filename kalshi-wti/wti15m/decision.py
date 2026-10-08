@@ -197,6 +197,9 @@ class DecisionEngine:
                       + (f" · market {pct(pred.p_market)} Up" if pred.p_market is not None else "")
                       + f" · confidence: {pred.confidence}")
         details.append(model_line)
+        for note in pred.notes:
+            if not note.startswith("warming up"):
+                details.append(note)
 
         def wait(code: str, headline: str, extra: list[str] | None = None, triggers: dict | None = None) -> Signal:
             return Signal("WAIT", lean_side, None, 0, None, lean_p, headline, details + (extra or []), [code],
@@ -296,6 +299,9 @@ class DecisionEngine:
         details = [self._situation(pred, price, strike, seconds_left),
                    f"You hold {qty_text(qty)} {side} @ {cents(pos.avg_price)} (${pos.cost:.2f} in). Model gives {side} {pct(p)}"
                    + (f"; market bid {cents(bid)}" if bid is not None else "") + "."]
+        for note in pred.notes:
+            if not note.startswith("warming up"):
+                details.append(note)
         tp = self._take_profit(pos.avg_price)
         triggers = {"stop_prob": cfg.stop_prob, "take_profit_bid": tp}
 

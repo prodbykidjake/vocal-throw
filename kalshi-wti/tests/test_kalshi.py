@@ -2,7 +2,7 @@ import datetime as dt
 import json
 import pathlib
 
-from wti15m.kalshi import Market, Series, parse_price, parse_strike, select_live_market
+from wti15m.kalshi import Market, Series, parse_orderbook, parse_price, parse_strike, select_live_market
 
 FIX = pathlib.Path(__file__).resolve().parents[1] / "fixtures"
 UTC = dt.timezone.utc
@@ -78,3 +78,23 @@ def test_select_live_market_prefers_current_window_then_next():
     # between windows: pick the upcoming one
     assert select_live_market([nxt, old], base + dt.timedelta(minutes=44, seconds=59)).ticker == "next"
     assert select_live_market([old], at) is None
+
+
+def test_parse_orderbook_dollar_and_cent_shapes():
+    dollars = {"orderbook": {"yes_dollars": [["0.6000", "50"], ["0.6300", "120"]], "no_dollars": [["0.3400", "80"], ["0.3500", "60"]]}}
+    top = parse_orderbook(dollars)
+    assert top["yes_bid"] == 0.63 and top["no_bid"] == 0.35 and top["yes_ask"] == 0.65 and top["no_ask"] == 0.37
+    assert top["yes_depth"] == 170 and top["no_depth"] == 140
+    cents = {"orderbook": {"yes": [[60, 50], [63, 120]], "no": [[34, 80], [35, 60]]}}
+    assert parse_orderbook(cents)["yes_ask"] == 0.65
+    one_sided = {"orderbook": {"yes": [], "no": [[18, 500]]}}
+    top = parse_orderbook(one_sided)
+    assert top["yes_bid"] is None and top["yes_ask"] == 0.82 and top["no_bid"] == 0.18 and top["no_ask"] is None
+    assert parse_orderbook({"orderbook": {"yes": [], "no": []}}) is None
+    assert parse_orderbook({"orderbook": {"yes_dollars": [{"price_dollars": "0.0130", "quantity_fp": "48.44"}], "no_dollars": []}})["yes_bid"] == 0.013
+
+
+def test_apply_quotes_overrides_list_prices():
+    m = Market.from_api({"ticker": "X", "yes_bid_dollars": "0.3500", "yes_ask_dollars": "0.3700"})
+    m.apply_quotes({"yes_bid": 0.81, "yes_ask": 0.82, "no_bid": 0.18, "no_ask": 0.19}, 1.0)
+    assert m.yes_bid == 0.81 and m.no_ask == 0.19 and m.quote_source == "orderbook" and m.spread == 0.01

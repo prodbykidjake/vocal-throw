@@ -38,7 +38,9 @@
     badge($("feed-badge"), feed.symbol ? `${feed.name} ${feed.symbol} · ${age == null || age < 0 ? "no data" : age.toFixed(1) + "s"}` : `${feed.name}: ${feed.mode}${feed.last_error ? " · " + feed.last_error : ""}`,
       age == null || age < 0 ? "bad" : age > 3 ? "warn" : "ok");
     const tr = s.tracker || {};
-    badge($("kalshi-badge"), tr.last_error ? "kalshi: " + tr.last_error.slice(0, 60) : m ? `kalshi · ${tr.polls} polls` : "kalshi: no open market", tr.last_error ? "bad" : m ? "ok" : "warn");
+    const qage = tr.quote_age_s;
+    badge($("kalshi-badge"), tr.last_error ? "kalshi: " + tr.last_error.slice(0, 60) : m ? `kalshi ${tr.quote_source || "list"} · ${qage == null ? "no quotes" : qage.toFixed(0) + "s"}` : "kalshi: no open market",
+      tr.last_error ? "bad" : (m && qage != null && qage <= 10) ? "ok" : "warn");
     const seen = feed.seconds_seen || 0, need = (s.config?.min_warmup_minutes || 30) * 60;
     badge($("warm-badge"), seen >= need ? "warmed up" : `warm-up ${Math.floor(seen / 60)}/${Math.round(need / 60)} min`, seen >= need ? "ok" : "warn");
     // prices
@@ -47,8 +49,9 @@
     const px = s.tick ? s.tick.price : null;
     $("price").textContent = px != null ? "$" + px.toFixed(2) : "--";
     if (px != null && m && m.strike != null) {
-      const d = px - m.strike;
-      $("delta").textContent = `${d >= 0 ? "▲" : "▼"} ${Math.abs(d).toFixed(2)} vs target`;
+      const adj = p && p.price_adj != null ? p.price_adj : px;
+      const d = adj - m.strike;
+      $("delta").textContent = `${d >= 0 ? "▲" : "▼"} ${Math.abs(d).toFixed(2)} vs target` + (p && Math.abs(p.basis_signed || 0) >= 0.005 ? ` (feed adj ${(-p.basis_signed * 100).toFixed(1)}¢)` : "");
       $("delta").className = "sub mono " + (d >= 0 ? "up" : "down");
       $("price").className = "big mono " + (d >= 0 ? "up" : "down");
     } else { $("delta").textContent = ""; $("price").className = "big mono"; }
