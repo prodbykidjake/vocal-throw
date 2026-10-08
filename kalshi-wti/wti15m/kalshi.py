@@ -128,10 +128,14 @@ def _best_level(levels, in_cents: bool) -> tuple[float | None, float]:
 def parse_orderbook(d: dict) -> dict | None:
     """Top of book from GET /markets/{ticker}/orderbook.
 
-    Kalshi returns resting BIDS per side: 'yes' (or 'yes_dollars' with fixed-point strings) and 'no'.
-    The yes ask is therefore 1 - best no bid, and the no ask is 1 - best yes bid.
+    Kalshi returns resting BIDS per side under orderbook_fp.yes_dollars / no_dollars as
+    [["0.4200", "13.00"], ...] (legacy: orderbook.yes/no with [cents, count]). There is no ask ladder:
+    "a bid for yes at X is an ask for no at 1 - X", so yes_ask = 1 - best no bid and no_ask = 1 - best yes bid.
     """
-    ob = d.get("orderbook", d) if isinstance(d, dict) else None
+    if not isinstance(d, dict):
+        return None
+    # 2026 shape: "orderbook_fp" (fixed-point quantities) is canonical; "orderbook" is the legacy block.
+    ob = d.get("orderbook_fp") or d.get("orderbook") or d
     if not isinstance(ob, dict):
         return None
     sides = {}

@@ -98,3 +98,13 @@ def test_apply_quotes_overrides_list_prices():
     m = Market.from_api({"ticker": "X", "yes_bid_dollars": "0.3500", "yes_ask_dollars": "0.3700"})
     m.apply_quotes({"yes_bid": 0.81, "yes_ask": 0.82, "no_bid": 0.18, "no_ask": 0.19}, 1.0)
     assert m.yes_bid == 0.81 and m.no_ask == 0.19 and m.quote_source == "orderbook" and m.spread == 0.01
+
+
+def test_parse_orderbook_prefers_fixed_point_block():
+    d = {"orderbook": {"yes_dollars": [["0.1500", 100]], "no_dollars": [["0.8000", 50]]},
+         "orderbook_fp": {"yes_dollars": [["0.1500", "100.00"], ["0.1600", "101.00"]], "no_dollars": [["0.8000", "50.00"], ["0.8300", "20.00"]]}}
+    top = parse_orderbook(d)
+    assert top["yes_bid"] == 0.16 and top["no_bid"] == 0.83 and top["yes_ask"] == 0.17 and top["no_ask"] == 0.84
+    assert top["yes_depth"] == 201.0
+    only_fp = {"orderbook_fp": {"yes_dollars": [["0.1600", "101.00"]], "no_dollars": []}}
+    assert parse_orderbook(only_fp)["yes_bid"] == 0.16
