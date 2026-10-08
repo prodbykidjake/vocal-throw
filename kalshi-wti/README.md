@@ -74,8 +74,15 @@ automatically; nothing to click.
   (≥ 20 points from 50%), `lean`, `coinflip`, `warming_up`, `stale` (feed too old to trust).
 - **Signal card**: BUY/SELL/HOLD/WAIT, the headline, and the details (gap, time left, expected move,
   edge after fees, size, exit plan, and "would buy if…").
-- **Your position**: after you buy in the Kalshi app, enter side/qty/price (or "use the signal").
-  The coach then switches to exit advice: take profit, cut if the model flips, or hold to settlement.
+- **Your position** (built for scalping): tap **UP** or **DOWN**, the price box fills with the live ask
+  (edit it if your fill differed), type the dollars you spent, press Enter. The card then tracks it like
+  Kalshi's sell sheet: shares, live sell price, **cash out** after fees and P&L, updating every second,
+  with a box that says **SELL NOW** (lit up), **SELL AT x¢** (a concrete target where the market would
+  have caught up to the model), **HOLD TO SETTLEMENT**, or HOLD. "I sold at the bid" records the exit at
+  the live price in one click; "I sold at this" takes the price you actually got.
+  SELL NOW fires when the market pays more than the model's value, when a profitable position's bid rolls
+  over 25% from its high since entry, when the take-profit target is hit with no edge left, or when the
+  model flips against you and the bid is still worth taking.
 - **History**: every window with target, result, model Up at 10 and 3 minutes, market Up at close,
   whether the feed agreed with the settlement, and what a paper trade would have made.
 - **Stats**: Brier score (0.25 = coin flip; lower is better) for model vs market at 10/5/2/1 minutes

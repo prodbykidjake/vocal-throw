@@ -1,6 +1,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const fmtC = (p) => (p == null ? "--" : Math.round(p * 100) + "¢");
+  const fmtC = (p) => { if (p == null) return "--"; const c = p * 100; return (Math.abs(c - Math.round(c)) > 0.05 ? c.toFixed(1) : Math.round(c)) + "¢"; };
   const fmtP = (p) => (p == null ? "--" : Math.round(p * 100) + "%");
   const fmtUsd = (x) => (x == null ? "--" : (x < 0 ? "-" : "+") + "$" + Math.abs(x).toFixed(2));
   const fmtT = (ts) => (ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }) + " ET" : "--");
@@ -35,8 +35,8 @@
     $("close-label").textContent = m ? `closes ${m.close_label}` : "no live window";
     // badges
     const age = feed.age_s;
-    badge($("feed-badge"), feed.symbol ? `${feed.name} ${feed.symbol} · ${age == null ? "no data" : age.toFixed(1) + "s"}` : `${feed.name}: ${feed.mode}${feed.last_error ? " · " + feed.last_error : ""}`,
-      age == null ? "bad" : age > 3 ? "warn" : "ok");
+    badge($("feed-badge"), feed.symbol ? `${feed.name} ${feed.symbol} · ${age == null || age < 0 ? "no data" : age.toFixed(1) + "s"}` : `${feed.name}: ${feed.mode}${feed.last_error ? " · " + feed.last_error : ""}`,
+      age == null || age < 0 ? "bad" : age > 3 ? "warn" : "ok");
     const tr = s.tracker || {};
     badge($("kalshi-badge"), tr.last_error ? "kalshi: " + tr.last_error.slice(0, 60) : m ? `kalshi · ${tr.polls} polls` : "kalshi: no open market", tr.last_error ? "bad" : m ? "ok" : "warn");
     const seen = feed.seconds_seen || 0, need = (s.config?.min_warmup_minutes || 30) * 60;
@@ -62,7 +62,9 @@
       $("model-up").textContent = "Up " + fmtP(p.p_up);
       $("model-down").textContent = "Down " + fmtP(p.p_down);
       $("model-sub").textContent = `${p.confidence.replace("_", " ")} · z ${p.z >= 0 ? "+" : ""}${p.z.toFixed(2)} · ±$${p.expected_move.toFixed(2)} expected · learner weight ${Math.round(p.shrink * 100)}%`;
-    }
+    } else { $("model-up").textContent = "Up --"; $("model-down").textContent = "Down --"; $("model-sub").textContent = ""; }
+    if (!m) { $("odds-up").textContent = "Up --"; $("odds-down").textContent = "Down --"; $("book").textContent = ""; }
+    else if (s.quotes_fresh === false) { $("book").textContent += " · quotes stale"; }
     // signal
     if (sig) {
       const pill = $("signal-action");
@@ -74,23 +76,71 @@
       const key = sig.action + ":" + (sig.side || "") + ":" + (sig.reasons[0] || "");
       if (lastSignalKey !== null && key !== lastSignalKey && (sig.action === "BUY" || sig.action === "SELL")) notify(sig);
       lastSignalKey = key;
+    } else {
+      $("signal-action").textContent = "WAIT"; $("signal-action").className = "pill";
+      $("signal-headline").textContent = m ? "waiting for data…" : "no live window right now";
+      $("signal-details").innerHTML = "";
     }
     // position
-    const pos = s.position;
-    $("position-none").classList.toggle("hidden", !!pos);
-    $("position-open").classList.toggle("hidden", !pos);
-    if (pos) $("position-text").textContent = `${pos.qty} ${pos.side} @ ${fmtC(pos.avg_price)} on ${pos.ticker}`;
+    renderPosition(s);
     const paper = s.paper;
     $("paper-line").textContent = paper ? `Paper position this window: ${paper.size} ${paper.side} @ ${fmtC(paper.entry_price)} (what the coach would have done)` : "No paper position this window.";
     // events
     $("events").innerHTML = (s.events || []).map((e) => `<li><span class="k">${new Date(e.ts * 1000).toLocaleTimeString()} ${esc(e.kind)}</span>${esc(e.text)}</li>`).join("");
     // chart
-    if (m && m.ticker !== chartTicker) { chartTicker = m.ticker; loadChart(); }
+    const key = m ? m.ticker : "none";
+    if (key !== chartTicker) { chartTicker = key; loadChart(); }
     else if (s.tick && chartData.ticks.length) {
       const last = chartData.ticks[chartData.ticks.length - 1];
+      const liveStrike = m ? m.strike : null;
+      if (liveStrike !== chartData.strike) chartData.strike = liveStrike;
       if (s.tick.ts > last[0]) { chartData.ticks.push([s.tick.ts, s.tick.price]); drawChart(); }
     }
   }
+
+  // ---------------------------------------------------------------- position card
+  let pendingSide = null;
+  function renderPosition(s) {
+    const pos = s.position, m = s.market;
+    $("pos-entry").classList.toggle("hidden", !!pos);
+    $("position-open").classList.toggle("hidden", !pos);
+    if (!pos) {
+      // keep the price box following the live ask until the user types in it
+      const f = $("pos-form");
+      if (pendingSide && m && !f.price_cents.matches(":focus") && !f.dataset.touched) {
+        const ask = pendingSide === "UP" ? m.yes_ask : m.no_ask;
+        if (ask != null) f.price_cents.value = (ask * 100).toFixed(1);
+      }
+      return;
+    }
+    const live = pos.live || {}, sc = pos.scalp;
+    $("pos-shares").textContent = `${Number(pos.qty).toFixed(2)} ${pos.side}`;
+    $("pos-shares").className = "big2 mono " + (pos.side === "UP" ? "up" : "down");
+    $("pos-entry-text").textContent = `bought @ ${fmtC(pos.avg_price)} · $${Number(pos.cost).toFixed(2)} in · ${pos.ticker}`;
+    $("pos-bid").textContent = live.bid == null ? "--" : fmtC(live.bid);
+    $("pos-bid-sub").textContent = live.awaiting_settlement ? "window over · waiting for settlement" : (live.quotes_fresh === false ? "Kalshi quotes stale" : (pos.high_bid != null ? `high since entry ${fmtC(pos.high_bid)}` : ""));
+    $("pos-cash").textContent = live.cash_out == null ? "--" : "$" + Number(live.cash_out).toFixed(2);
+    $("pos-pnl").textContent = live.pnl == null ? "" : fmtUsd(live.pnl);
+    $("pos-pnl").className = "sub mono " + (live.pnl == null ? "" : live.pnl >= 0 ? "up" : "down");
+    const box = $("scalp-box");
+    if (live.awaiting_settlement) { box.textContent = "WAITING FOR SETTLEMENT"; box.className = "scalp-box"; }
+    else if (!sc) { box.textContent = "…"; box.className = "scalp-box"; }
+    else if (sc.action === "SELL NOW") { box.textContent = `SELL NOW · ${fmtC(sc.bid)}`; box.className = "scalp-box sell-now"; }
+    else if (sc.action === "SELL AT") { box.textContent = `SELL AT ${fmtC(sc.target)}  (now ${fmtC(sc.bid)})`; box.className = "scalp-box sell-at"; }
+    else if (sc.reason === "ride_to_settle") { box.textContent = "HOLD TO SETTLEMENT"; box.className = "scalp-box ride"; }
+    else { box.textContent = "HOLD"; box.className = "scalp-box"; }
+  }
+  document.querySelectorAll(".side-btn").forEach((b) => b.addEventListener("click", () => {
+    pendingSide = b.dataset.side;
+    const f = $("pos-form"); f.dataset.touched = "";
+    $("pos-side-label").textContent = pendingSide; $("pos-side-label").className = "pill " + (pendingSide === "UP" ? "BUY-UP" : "BUY-DOWN");
+    const m = state && state.market; const ask = m ? (pendingSide === "UP" ? m.yes_ask : m.no_ask) : null;
+    f.price_cents.value = ask != null ? (ask * 100).toFixed(1) : "";
+    f.amount.value = "";
+    $("side-buttons").classList.add("hidden"); f.classList.remove("hidden"); f.amount.focus();
+  }));
+  $("pos-form").price_cents.addEventListener("input", () => { $("pos-form").dataset.touched = "1"; });
+  $("pos-back").addEventListener("click", () => { pendingSide = null; $("pos-form").classList.add("hidden"); $("side-buttons").classList.remove("hidden"); });
 
   function esc(t) { return String(t).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
 
@@ -152,24 +202,31 @@
   document.body.addEventListener("click", () => { if ("Notification" in window && Notification.permission === "default") Notification.requestPermission(); }, { once: true });
 
   // ---------------------------------------------------------------- position forms
+  async function post(url, body) {
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) { let d = {}; try { d = await r.json(); } catch (e) {} alert(d.detail || "request failed"); return null; }
+    return r.json();
+  }
   $("pos-form").addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const f = new FormData(ev.target);
-    const r = await fetch("/api/position", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ side: f.get("side"), qty: Number(f.get("qty")), price: Number(f.get("price")) }) });
-    if (!r.ok) alert((await r.json()).detail || "could not record position");
+    const f = ev.target; const amount = Number(f.amount.value); const pc = f.price_cents.value;
+    if (!pendingSide || !(amount > 0)) return;
+    const body = { side: pendingSide, amount };
+    if (pc !== "") body.price = Number(pc) / 100;
+    const res = await post("/api/position", body);
+    if (res) { pendingSide = null; f.classList.add("hidden"); $("side-buttons").classList.remove("hidden"); }
   });
-  $("use-signal").addEventListener("click", () => {
-    const sig = state && state.signal; if (!sig || sig.action !== "BUY") return alert("no BUY signal right now");
-    const f = $("pos-form"); f.side.value = sig.side; f.qty.value = sig.size; f.price.value = sig.price.toFixed(2);
+  $("sold-now").addEventListener("click", async () => {
+    const res = await post("/api/position/close", {});
+    if (res) alert(`Recorded. Cash out $${res.cash_out.toFixed(2)}, P&L ${fmtUsd(res.pnl)}`);
   });
   $("close-form").addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const f = new FormData(ev.target);
-    const r = await fetch("/api/position/close", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ price: Number(f.get("price")) }) });
-    if (!r.ok) alert((await r.json()).detail || "could not close position");
+    const pc = ev.target.price_cents.value; if (pc === "") return;
+    const res = await post("/api/position/close", { price: Number(pc) / 100 });
+    if (res) { ev.target.reset(); alert(`Recorded. Cash out $${res.cash_out.toFixed(2)}, P&L ${fmtUsd(res.pnl)}`); }
   });
-  $("cancel-pos").addEventListener("click", () => fetch("/api/position", { method: "DELETE" }));
+  $("cancel-pos").addEventListener("click", () => { if (confirm("Remove this position entry? (use this only if you entered it by mistake)")) fetch("/api/position", { method: "DELETE" }); });
 
   // ---------------------------------------------------------------- history / stats / rules
   async function loadHistory() {
@@ -184,7 +241,7 @@
       <td>${fmtC(t.entry_price)}</td><td>${t.size}</td><td>${t.exit_price == null ? "open" : fmtC(t.exit_price)}</td><td>${t.exit_reason || ""}</td>
       <td class="${(t.pnl || 0) >= 0 ? "up" : "down"}">${t.pnl == null ? "--" : fmtUsd(t.pnl)}</td><td>${t.confidence || ""}</td></tr>`).join("");
     $("pos-table").querySelector("tbody").innerHTML = d.positions.map((t) => `<tr><td class="mono">${t.ticker}</td><td class="${t.side === "UP" ? "up" : "down"}">${t.side}</td>
-      <td>${t.qty}</td><td>${fmtC(t.avg_price)}</td><td>${t.exit_price == null ? "open" : fmtC(t.exit_price)}</td><td class="${(t.pnl || 0) >= 0 ? "up" : "down"}">${t.pnl == null ? "--" : fmtUsd(t.pnl)}</td></tr>`).join("");
+      <td>${Number(t.qty).toFixed(2)}${t.amount != null ? ` ($${Number(t.amount).toFixed(2)})` : ""}</td><td>${fmtC(t.avg_price)}</td><td>${t.exit_price == null ? "open" : fmtC(t.exit_price)}</td><td class="${(t.pnl || 0) >= 0 ? "up" : "down"}">${t.pnl == null ? "--" : fmtUsd(t.pnl)}</td></tr>`).join("");
   }
   async function loadStats() {
     const d = await (await fetch("/api/stats")).json();

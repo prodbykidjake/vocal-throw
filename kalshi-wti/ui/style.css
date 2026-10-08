@@ -68,3 +68,19 @@ button:hover { filter: brightness(1.15); }
 .table th { color: var(--muted); font-weight: 500; }
 .pre { white-space: pre-wrap; font: 12.5px/1.4 var(--mono); color: #c9ced6; margin: 0; max-height: 420px; overflow: auto; }
 .u-legend { display: none; }
+
+.side-row { gap: 12px; }
+.side-btn { flex: 1; font-size: 20px; font-weight: 800; padding: 14px; border-radius: 10px; }
+.side-btn.up { background: rgba(46,204,143,.18); color: var(--up); border-color: rgba(46,204,143,.4); }
+.side-btn.down { background: rgba(242,92,92,.18); color: var(--down); border-color: rgba(242,92,92,.4); }
+.inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+input.short { width: 90px; }
+input.amount { width: 180px; }
+.scalp-box { font-size: 22px; font-weight: 800; text-align: center; padding: 14px; border-radius: 10px; margin: 6px 0 12px; background: var(--card2); color: var(--muted); letter-spacing: .03em; }
+.scalp-box.sell-now { background: rgba(240,180,41,.22); color: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+.scalp-box.sell-at { background: rgba(90,169,255,.16); color: var(--info); }
+.scalp-box.ride { background: rgba(46,204,143,.14); color: var(--up); }
+@keyframes pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.35); } }
+.pos-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 10px; }
+.pos-grid .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+.big2 { font-size: 24px; font-weight: 700; }

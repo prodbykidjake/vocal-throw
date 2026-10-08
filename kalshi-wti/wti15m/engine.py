@@ -3,14 +3,15 @@ records everything; learns at settlement; produces the state the dashboard shows
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 import time
 from collections import deque
 
 from . import clock
 from .config import Config
-from .decision import DecisionEngine, Position, Quotes, Signal, cents, pct
-from .fees import FeeSchedule, fee_per_contract
+from .decision import DecisionEngine, Position, Quotes, Signal, cash_out, cents, pct, qty_text
+from .fees import FeeSchedule, fee_per_contract, taker_fee
 from .feeds.base import PriceFeed, Tick
 from .kalshi import Market, MarketTracker
 from .model import Calibrator, Model, Prediction
@@ -18,6 +19,8 @@ from .notify import Notifier
 from .store import Store
 
 log = logging.getLogger(__name__)
+
+QUOTE_MAX_AGE_S = 10.0
 
 
 class Engine:
@@ -43,16 +46,49 @@ class Engine:
         self.signal: Signal | None = None
         self.started_ts = time.time()
         self._last_signal_key: str | None = None
-        self._last_signal_log = 0.0
+        self._pending_key: str | None = None  # a new BUY/SELL must hold for 2 consecutive seconds before it notifies
+        self._pending_count = 0
+        self._last_notified: dict[str, float] = {}  # action -> epoch of last notification (30 s cooldown)
         self._last_snapshot = 0.0
         self._last_window_upsert = 0.0
-        self._last_tick_store = 0.0
+        self._last_stored_tick_ts: float | None = None
         self._paper_done: set[str] = set()
         self._close_capture: dict[str, dict] = {}
         self._window_strikes: dict[int, float] = {}  # open_time (epoch s, rounded) -> target; targets double as prior settles
         self._stats_cache: tuple[float, dict] = (0.0, {})
         self.feed.subscribe(self.on_tick)
         self.feed.subscribe_warmup(self.on_warmup)
+        self._recover()
+
+    # ------------------------------------------------------------------ restart recovery
+    def _recover(self):
+        """After a restart: remember recent targets, re-queue closed-but-unsettled windows for settlement polling,
+        rebuild their close captures from the database, and settle a restored position whose window already resolved."""
+        now = time.time()
+        for row in self.store.recent_windows(80):
+            open_ts, close_ts = row.get("open_time"), row.get("close_time")
+            if row.get("strike") and open_ts:
+                self._window_strikes[int(round(open_ts))] = row["strike"]
+            if not close_ts or close_ts > now or now - close_ts > 90 * 60 or row.get("result") in ("yes", "no"):
+                continue
+            m = Market(ticker=row["ticker"], status=row.get("status") or "closed", strike=row.get("strike"),
+                       strike_source=row.get("strike_source") or "none",
+                       open_time=dt.datetime.fromtimestamp(open_ts, clock.UTC) if open_ts else None,
+                       close_time=dt.datetime.fromtimestamp(close_ts, clock.UTC))
+            self.tracker.pending[m.ticker] = (m, close_ts)
+            feed_px = row.get("feed_price_at_close")
+            if feed_px is None:
+                feed_px = self.store.last_tick_before(close_ts, self.feed.name)
+            self._close_capture[m.ticker] = {
+                "feed_price": feed_px, "p_market": row.get("p_market_at_close"), "close_ts": close_ts,
+                "p_model": row.get("p_model_at_close"), "strike": row.get("strike"),
+                "settle_price": row.get("settle_price"), "err_lag0": row.get("feed_error_lag0"),
+                "err_lag60": row.get("feed_error_lag60")}
+            self.log_event("recover", f"re-queued {m.ticker} for settlement")
+        if self.position:
+            w = self.store.window(self.position.ticker)
+            if w and w.get("result") in ("yes", "no"):
+                self._settle_position(1 if w["result"] == "yes" else 0, now, notify=False)
 
     # ------------------------------------------------------------------ feed callbacks
     def on_warmup(self, closes):
@@ -64,11 +100,17 @@ class Engine:
 
     # ------------------------------------------------------------------ market callbacks
     def _note_strike(self, m: Market | None):
-        if m is not None and m.strike is not None and m.open_time is not None:
+        if m is not None and m.strike is not None and m.strike > 0 and m.open_time is not None:
             self._window_strikes[int(round(m.open_time.timestamp()))] = m.strike
             if len(self._window_strikes) > 500:
                 for key in sorted(self._window_strikes)[:-200]:
                     del self._window_strikes[key]
+
+    def _feed_price_near(self, ts: float, window_s: float = 5.0) -> float | None:
+        price = self.feed.buffer.price_near(ts, window_s)
+        if price is None:
+            price = self.store.last_tick_before(ts, self.feed.name, window_s)
+        return price
 
     async def on_market_event(self, kind: str, m: Market):
         now = time.time()
@@ -89,17 +131,19 @@ class Engine:
                                      f" (from {m.strike_source}), closes {clock.et_label(m.close_time)}")
         elif kind == "window_close":
             close_ts = m.close_time.timestamp() if m.close_time else now
-            price = self.feed.buffer.price_at(close_ts) or (self.feed.latest().price if self.feed.latest() else None)
+            price = self._feed_price_near(close_ts)
             self._close_capture[m.ticker] = {"feed_price": price, "p_market": m.yes_mid, "close_ts": close_ts,
                                              "p_model": self.pred.p_final if self.pred else None, "strike": m.strike,
                                              "settle_price": None, "err_lag0": None, "err_lag60": None}
             self.store.upsert_window(m, self.pred.p_final if self.pred else None)
+            self.store.mark_status(m.ticker, "closed")
             self.log_event("window", f"window {m.ticker} closed; feed price at close "
                                      f"{('$%.2f' % price) if price else '?'} vs target {('$%.2f' % m.strike) if m.strike else '?'}")
         elif kind == "settled":
             self.handle_settlement(m)
         elif kind == "settlement_timeout":
-            self.log_event("window", f"no settlement result for {m.ticker} after 20 min")
+            self.store.mark_status(m.ticker, "unsettled")
+            self.log_event("window", f"no settlement result for {m.ticker} after 90 min")
 
     # ------------------------------------------------------------------ settlement + learning
     def _resolve_closed_windows(self, now: float):
@@ -110,19 +154,19 @@ class Engine:
         lag = self.cfg.trading.settle_lag_s
         for ticker, cap in list(self._close_capture.items()):
             close_ts = cap.get("close_ts", 0)
-            if now - close_ts > 40 * 60:
+            if now - close_ts > 90 * 60:
                 del self._close_capture[ticker]  # nothing more will arrive for this window
                 continue
             if cap.get("settle_price") is not None:
                 continue
             settle = self._window_strikes.get(int(round(close_ts)))
-            if settle is None:
+            if settle is None or settle <= 0:
                 continue  # next window's target not published yet
             latest = self.feed.latest()
             if latest is None or (latest.ts < close_ts + lag and now < close_ts + lag + 30):
                 continue  # wait until the feed covers the settlement candle (or give up after 30 s grace)
-            p0 = self.feed.buffer.price_at(close_ts)
-            p_lag = self.feed.buffer.price_at(close_ts + max(lag - 1, 0))
+            p0 = self._feed_price_near(close_ts)
+            p_lag = self._feed_price_near(close_ts + max(lag - 1, 0))
             err0 = None if p0 is None else round(p0 - settle, 4)
             err_lag = None if p_lag is None else round(p_lag - settle, 4)
             chosen = err_lag if lag > 0 else err0
@@ -133,8 +177,11 @@ class Engine:
                 msg += f"; feed said ${p0:.2f} at the close"
             if p_lag is not None:
                 msg += f", ${p_lag:.2f} at the candle close"
+            if p0 is None and p_lag is None:
+                msg += "; no feed data around the close (not counted in the feed error)"
             self.log_event("settle", msg)
-            self._update_basis_error()
+            if chosen is not None:
+                self._update_basis_error()
 
     def handle_settlement(self, m: Market):
         now = time.time()
@@ -144,22 +191,20 @@ class Engine:
         feed_px = cap.get("feed_price")
         settle = m.settle_value if m.settle_value is not None else cap.get("settle_price")
         feed_error = cap.get("err_lag60") if self.cfg.trading.settle_lag_s > 0 else cap.get("err_lag0")
-        if feed_error is None and settle is not None and feed_px is not None:
+        if feed_error is None and settle is not None and feed_px is not None and self.cfg.trading.settle_lag_s <= 0:
             feed_error = round(feed_px - settle, 4)
-        if feed_error is None and feed_px is not None and strike is not None:
-            # no settlement price known: at least record whether the feed called the outcome right
-            feed_said_up = feed_px >= strike - self.cfg.trading.tie_adj
-            feed_error = 0.0 if feed_said_up == bool(label) else abs(feed_px - strike)
+        direction_ok = None
+        if feed_px is not None and strike is not None:
+            direction_ok = (feed_px >= strike - self.cfg.trading.tie_adj) == bool(label)
         self.store.label_snapshots(m.ticker, label)
         self.store.settle_window(m.ticker, m.result or "", feed_px, feed_error, now, settle)
-        # learn
-        X, y, _ = self.store.training_rows(m.ticker)
-        if len(X) >= 3:
-            self.model.cal.fit_window(X, y)
+        # learn on a pooled batch of recent windows (both outcomes present) instead of one window at a time
+        X, y, n_windows = self.store.training_rows_recent(50)
+        if len(X) >= 20 and len(set(y.tolist())) == 2:
+            self.model.cal.fit_pooled(X, y, n_windows)
             self.store.set_state("calibrator", self.model.cal.to_json())
         self.model.prev_outcome = 1.0 if label else -1.0
         self.store.set_state("prev_outcome", str(self.model.prev_outcome))
-        self._update_basis_error()
         # paper trade
         paper = self.store.open_paper_trade_for(m.ticker)
         if paper:
@@ -167,12 +212,7 @@ class Engine:
             self.store.close_paper_trade(paper["id"], now, value, 0.0, "settle")
         # user position
         if self.position and self.position.ticker == m.ticker:
-            value = 1.0 if (self.position.side == "UP") == bool(label) else 0.0
-            pnl = (value - self.position.avg_price) * self.position.qty
-            self.store.close_position(self.position.id, now, value, pnl)
-            self.notifier.notify("Window settled", f"{m.ticker}: {'UP' if label else 'DOWN'} · your {self.position.side} "
-                                                   f"{'won' if value else 'lost'} ({'+' if pnl >= 0 else ''}{pnl:.2f})")
-            self.position = None
+            self._settle_position(label, now)
         outcome = "UP" if label else "DOWN"
         p_model = cap.get("p_model")
         msg = f"{m.ticker} settled {outcome}"
@@ -182,7 +222,22 @@ class Engine:
             msg += f" · settled at ${settle:.2f}"
         if feed_error:
             msg += f" · feed off by ${feed_error:+.2f}"
+        elif direction_ok is False:
+            msg += " · feed was on the wrong side of the target at the close"
         self.log_event("settled", msg)
+
+    def _settle_position(self, label: int, now: float, notify: bool = True):
+        pos = self.position
+        if pos is None:
+            return
+        value = 1.0 if (pos.side == "UP") == bool(label) else 0.0
+        pnl = pos.qty * value - pos.cost
+        self.store.close_position(pos.id, now, value, pnl)
+        text = f"{pos.ticker}: settled {'UP' if label else 'DOWN'} · your {pos.side} {'won' if value else 'lost'} ({'+' if pnl >= 0 else ''}{pnl:.2f})"
+        if notify:
+            self.notifier.notify("Window settled", text)
+        self.log_event("you", text)
+        self.position = None
 
     def _update_basis_error(self):
         """Typical |feed − settlement| in dollars: 75th percentile over the last 200 windows (max if < 4)."""
@@ -198,33 +253,59 @@ class Engine:
         self.store.set_state("basis_error", str(basis))
 
     # ------------------------------------------------------------------ user positions
-    def open_position(self, side: str, qty: int, price: float, note: str = "") -> Position:
+    def open_position(self, side: str, amount: float, price: float | None = None, note: str = "") -> Position:
+        """Record what you bought in the Kalshi app: side, dollars spent, and the price (defaults to the live ask)."""
         m = self.tracker.current
-        ticker = m.ticker if m else "unknown"
         if self.position:
-            raise ValueError("a position is already open; close it first")
+            raise ValueError("a position is already open; sell or remove it first")
+        if m is None:
+            raise ValueError("no live window to buy into right now")
         side = side.upper()
-        if side not in ("UP", "DOWN") or qty <= 0 or not (0 < price < 1):
-            raise ValueError("side must be UP/DOWN, qty > 0, price between 0 and 1")
+        if side not in ("UP", "DOWN"):
+            raise ValueError("side must be UP or DOWN")
+        if amount is None or amount <= 0:
+            raise ValueError("amount must be the dollars you spent (> 0)")
+        quotes = Quotes.from_market(m)
+        if price is None:
+            price = quotes.ask(side)
+            if price is None:
+                raise ValueError("no live ask price; enter the price you paid")
+        if not (0 < price < 1):
+            raise ValueError("price must be between 0 and 1 dollars (e.g. 0.026 for 2.6¢)")
+        qty = amount / price
+        entry_fee = taker_fee(price, qty, self.fees)
         now = time.time()
-        pid = self.store.open_position(ticker, side, qty, price, now, note)
-        self.position = Position(ticker, side, qty, price, now, pid)
-        self.log_event("you", f"you bought {qty} {side} @ {cents(price)} on {ticker}")
+        high = quotes.bid(side)
+        pid = self.store.open_position(m.ticker, side, qty, price, now, note, amount, entry_fee, high)
+        self.position = Position(m.ticker, side, qty, price, now, pid, amount, entry_fee, high)
+        self.log_event("you", f"you bought ${amount:.2f} of {side} @ {cents(price)} = {qty_text(qty)} shares on {m.ticker}")
         return self.position
 
-    def close_position(self, price: float) -> dict:
-        if not self.position:
-            raise ValueError("no open position")
+    def close_position(self, price: float | None = None) -> dict:
+        """Record that you sold (cashed out). Price defaults to the live bid for your side."""
         pos = self.position
-        pnl = (price - pos.avg_price) * pos.qty - fee_per_contract(price, pos.qty, self.fees) * pos.qty
+        if not pos:
+            raise ValueError("no open position")
+        if price is None:
+            m = self.tracker.current
+            if m is None or m.ticker != pos.ticker:
+                raise ValueError("that window is over; enter the price you sold at (or wait for settlement)")
+            price = Quotes.from_market(m).bid(pos.side)
+            if price is None:
+                raise ValueError("no live bid; enter the price you sold at")
+        if not (0 <= price <= 1):
+            raise ValueError("price must be between 0 and 1 dollars")
+        proceeds = cash_out(pos.qty, price, self.fees)
+        pnl = proceeds - pos.cost
         self.store.close_position(pos.id, time.time(), price, pnl)
-        self.log_event("you", f"you sold {pos.qty} {pos.side} @ {cents(price)} → {'+' if pnl >= 0 else ''}{pnl:.2f} after fee")
+        self.log_event("you", f"you sold {qty_text(pos.qty)} {pos.side} @ {cents(price)} → cash out ${proceeds:.2f}, "
+                              f"{'+' if pnl >= 0 else ''}{pnl:.2f}")
         self.position = None
-        return {"pnl": round(pnl, 2)}
+        return {"pnl": round(pnl, 2), "cash_out": round(proceeds, 2)}
 
     def cancel_position(self):
         if self.position:
-            self.store.close_position(self.position.id, time.time(), self.position.avg_price, 0.0)
+            self.store.delete_position(self.position.id)
             self.log_event("you", "position entry removed")
             self.position = None
 
@@ -252,11 +333,12 @@ class Engine:
         m = self.tracker.current
         tick = self.feed.latest()
         health = self.feed.health()
-        if tick and now - self._last_tick_store >= 1.0:
-            self._last_tick_store = now
+        if tick and tick.ts != self._last_stored_tick_ts:
+            self._last_stored_tick_ts = tick.ts
             self.store.add_tick(tick.ts, self.feed.name, tick.price)
         pred = sig = None
         tau = elapsed = None
+        quotes_fresh = self.tracker.quotes_fresh(QUOTE_MAX_AGE_S, now)
         self._resolve_closed_windows(now)
         if m is not None and tick is not None:
             at = clock.now()
@@ -265,27 +347,45 @@ class Engine:
             buf = self.feed.buffer
             # horizon = trading time left + the settlement candle (settles on that candle's close)
             tau_eff = (tau if tau is not None else 0.0) + self.cfg.trading.settle_lag_s
-            pred = self.model.predict(tick.price, m.strike, tau_eff, m.yes_mid, health.age_s,
+            pred = self.model.predict(tick.price, m.strike, tau_eff, m.yes_mid if quotes_fresh else None, health.age_s,
                                       buf.price_at(now - 60), buf.price_at(now - 180), buf.price_at(now - 300))
+            quotes = Quotes.from_market(m) if quotes_fresh else Quotes()
             pos = self.position if (self.position and self.position.ticker == m.ticker) else None
-            sig = self.decider.decide(pred, Quotes.from_market(m), tick.price, m.strike, tau, elapsed, pos)
+            if pos is not None and quotes_fresh:
+                bid = quotes.bid(pos.side)
+                if bid is not None and (pos.high_bid is None or bid > pos.high_bid):
+                    pos.high_bid = bid
+                    self.store.update_position_high(pos.id, bid)
+            sig = self.decider.decide(pred, quotes, tick.price, m.strike, tau, elapsed, pos)
             if tau is not None and tau > 0 and now - self._last_snapshot >= 15:
                 self._last_snapshot = now
                 self.store.add_snapshot(now, m.ticker, tau, tick.price, m.strike, pred)
-            if sig.key != self._last_signal_key or now - self._last_signal_log >= 60:
+            if sig.key != self._last_signal_key:
                 self.store.add_signal(now, m.ticker, sig, pred, tau)
-                self._last_signal_log = now
-                if sig.key != self._last_signal_key and sig.action in ("BUY", "SELL"):
-                    self.notifier.notify(f"WTI 15m: {sig.action} {sig.side or ''}".strip(), sig.headline,
-                                         "Glass" if sig.action == "BUY" else "Submarine")
-                    self.log_event("signal", sig.headline)
+                self.log_event("signal", sig.headline)
                 self._last_signal_key = sig.key
-            self._paper_step(m, pred, sig, tick.price, tau, elapsed, now)
+            self._maybe_notify(sig, now)
+            self._paper_step(m, pred, sig, tick.price, tau, elapsed, now, quotes)
         self.pred = pred
         self.signal = sig
-        self.state = self._build_state(now, m, tick, health, pred, sig, tau, elapsed)
+        self.state = self._build_state(now, m, tick, health, pred, sig, tau, elapsed, quotes_fresh)
 
-    def _paper_step(self, m: Market, pred: Prediction, sig: Signal, price: float, tau, elapsed, now: float):
+    def _maybe_notify(self, sig: Signal, now: float):
+        """Notify on BUY/SELL only once the call has held for 2 consecutive seconds, at most once per 30 s per action.
+        The on-screen box still flips instantly; this only de-spams the sound/notification."""
+        if sig.action not in ("BUY", "SELL"):
+            self._pending_key, self._pending_count = None, 0
+            return
+        if sig.key == self._pending_key:
+            self._pending_count += 1
+        else:
+            self._pending_key, self._pending_count = sig.key, 1
+        if self._pending_count == 2 and now - self._last_notified.get(sig.action, 0.0) >= 30:
+            self._last_notified[sig.action] = now
+            self.notifier.notify(f"WTI 15m: {sig.action} {sig.side or ''}".strip(), sig.headline,
+                                 "Glass" if sig.action == "BUY" else "Submarine")
+
+    def _paper_step(self, m: Market, pred: Prediction, sig: Signal, price: float, tau, elapsed, now: float, quotes: Quotes):
         paper = self.store.open_paper_trade_for(m.ticker)
         if paper is None:
             if sig.action == "BUY" and m.ticker not in self._paper_done and sig.price:
@@ -296,12 +396,13 @@ class Engine:
             return
         if tau is not None and tau <= 0:
             return  # settlement will close it
-        pos = Position(m.ticker, paper["side"], paper["size"], paper["entry_price"], paper["entry_ts"], paper["id"])
-        psig = self.decider.decide(pred, Quotes.from_market(m), price, m.strike, tau, elapsed, pos)
-        if psig.action == "SELL" and psig.price:
-            fee = fee_per_contract(psig.price, pos.qty, self.fees) * pos.qty
+        pos = Position(m.ticker, paper["side"], float(paper["size"]), paper["entry_price"], paper["entry_ts"], paper["id"],
+                       amount=paper["entry_price"] * paper["size"] + (paper["entry_fee"] or 0.0))
+        psig = self.decider.decide(pred, quotes, price, m.strike, tau, elapsed, pos)
+        if psig.action == "SELL" and psig.price is not None:
+            fee = taker_fee(psig.price, pos.qty, self.fees)
             self.store.close_paper_trade(paper["id"], now, psig.price, fee, psig.reasons[0] if psig.reasons else "sell")
-            self.log_event("paper", f"paper SELL {pos.qty} {pos.side} @ {cents(psig.price)} ({psig.reasons[0] if psig.reasons else ''})")
+            self.log_event("paper", f"paper SELL {qty_text(pos.qty)} {pos.side} @ {cents(psig.price)} ({psig.reasons[0] if psig.reasons else ''})")
 
     # ------------------------------------------------------------------ state for the UI
     def log_event(self, kind: str, text: str):
@@ -319,7 +420,24 @@ class Engine:
             return data
         return cached
 
-    def _build_state(self, now, m, tick, health, pred, sig, tau, elapsed) -> dict:
+    def _position_state(self, m: Market | None, sig: Signal | None, quotes_fresh: bool) -> dict | None:
+        pos = self.position
+        if pos is None:
+            return None
+        d = pos.as_dict()
+        live: dict = {"bid": None, "cash_out": None, "pnl": None, "awaiting_settlement": False, "quotes_fresh": quotes_fresh}
+        if m is not None and m.ticker == pos.ticker:
+            bid = Quotes.from_market(m).bid(pos.side) if quotes_fresh else None
+            if bid is not None:
+                cash = cash_out(pos.qty, bid, self.fees)
+                live.update({"bid": bid, "cash_out": round(cash, 2), "pnl": round(cash - pos.cost, 2)})
+        else:
+            live["awaiting_settlement"] = True
+        d["live"] = live
+        d["scalp"] = sig.scalp if (sig is not None and sig.scalp) else None
+        return d
+
+    def _build_state(self, now, m, tick, health, pred, sig, tau, elapsed, quotes_fresh) -> dict:
         paper = self.store.open_paper_trade_for(m.ticker) if m else None
         return {
             "now": now,
@@ -328,6 +446,7 @@ class Engine:
             "series": self.tracker.series.summary() if self.tracker.series else None,
             "fees": {"fee_type": self.fees.fee_type, "multiplier": self.fees.multiplier, "is_estimate": self.fees.is_estimate},
             "market": m.summary() if m else None,
+            "quotes_fresh": quotes_fresh,
             "seconds_left": None if tau is None else round(tau, 1),
             "seconds_elapsed": None if elapsed is None else round(elapsed, 1),
             "countdown": clock.fmt_countdown(tau),
@@ -335,10 +454,11 @@ class Engine:
             "feed": health.as_dict(),
             "prediction": pred.as_dict() if pred else None,
             "signal": sig.as_dict() if sig else None,
-            "position": self.position.as_dict() if self.position else None,
+            "position": self._position_state(m, sig, quotes_fresh),
             "paper": paper,
             "tracker": {"last_error": self.tracker.last_error, "polls": self.tracker.poll_count,
-                        "pending_settlements": list(self.tracker.pending.keys())},
+                        "pending_settlements": list(self.tracker.pending.keys()),
+                        "quote_age_s": None if self.tracker.last_quote_ts is None else round(now - self.tracker.last_quote_ts, 1)},
             "events": list(self.events)[:25],
             "config": {"bankroll": self.cfg.trading.bankroll, "edge_min": self.cfg.trading.edge_min,
                        "min_warmup_minutes": self.cfg.trading.min_warmup_minutes, "feed": self.cfg.feed.source,
@@ -358,7 +478,7 @@ class Engine:
                "open_time": m.open_time.timestamp() if (m and m.open_time) else None,
                "close_time": m.close_time.timestamp() if (m and m.close_time) else None}
         if self.pred and m and m.close_time:
-            out["cone"] = {"sigma": self.pred.sigma, "price": ticks[-1][1] if ticks else None}
+            out["cone"] = {"sigma": self.pred.sigma_eff or self.pred.sigma, "price": ticks[-1][1] if ticks else None}
         return out
 
 
@@ -372,4 +492,5 @@ def _float(value, default: float) -> float:
 def _position_from_row(row: dict | None) -> Position | None:
     if not row:
         return None
-    return Position(row["ticker"], row["side"], int(row["qty"]), float(row["avg_price"]), float(row["opened_ts"]), row["id"])
+    return Position(row["ticker"], row["side"], float(row["qty"]), float(row["avg_price"]), float(row["opened_ts"]), row["id"],
+                    row.get("amount"), float(row.get("entry_fee") or 0.0), row.get("high_bid"))

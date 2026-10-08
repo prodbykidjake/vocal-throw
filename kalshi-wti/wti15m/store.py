@@ -32,8 +32,8 @@ CREATE INDEX IF NOT EXISTS signals_ticker ON signals(ticker);
 CREATE TABLE IF NOT EXISTS paper_trades (id INTEGER PRIMARY KEY, ticker TEXT, side TEXT, entry_ts REAL, entry_price REAL,
   size INTEGER, entry_fee REAL, exit_ts REAL, exit_price REAL, exit_fee REAL, exit_reason TEXT, pnl REAL,
   confidence TEXT, p_side REAL);
-CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, ticker TEXT, side TEXT, qty INTEGER, avg_price REAL,
-  opened_ts REAL, closed_ts REAL, exit_price REAL, pnl REAL, note TEXT);
+CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, ticker TEXT, side TEXT, qty REAL, avg_price REAL,
+  opened_ts REAL, closed_ts REAL, exit_price REAL, pnl REAL, note TEXT, amount REAL, entry_fee REAL, high_bid REAL);
 CREATE TABLE IF NOT EXISTS model_state (key TEXT PRIMARY KEY, value TEXT, updated_ts REAL);
 """
 
@@ -56,6 +56,14 @@ class Store:
         for col, typ in (("settle_price", "REAL"), ("feed_error_lag0", "REAL"), ("feed_error_lag60", "REAL")):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE windows ADD COLUMN {col} {typ}")
+        have = {row[1] for row in self.conn.execute("PRAGMA table_info(positions)")}
+        for col, typ in (("amount", "REAL"), ("entry_fee", "REAL"), ("high_bid", "REAL")):
+            if col not in have:
+                self.conn.execute(f"ALTER TABLE positions ADD COLUMN {col} {typ}")
+
+    def mark_status(self, ticker: str, status: str):
+        self.conn.execute("UPDATE windows SET status=?, updated_ts=? WHERE ticker=? AND result IS NULL",
+                          (status, time.time(), ticker))
 
     def close(self):
         self.conn.close()
@@ -114,6 +122,11 @@ class Store:
     def add_ticks(self, rows: list[tuple[float, str, float]]):
         self.conn.executemany("INSERT INTO ticks (ts, source, price) VALUES (?,?,?)", rows)
 
+    def last_tick_before(self, ts: float, source: str, window_s: float = 5.0) -> float | None:
+        row = self.conn.execute("SELECT price FROM ticks WHERE source=? AND ts<=? AND ts>=? ORDER BY ts DESC LIMIT 1",
+                                (source, ts, ts - window_s)).fetchone()
+        return row[0] if row else None
+
     def ticks_since(self, ts: float, source: str | None = None, limit: int = 20000) -> list[tuple[float, float]]:
         if source:
             rows = self.conn.execute("SELECT ts, price FROM ticks WHERE ts>=? AND source=? ORDER BY ts LIMIT ?",
@@ -162,8 +175,30 @@ class Store:
         return np.array(X, dtype=float), np.array(y, dtype=float), meta
 
     def labeled_tickers(self) -> list[str]:
-        rows = self.conn.execute("SELECT DISTINCT ticker FROM snapshots WHERE label IS NOT NULL ORDER BY MIN(ts)").fetchall()
+        rows = self.conn.execute("SELECT ticker FROM snapshots WHERE label IS NOT NULL GROUP BY ticker ORDER BY MIN(ts)").fetchall()
         return [r[0] for r in rows]
+
+    def training_rows_recent(self, n_windows: int = 50) -> tuple[np.ndarray, np.ndarray, int]:
+        """Labeled snapshots of the last `n_windows` settled windows (pooled batch for the calibrator)."""
+        rows = self.conn.execute(
+            """SELECT ticker FROM windows WHERE result IN ('yes','no') ORDER BY close_time DESC LIMIT ?""", (n_windows,)).fetchall()
+        tickers = [r[0] for r in rows]
+        if not tickers:
+            return np.zeros((0, 9)), np.zeros(0), 0
+        marks = ",".join("?" * len(tickers))
+        snaps = self.conn.execute(f"SELECT features, label, ticker FROM snapshots WHERE label IS NOT NULL AND ticker IN ({marks})",
+                                  tickers).fetchall()
+        X, y, seen = [], [], set()
+        for r in snaps:
+            try:
+                feats = json.loads(r["features"] or "[]")
+            except ValueError:
+                continue
+            if feats:
+                X.append(feats)
+                y.append(float(r["label"]))
+                seen.add(r["ticker"])
+        return np.array(X, dtype=float), np.array(y, dtype=float), len(seen)
 
     # ------------------------------------------------------------------ signals / paper
     def add_signal(self, ts: float, ticker: str, sig, pred, seconds_left: float | None):
@@ -202,10 +237,18 @@ class Store:
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------ user positions
-    def open_position(self, ticker: str, side: str, qty: int, price: float, ts: float, note: str = "") -> int:
-        cur = self.conn.execute("INSERT INTO positions (ticker, side, qty, avg_price, opened_ts, note) VALUES (?,?,?,?,?,?)",
-                                (ticker, side, qty, price, ts, note))
+    def open_position(self, ticker: str, side: str, qty: float, price: float, ts: float, note: str = "",
+                      amount: float | None = None, entry_fee: float = 0.0, high_bid: float | None = None) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO positions (ticker, side, qty, avg_price, opened_ts, note, amount, entry_fee, high_bid) VALUES (?,?,?,?,?,?,?,?,?)",
+            (ticker, side, qty, price, ts, note, amount, entry_fee, high_bid))
         return int(cur.lastrowid)
+
+    def update_position_high(self, pos_id: int, high_bid: float):
+        self.conn.execute("UPDATE positions SET high_bid=? WHERE id=?", (high_bid, pos_id))
+
+    def delete_position(self, pos_id: int):
+        self.conn.execute("DELETE FROM positions WHERE id=?", (pos_id,))
 
     def get_open_position(self) -> dict | None:
         row = self.conn.execute("SELECT * FROM positions WHERE closed_ts IS NULL ORDER BY id DESC LIMIT 1").fetchone()

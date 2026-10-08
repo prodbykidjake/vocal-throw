@@ -74,24 +74,36 @@
       <div id="chart"></div>
     </div>
 
-    <div class="card">
-      <div class="card-title">Your position <span class="muted">(tell the coach what you did)</span></div>
-      <div id="position-none">
-        <form id="pos-form" class="row">
-          <select name="side"><option>UP</option><option>DOWN</option></select>
-          <input name="qty" type="number" min="1" value="1" placeholder="contracts">
-          <input name="price" type="number" step="0.01" min="0.01" max="0.99" placeholder="price e.g. 0.47">
-          <button type="submit">I bought this</button>
-          <button type="button" id="use-signal" class="ghost">use the signal</button>
+    <div class="card" id="position-card">
+      <div class="card-title">Your position <span class="muted">(tell the coach what you bought; it tracks it live)</span></div>
+      <div id="pos-entry">
+        <div class="row side-row" id="side-buttons">
+          <button type="button" class="side-btn up" data-side="UP">UP</button>
+          <button type="button" class="side-btn down" data-side="DOWN">DOWN</button>
+        </div>
+        <form id="pos-form" class="row hidden">
+          <span class="pill" id="pos-side-label">UP</span>
+          <label class="inline">at <input name="price_cents" type="number" step="0.1" min="0.1" max="99.9" class="short"> ¢</label>
+          <input name="amount" type="number" step="0.01" min="0.01" placeholder="Purchase Amount $" class="amount" required>
+          <button type="submit">Enter</button>
+          <button type="button" id="pos-back" class="ghost">back</button>
         </form>
       </div>
       <div id="position-open" class="hidden">
-        <div id="position-text"></div>
-        <form id="close-form" class="row">
-          <input name="price" type="number" step="0.01" min="0.01" max="0.99" placeholder="sold at e.g. 0.80">
-          <button type="submit">I sold</button>
-          <button type="button" id="cancel-pos" class="ghost">remove entry</button>
-        </form>
+        <div class="scalp-box" id="scalp-box">HOLD</div>
+        <div class="pos-grid">
+          <div><div class="label">Position</div><div class="big2 mono" id="pos-shares">--</div><div class="sub" id="pos-entry-text"></div></div>
+          <div><div class="label">Sell price now</div><div class="big2 mono" id="pos-bid">--</div><div class="sub" id="pos-bid-sub"></div></div>
+          <div><div class="label">Cash out</div><div class="big2 mono" id="pos-cash">--</div><div class="sub mono" id="pos-pnl"></div></div>
+        </div>
+        <div class="row">
+          <button type="button" id="sold-now">I sold at the bid</button>
+          <form id="close-form" class="row">
+            <input name="price_cents" type="number" step="0.1" min="0" max="100" placeholder="sold at ¢" class="short" required>
+            <button type="submit">I sold at this</button>
+          </form>
+          <button type="button" id="cancel-pos" class="ghost">remove</button>
+        </div>
       </div>
       <div class="sub" id="paper-line"></div>
     </div>

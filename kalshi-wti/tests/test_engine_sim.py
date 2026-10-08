@@ -32,15 +32,24 @@ async def test_engine_builds_live_state_on_simulated_market(tmp_path):
         assert st["feed"]["symbol"] == "SIM:WTI"
         chart = engine.chart(5)
         assert chart["ticks"] and chart["strike"] == st["market"]["strike"]
-        # user position round trip
-        pos = engine.open_position("DOWN", 2, 0.5)
+        # user position round trip: $3 of DOWN at the live ask -> fractional shares, live cash-out, scalp box
+        pos = engine.open_position("DOWN", 3.0)
+        assert pos.avg_price == st["market"]["no_ask"] and abs(pos.qty * pos.avg_price - 3.0) < 1e-9
         engine.step()
-        assert engine.state["position"]["qty"] == 2
+        ps = engine.state["position"]
+        assert abs(ps["qty"] - pos.qty) < 1e-3 and ps["live"]["cash_out"] is not None and ps["live"]["pnl"] is not None
+        assert ps["scalp"]["action"] in ("SELL NOW", "SELL AT", "HOLD")
         assert engine.state["signal"]["action"] in ("HOLD", "SELL")
-        res = engine.close_position(0.6)
-        assert "pnl" in res and engine.position is None
+        res = engine.close_position()  # at the live bid
+        assert "pnl" in res and "cash_out" in res and engine.position is None
         with pytest.raises(ValueError):
-            engine.open_position("SIDEWAYS", 1, 0.5)
+            engine.open_position("SIDEWAYS", 1.0)
+        engine.open_position("UP", 2.0, 0.40)
+        with pytest.raises(ValueError):
+            engine.close_position(5.0)  # not a contract price
+        engine.cancel_position()
+        rows = engine.store.positions()
+        assert engine.position is None and len(rows) == 1 and rows[0]["closed_ts"] is not None  # only the real trade remains
     finally:
         await feed.stop()
         store.close()
@@ -66,6 +75,9 @@ async def test_next_target_resolves_previous_settlement(tmp_path):
         prev = Market.from_api({"ticker": "PREV", "status": "closed", "floor_strike": 90.00,
                                 "open_time": close_ts - 900, "close_time": close_ts})
         store.upsert_window(prev)
+        # recorded ticks around the close and around the settlement candle's close (the buffer only has 60 s samples there)
+        store.add_tick(close_ts - 1.0, "sim", 90.02)
+        store.add_tick(close_ts + 58.0, "sim", 90.03)
         engine._close_capture["PREV"] = {"feed_price": 90.02, "p_market": 0.6, "close_ts": close_ts, "p_model": 0.55,
                                          "strike": 90.00, "settle_price": None, "err_lag0": None, "err_lag60": None}
         engine.tracker.current = Market.from_api({"ticker": "CUR", "status": "open", "floor_strike": 90.05,
@@ -86,3 +98,34 @@ async def test_next_target_resolves_previous_settlement(tmp_path):
     finally:
         await feed.stop()
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_recovery_requeues_unsettled_window_and_settles_restored_position(tmp_path):
+    import time as _time
+
+    from wti15m.kalshi import Market
+
+    cfg = Config()
+    store = Store(str(tmp_path / "rec.db"))
+    now = _time.time()
+    close_ts = now - 120
+    old_win = Market.from_api({"ticker": "OLD", "status": "open", "floor_strike": 90.0,
+                               "open_time": close_ts - 900, "close_time": close_ts})
+    store.upsert_window(old_win)
+    store.add_tick(close_ts - 1, "sim", 90.07)
+    # a position left open on a window that has since settled
+    settled = Market.from_api({"ticker": "DONE", "status": "finalized", "result": "yes", "floor_strike": 89.0,
+                               "open_time": close_ts - 1800, "close_time": close_ts - 900})
+    store.upsert_window(settled)
+    store.open_position("DONE", "UP", 10.0, 0.30, now - 1000, "", 3.0, 0.02, 0.35)
+    feed = SimFeed(start_price=90.0, warmup_minutes=5, seed=3)
+    client = SimKalshi(feed, window_s=120)
+    engine = Engine(cfg, store, client, feed, Notifier(desktop=False, sound=False))
+    assert "OLD" in engine.tracker.pending
+    assert engine._close_capture["OLD"]["feed_price"] == 90.07  # rebuilt from the ticks table
+    assert engine._window_strikes[int(round(close_ts - 900))] == 90.0
+    assert engine.position is None  # settled at 1.0: pnl = 10 - 3.0
+    pos_rows = store.positions()
+    assert pos_rows and pos_rows[0]["exit_price"] == 1.0 and abs(pos_rows[0]["pnl"] - 7.0) < 1e-9
+    store.close()

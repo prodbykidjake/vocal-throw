@@ -47,8 +47,8 @@ class TickBuffer:
         self.count = 0
 
     def add(self, ts: float, price: float):
-        if price <= 0:
-            return
+        if price <= 0 or ts > time.time() + 2.0:
+            return  # bad price, or a timestamp in the future (e.g. an in-progress candle's end time)
         self.count += 1
         if self._ts and ts - self._ts[-1] < 1.0 and ts >= self._ts[-1]:
             self._px[-1] = price  # same second: keep the latest print
@@ -80,6 +80,17 @@ class TickBuffer:
             return None
         idx = bisect.bisect_right(self._ts, ts) - 1
         return self._px[idx] if idx >= 0 else None
+
+    def last_at_or_before(self, ts: float) -> Tick | None:
+        if not self._ts or ts < self._ts[0]:
+            return None
+        idx = bisect.bisect_right(self._ts, ts) - 1
+        return Tick(self._ts[idx], self._px[idx]) if idx >= 0 else None
+
+    def price_near(self, ts: float, window_s: float = 5.0) -> float | None:
+        """Last price at or before `ts`, only if a tick exists within `window_s` before it."""
+        tick = self.last_at_or_before(ts)
+        return tick.price if tick is not None and ts - tick.ts <= window_s else None
 
     def since(self, ts: float) -> list[Tick]:
         if not self._ts:

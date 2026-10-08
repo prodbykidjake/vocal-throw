@@ -108,3 +108,27 @@ def test_model_predict_confidence_labels():
     assert stale.confidence == "stale"
     cold = Model(min_warmup_s=1800)
     assert cold.predict(90.0, 90.0, 600, None, 0.1).confidence == "warming_up"
+
+
+def test_fit_pooled_is_stable_across_single_label_windows():
+    rng = np.random.default_rng(1)
+    cal = Calibrator()
+    windows = []
+    for w in range(40):
+        label = float(w % 2)
+        X = []
+        for _ in range(30):
+            x = np.zeros(DIM)
+            x[0] = 1.0
+            x[1] = rng.normal(1.5 if label else -1.5, 0.5)  # base model is informative
+            x[2] = x[1] + rng.normal(0, 0.3)
+            X.append(x)
+        windows.append((np.array(X), np.full(30, label)))
+    Xp = np.concatenate([w[0] for w in windows])
+    yp = np.concatenate([w[1] for w in windows])
+    cal.fit_pooled(Xp, yp, len(windows))
+    assert cal.n_windows == 40 and abs(cal.w[0]) < 0.5  # bias stays near 0 with balanced labels
+    x = np.zeros(DIM)
+    x[0] = 1.0
+    p_final, _ = cal.predict(0.5, x)
+    assert 0.35 < p_final < 0.65

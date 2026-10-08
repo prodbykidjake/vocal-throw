@@ -68,20 +68,26 @@ def parse_strike(d: dict) -> tuple[float | None, str]:
         value = d.get(key)
         if value not in (None, ""):
             try:
-                return float(value), key
+                f = float(value)
             except (TypeError, ValueError):
-                pass
+                continue
+            if f > 0:  # 0 / negative = not published yet
+                return f, key
     custom = d.get("custom_strike")
     if isinstance(custom, dict):
         for value in custom.values():
             try:
-                return float(value), "custom_strike"
+                f = float(value)
             except (TypeError, ValueError):
                 continue
+            if f > 0:
+                return f, "custom_strike"
     for key in ("yes_sub_title", "subtitle", "title", "no_sub_title"):
         match = _STRIKE_RE.search(str(d.get(key) or ""))
         if match:
-            return float(match.group(1).replace(",", "")), key
+            f = float(match.group(1).replace(",", ""))
+            if f > 0:
+                return f, key
     return None, "none"
 
 
@@ -355,7 +361,7 @@ class MarketTracker:
 
     def __init__(self, client, series_ticker: str, poll_interval: float = 1.0,
                  on_event: EventHandler | None = None, settlement_poll_s: float = 5.0,
-                 settlement_timeout_s: float = 20 * 60):
+                 settlement_timeout_s: float = 90 * 60):
         self.client = client
         self.series_ticker = series_ticker
         self.poll_interval = poll_interval
@@ -367,8 +373,9 @@ class MarketTracker:
         self.pending: dict[str, tuple[Market, float]] = {}  # ticker -> (market, closed_at_epoch)
         self.last_error: str | None = None
         self.last_poll: float | None = None
+        self.last_quote_ts: float | None = None  # last poll that actually returned the current market
         self.poll_count = 0
-        self._last_settle_check = 0.0
+        self._settle_checked: dict[str, float] = {}
 
     async def _emit(self, kind: str, market: Market):
         if self.on_event is None:
@@ -401,8 +408,10 @@ class MarketTracker:
         self.poll_count += 1
 
         live = select_live_market(markets, at)
+        stale = False
         if live is None and self.current is not None and self.current.is_live(at):
-            live = self.current  # transient empty response: keep the current window
+            live = self.current  # transient empty/failed response: keep the window, but its quotes are stale
+            stale = True
         if live is not None and (self.current is None or live.ticker != self.current.ticker):
             if self.current is not None:
                 self.pending[self.current.ticker] = (self.current, at.timestamp())
@@ -417,15 +426,23 @@ class MarketTracker:
             self.current = None
             await self._emit("window_close", closed)
 
-        if self.current is not None and live is not None:
+        if self.current is not None and live is not None and not stale:
+            self.last_quote_ts = at.timestamp()
             await self._emit("quote", self.current)
 
-        if self.pending and at.timestamp() - self._last_settle_check >= self.settlement_poll_s:
-            self._last_settle_check = at.timestamp()
+        if self.pending:
             await self._check_settlements(at.timestamp())
+
+    def quotes_fresh(self, max_age_s: float = 10.0, at: float | None = None) -> bool:
+        return self.last_quote_ts is not None and ((at or clock.now().timestamp()) - self.last_quote_ts) <= max_age_s
 
     async def _check_settlements(self, now_epoch: float):
         for ticker, (market, closed_at) in list(self.pending.items()):
+            # every 5 s for the first 20 minutes, then once a minute until the timeout
+            cadence = self.settlement_poll_s if now_epoch - closed_at < 20 * 60 else 60.0
+            if now_epoch - self._settle_checked.get(ticker, 0.0) < cadence:
+                continue
+            self._settle_checked[ticker] = now_epoch
             try:
                 fresh = await self.client.get_market(ticker)
             except Exception as exc:  # KalshiError, network, or a market that vanished
@@ -434,10 +451,12 @@ class MarketTracker:
             if fresh.result in ("yes", "no"):
                 fresh.strike = fresh.strike if fresh.strike is not None else market.strike
                 del self.pending[ticker]
+                self._settle_checked.pop(ticker, None)
                 await self._emit("settled", fresh)
             elif now_epoch - closed_at > self.settlement_timeout_s:
                 log.warning("gave up waiting for settlement of %s", ticker)
                 del self.pending[ticker]
+                self._settle_checked.pop(ticker, None)
                 await self._emit("settlement_timeout", fresh)
 
     async def run(self, stop: asyncio.Event | None = None):

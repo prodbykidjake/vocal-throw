@@ -22,6 +22,7 @@ def run(store: Store, since: str | None = None, retrain: bool = False, save: boo
             tickers.append(row["ticker"])
     cal = Calibrator()
     rows_out = []
+    history: list[tuple[np.ndarray, np.ndarray]] = []  # per settled window, oldest first
     for ticker in tickers:
         X, y, meta = store.training_rows(ticker)
         if len(X) == 0:
@@ -34,8 +35,13 @@ def run(store: Store, since: str | None = None, retrain: bool = False, save: boo
                 p_final = m["p_final"]
             rows_out.append({"ticker": ticker, "seconds_left": m["seconds_left"], "p_final": p_final, "p_base": p_base,
                              "p_market": m["p_market"], "label": label})
-        if retrain and len(X) >= 3:
-            cal.fit_window(X, y)
+        if retrain:
+            history.append((X, y))
+            recent = history[-50:]
+            Xp = np.concatenate([h[0] for h in recent])
+            yp = np.concatenate([h[1] for h in recent])
+            if len(Xp) >= 20 and len(set(yp.tolist())) == 2:
+                cal.fit_pooled(Xp, yp, len(recent))
     report: dict = {"windows": len(tickers), "snapshots": len(rows_out), "retrained": retrain, "brier": {}}
     for name, (lo, hi) in BUCKETS.items():
         sel = [r for r in rows_out if lo <= r["seconds_left"] <= hi]

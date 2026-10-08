@@ -93,18 +93,56 @@ def test_cold_model_waits_for_warmup():
 def test_position_management_rules():
     m = warmed_model()
     eng = engine()
-    pos = Position("T", "DOWN", 6, 0.61, 0.0)
-    # model flipped: price now well above target -> Down prob small -> SELL stop
+    pos = Position("T", "DOWN", 6, 0.61, 0.0, amount=3.66)
+    # model flipped: price now well above target -> Down prob small; bid 0.14 is far above the model's value -> SELL (overpriced)
     pred = m.predict(90.35, 90.21, 300, p_market=0.85, feed_age_s=0.3)
     sig = eng.decide(pred, Quotes(0.84, 0.86, 0.14, 0.16), 90.35, 90.21, 300, 600, pos)
-    assert sig.action == "SELL" and sig.reasons == ["stop"]
+    assert sig.action == "SELL" and sig.reasons[0] in ("overpriced", "stop")
+    assert sig.scalp["action"] == "SELL NOW" and sig.scalp["pnl"] < 0
     # ride to settlement: 90 s left, far below target
     pred = m.predict(90.00, 90.21, 90, p_market=0.02, feed_age_s=0.3)
     sig = eng.decide(pred, Quotes(0.01, 0.03, 0.97, 0.99), 90.00, 90.21, 90, 810, pos)
     assert sig.action == "HOLD" and sig.reasons == ["ride_to_settle"]
-    # take profit: bid 0.85 vs entry 0.61 with little edge left
-    pred = m.predict(90.10, 90.21, 400, p_market=0.15, feed_age_s=0.3)
-    sig = eng.decide(pred, Quotes(0.14, 0.16, 0.84, 0.86), 90.10, 90.21, 400, 500, pos)
-    assert sig.action in ("SELL", "HOLD")
-    if sig.action == "SELL":
-        assert sig.reasons[0] in ("take_profit", "overpriced")
+    # in profit with the market behind the model: HOLD with a concrete SELL AT target above the bid
+    pred = m.predict(90.12, 90.21, 500, p_market=0.30, feed_age_s=0.3)
+    sig = eng.decide(pred, Quotes(0.29, 0.31, 0.69, 0.71), 90.12, 90.21, 500, 400, pos)
+    assert sig.action in ("HOLD", "SELL")
+    if sig.action == "HOLD":
+        assert sig.scalp["action"] == "SELL AT" and sig.scalp["target"] > 0.69
+
+
+def test_stop_does_not_sell_into_a_worthless_bid():
+    m = warmed_model()
+    eng = engine()
+    pos = Position("T", "UP", 20, 0.55, 0.0)
+    # UP now ~35% by the model but the bid is 5c: selling locks in far more loss than the position is worth
+    pred = m.predict(90.17, 90.21, 300, p_market=0.06, feed_age_s=0.3)
+    assert pred.p_final < 0.5
+    sig = eng.decide(pred, Quotes(0.05, 0.07, 0.93, 0.95), 90.17, 90.21, 300, 600, pos)
+    if pred.p_final <= eng.cfg.stop_prob:
+        assert sig.action == "HOLD" and sig.reasons == ["too_late_to_cut"]
+
+
+def test_rollover_lock_in():
+    m = warmed_model()
+    eng = engine()
+    pos = Position("T", "UP", 100, 0.02, 0.0, amount=2.0, high_bid=0.10)
+    pred = m.predict(90.24, 90.21, 400, p_market=0.07, feed_age_s=0.3)
+    sig = eng.decide(pred, Quotes(0.06, 0.08, 0.92, 0.94), 90.24, 90.21, 400, 500, pos)
+    # bid 0.06 is 40% off the 0.10 high while still in profit -> lock it in (unless the model says the market overpays, also a SELL)
+    assert sig.action == "SELL" and sig.scalp["action"] == "SELL NOW"
+
+
+def test_cents_formatting_keeps_sub_cent_prices():
+    from wti15m.decision import cents, qty_text
+    assert cents(0.013) == "1.3¢" and cents(0.49) == "49¢" and cents(0.988) == "98.8¢" and cents(None) == "--"
+    assert qty_text(48.44) == "48.44" and qty_text(20.0) == "20"
+
+
+def test_cash_out_matches_kalshi_sheet_shape():
+    from wti15m.decision import cash_out
+    from wti15m.fees import taker_fee
+    # 48.44 shares, bid 1.3c -> $0.63 gross minus the taker fee rounded up to the cent (0.07*48.44*0.013*0.987 -> 5c)
+    fee = taker_fee(0.013, 48.44, FeeSchedule())
+    assert fee == 0.05
+    assert abs(cash_out(48.44, 0.013, FeeSchedule()) - (48.44 * 0.013 - fee)) < 1e-9

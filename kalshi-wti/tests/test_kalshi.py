@@ -24,6 +24,7 @@ def test_parse_strike_sources():
     assert parse_strike({"floor_strike": "90.21"}) == (90.21, "floor_strike")
     assert parse_strike({"yes_sub_title": "$90.21 or above"}) == (90.21, "yes_sub_title")
     assert parse_strike({"title": "WTI up or down?"}) == (None, "none")
+    assert parse_strike({"floor_strike": 0, "yes_sub_title": "$0.00 or above"}) == (None, "none")  # not published yet
 
 
 def test_market_from_fixture():

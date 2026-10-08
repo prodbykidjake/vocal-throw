@@ -17,13 +17,13 @@ UI_DIR = pathlib.Path(__file__).resolve().parents[1] / "ui"
 
 class PositionIn(BaseModel):
     side: str
-    qty: int
-    price: float
+    amount: float  # dollars you spent
+    price: float | None = None  # dollars per share (0.026 = 2.6¢); defaults to the live ask
     note: str = ""
 
 
 class CloseIn(BaseModel):
-    price: float
+    price: float | None = None  # defaults to the live bid
 
 
 def create_app(engine: Engine) -> FastAPI:
@@ -79,7 +79,7 @@ def create_app(engine: Engine) -> FastAPI:
     @app.post("/api/position")
     async def open_position(body: PositionIn):
         try:
-            pos = engine.open_position(body.side, body.qty, body.price, body.note)
+            pos = engine.open_position(body.side, body.amount, body.price, body.note)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         return pos.as_dict()

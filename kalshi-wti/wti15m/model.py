@@ -205,6 +205,23 @@ class Calibrator:
         self.n_windows += 1
         self.n_samples += len(X)
 
+    def fit_pooled(self, X: np.ndarray, y: np.ndarray, n_windows: int, iters: int = 300, lr: float = 0.1):
+        """Refit from the prior on a pooled batch of recent windows (both labels present), so the weights
+        reflect many windows instead of random-walking with the latest outcome."""
+        X = np.asarray(X, dtype=float).reshape(-1, DIM)
+        y = np.asarray(y, dtype=float).reshape(-1)
+        if len(X) == 0:
+            return
+        w = self.w0.copy()
+        for _ in range(iters):
+            z = np.clip(X @ w, -30, 30)
+            p = 1.0 / (1.0 + np.exp(-z))
+            grad = X.T @ (p - y) / len(X) + self.l2 * (w - self.w0)
+            w -= lr * grad
+        self.w = w
+        self.n_windows = int(n_windows)
+        self.n_samples = len(X)
+
     def to_json(self) -> str:
         return json.dumps({"w": self.w.tolist(), "n_windows": self.n_windows, "n_samples": self.n_samples,
                            "features": FEATURE_NAMES})
@@ -248,6 +265,7 @@ class Prediction:
     shrink: float
     features: list[float] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    sigma_eff: float = 0.0  # the sigma actually used (basis-widened)
 
     @property
     def p_down(self) -> float:
@@ -259,7 +277,7 @@ class Prediction:
             "p_learner": round(self.p_learner, 4), "p_market": None if self.p_market is None else round(self.p_market, 4),
             "z": round(self.z, 3), "sigma": self.sigma, "sigma_slow": self.sigma_slow, "sigma_fast": self.sigma_fast,
             "tau_s": round(self.tau_s, 1), "gap": round(self.gap, 4), "expected_move": round(self.expected_move, 4),
-            "confidence": self.confidence, "shrink": round(self.shrink, 3), "notes": self.notes,
+            "confidence": self.confidence, "shrink": round(self.shrink, 3), "notes": self.notes, "sigma_eff": self.sigma_eff,
         }
 
 
@@ -302,7 +320,8 @@ class Model:
             sigma_eff = math.sqrt(sigma * sigma + (self.basis_error ** 2) / max(tau_s, 1.0))
         if strike is None:
             return Prediction(0.5, 0.5, 0.5, p_market, 0.0, sigma, self.vol.sigma_slow(), self.vol.sigma_fast(), tau_s,
-                              0.0, sigma_eff * math.sqrt(max(tau_s, 0)), "no_target", self.cal.shrink, [], ["no target yet"])
+                              0.0, sigma_eff * math.sqrt(max(tau_s, 0)), "no_target", self.cal.shrink, [], ["no target yet"],
+                              sigma_eff)
         p_base, z = base_probability(price, strike, sigma_eff, tau_s, self.tie_adj)
         x = self.features(p_base, p_market, price, sigma, tau_s, price_60, price_180, price_300)
         p_final, p_learner = self.cal.predict(p_base, x)
@@ -321,4 +340,4 @@ class Model:
             conf = "coinflip"
         return Prediction(p_final, p_base, p_learner, p_market, z, sigma, self.vol.sigma_slow(), self.vol.sigma_fast(),
                           tau_s, price - strike, sigma_eff * math.sqrt(max(tau_s, 0)), conf, self.cal.shrink,
-                          [float(v) for v in x], notes)
+                          [float(v) for v in x], notes, sigma_eff)

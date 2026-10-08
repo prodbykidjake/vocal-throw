@@ -55,7 +55,7 @@ async def test_tracker_rollover_and_settlement():
     assert "A" in tracker.pending
     # settlement for A arrives
     client.single["A"] = mk("A", -1000, -100, status="settled", result="yes")
-    tracker._last_settle_check = 0
+    tracker._settle_checked.clear()
     await tracker.poll_once()
     assert ("settled", "A") in events and "A" not in tracker.pending
     assert tracker.current.ticker == "B"
@@ -67,6 +67,10 @@ async def test_tracker_keeps_current_on_transient_empty_response():
     tracker = MarketTracker(client, "KXWTI15M")
     client.markets = [mk("A", -60, 60)]
     await tracker.poll_once()
+    assert tracker.quotes_fresh(10)
     client.markets = []
     await tracker.poll_once()
     assert tracker.current is not None and tracker.current.ticker == "A"
+    # the stale fallback must not count as a fresh quote
+    tracker.last_quote_ts -= 20
+    assert not tracker.quotes_fresh(10)

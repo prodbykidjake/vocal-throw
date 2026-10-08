@@ -96,10 +96,15 @@ class HyperliquidFeed(PriceFeed):
         data = await self.info({"type": "candleSnapshot",
                                 "req": {"coin": self.symbol, "interval": "1m", "startTime": start_ms, "endTime": end_ms}})
         closes: list[tuple[float, float]] = []
+        now = time.time()
         for c in data if isinstance(data, list) else []:
             try:
+                start = float(c.get("t", 0)) / 1000.0
                 ts = float(c.get("T", c.get("t"))) / 1000.0
-                closes.append((ts, float(c["c"])))
+                if start > now:
+                    continue
+                # the snapshot includes the in-progress candle: its end time is in the future, clamp to now
+                closes.append((min(ts, now - 0.5), float(c["c"])))
             except (TypeError, ValueError, KeyError, AttributeError):
                 continue
         closes.sort()
