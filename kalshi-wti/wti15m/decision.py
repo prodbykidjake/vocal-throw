@@ -333,10 +333,10 @@ class DecisionEngine:
     def zone_from(self, curve: TouchCurve, breakeven: float) -> tuple[float, float]:
         """SELL BETWEEN low–high: low = the price reached with `zone_low_prob` (never a loss), high = with `zone_high_prob`."""
         cfg = self.cfg
-        low = max(curve.level(cfg.zone_low_prob), breakeven + 0.02)
-        low = min(round(low, 2), 0.93)
-        high = max(curve.level(cfg.zone_high_prob), low + 0.05)
-        high = min(round(high, 2), 0.95)
+        low = round(max(curve.level(cfg.zone_low_prob), breakeven + 0.02), 2)
+        low = min(low, max(0.93, round(breakeven + 0.01, 3)))  # capped, but never under breakeven
+        high = round(max(curve.level(cfg.zone_high_prob), low + 0.05), 2)
+        high = min(high, max(0.95, round(low + 0.02, 3)))
         return low, high
 
     def _manage_position(self, pred: Prediction, quotes: Quotes, price: float, strike: float | None,
@@ -398,7 +398,7 @@ class DecisionEngine:
             fresh_low, fresh_high = self.zone_from(curve, breakeven)
             if low is None or high is None:
                 low = low if low else fresh_low  # a plan's target is kept; otherwise plan the zone now
-                high = min(max(high if high else 0.0, fresh_high, low + 0.05), 0.95)
+                high = max(min(max(high if high else 0.0, fresh_high, low + 0.05), 0.95), round(low + 0.02, 3))
                 commit = (low, high)
             elif now - pos.zone_ts >= cfg.zone_refresh_s:
                 # The low end never chases the price upward (that would move the goalposts every time the bid
@@ -416,7 +416,7 @@ class DecisionEngine:
                 p_recover = curve.touch(breakeven)
         if low is None or high is None:
             low = round(max(breakeven + 0.05, bid + 0.01), 2)
-            high = min(0.95, round(low + 0.10, 2))
+            high = max(min(0.95, round(low + 0.10, 2)), round(low + 0.02, 3))
         zone_txt = f"{cents(low)}–{cents(high)}"
         triggers["zone"] = [low, high]
         if curve is not None:

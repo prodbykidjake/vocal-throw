@@ -91,6 +91,7 @@ class PlanTracker:
         self.last: Plan | None = None  # most recent ended plan (for the cooldown message)
         self.cooldown_until = 0.0
         self._candidate: tuple[str, float] | None = None  # (side, first seen ts)
+        self._candidate_seen = 0.0  # last time the entry signal was a BUY for the candidate's side
         self._miss_since: float | None = None
         self._ticker: str | None = None
         self.no_plan_reason: str | None = None  # why a confirmed setup did not become a plan (shown on the card)
@@ -144,6 +145,7 @@ class PlanTracker:
             target_high = round(min(0.95, max(curve.level(cfg.zone_high_prob), target + 0.05)), 2)
         else:
             target_high = round(min(0.95, target + 0.10), 2)
+        target_high = max(target_high, round(target + 0.02, 3))
         min_scalp = max(cfg.min_scalp_cents / 100.0, 0.3 * limit)
         if target - limit < min_scalp:
             self.no_plan_reason = (f"{side} at {cents(ask)} has edge but not enough room to scalp "
@@ -163,6 +165,7 @@ class PlanTracker:
         if ticker != self._ticker:
             self._ticker = ticker
             self._candidate = None
+            self._candidate_seen = 0.0
             self._miss_since = None
             self.no_plan_reason = None
             if self.plan is not None:
@@ -177,14 +180,20 @@ class PlanTracker:
             self._candidate = None
             return None
         if entry_signal.action != "BUY" or entry_signal.side is None:
+            # a candidate survives a short gap without a BUY (the edge hovering at the threshold), so the
+            # card does not ping-pong between "setup forming" and the plain analysis every second
+            if self._candidate is not None and now - self._candidate_seen <= self.cfg.confirm_s:
+                return None
             self._candidate = None
             self.no_plan_reason = None
             return None
         side = entry_signal.side
         if self._candidate is None or self._candidate[0] != side:
             self._candidate = (side, now)
+            self._candidate_seen = now
             self.no_plan_reason = None
             return None
+        self._candidate_seen = now
         if now - self._candidate[1] < self.cfg.confirm_s:
             return None
         plan = self._build(now, ticker, side, pred, quotes, price, strike, seconds_left)
@@ -206,8 +215,14 @@ class PlanTracker:
                 plan.hit_target = True
         if pred is not None:
             p = p_for_side(pred, plan.side)
-            if p <= hard_stop(plan.p_at_plan, self.cfg) or pred.disagree:
+            if p <= hard_stop(plan.p_at_plan, self.cfg):
                 return self._end(now, "cancelled", f"thesis broke: {plan.side} is {round(p * 100)}% by the model now")
+            if pred.disagree and p < plan.p_at_plan:
+                # model and market far apart AND the model has weakened since the plan: the feed may be wrong.
+                # (A model that got MORE confident while the market lags is the scalp, not a broken thesis.)
+                pm = pred.p_market if plan.side == "UP" else (None if pred.p_market is None else 1 - pred.p_market)
+                return self._end(now, "cancelled", f"market disagrees: Kalshi prices {plan.side} at {round((pm or 0) * 100)}% "
+                                                   f"while the model says {round(p * 100)}% (was {round(plan.p_at_plan * 100)}%)")
             if plan.age_s >= self.cfg.min_hold_s and p <= plan.p_at_plan - 0.20:
                 return self._end(now, "cancelled", f"model cooled off ({round(plan.p_at_plan * 100)}% → {round(p * 100)}%)")
         if ask is None:
@@ -256,14 +271,16 @@ class PlanTracker:
             return Signal("WAIT", self.last.side, None, 0, None, None,
                           f"WAIT · {self.last.status} · analyzing again in {left} s", details, [self.last.status],
                           pred.confidence if pred else "")
-        if entry_signal is not None and entry_signal.action == "BUY":
+        if entry_signal is not None and (entry_signal.action == "BUY" or self._candidate is not None):
+            side = self._candidate[0] if self._candidate else entry_signal.side
             since = self._candidate[1] if self._candidate else now
             held = max(0.0, now - since)
             if self.no_plan_reason and held >= self.cfg.confirm_s:
-                return Signal("WAIT", entry_signal.side, None, 0, entry_signal.edge, entry_signal.p_side,
+                return Signal("WAIT", side, None, 0, entry_signal.edge, entry_signal.p_side,
                               f"WAIT · {self.no_plan_reason}", entry_signal.details[:3], ["no_plan"],
                               entry_signal.confidence, entry_signal.triggers)
-            return Signal("WAIT", entry_signal.side, None, 0, entry_signal.edge, entry_signal.p_side,
-                          f"WAIT · setup forming: {entry_signal.side} near {cents(entry_signal.price)} (confirming {min(held, self.cfg.confirm_s):.0f}/{self.cfg.confirm_s:.0f} s)",
+            near = f" near {cents(entry_signal.price)}" if entry_signal.action == "BUY" and entry_signal.price else ""
+            return Signal("WAIT", side, None, 0, entry_signal.edge, entry_signal.p_side,
+                          f"WAIT · setup forming: {side}{near} (confirming {min(held, self.cfg.confirm_s):.0f}/{self.cfg.confirm_s:.0f} s)",
                           entry_signal.details[:3], ["forming"], entry_signal.confidence, entry_signal.triggers)
         return entry_signal

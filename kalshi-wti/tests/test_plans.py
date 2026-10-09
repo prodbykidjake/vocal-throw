@@ -106,9 +106,11 @@ def test_plan_cancels_on_hard_invalidation_and_expires_on_new_window():
     tr.update(t0 + 3, "W1", pred(0.85), q, 90.0, 90.0, 477, buy("UP", 0.30), False)
     ev = tr.update(t0 + 3.5, "W1", pred(0.85), q, 90.0, 90.0, 477, buy("UP", 0.30), False)
     assert ev and ev.kind == "created"
-    # market disagrees strongly: cancelled
-    ev = tr.update(t0 + 4, "W1", pred(0.85, disagree=True), q, 90.0, 90.0, 476, None, False)
-    assert ev and ev.kind == "cancelled"
+    # market disagrees strongly while the model got MORE confident: that is the scalp, not a broken thesis
+    assert tr.update(t0 + 4, "W1", pred(0.90, disagree=True), q, 90.0, 90.0, 476, None, False) is None
+    # market disagrees strongly and the model has weakened since the plan: cancelled, and the text says why
+    ev = tr.update(t0 + 4.5, "W1", pred(0.80, disagree=True), q, 90.0, 90.0, 476, None, False)
+    assert ev and ev.kind == "cancelled" and "market disagrees" in ev.text
     tr.cooldown_until = 0
     tr.update(t0 + 5, "W1", pred(0.85), q, 90.0, 90.0, 475, buy("UP", 0.30), False)
     tr.update(t0 + 5.5, "W1", pred(0.85), q, 90.0, 90.0, 475, buy("UP", 0.30), False)
@@ -173,3 +175,26 @@ def test_card_says_why_a_confirmed_setup_is_not_a_plan():
     assert tr.plan is None and tr.no_plan_reason and "room" in tr.no_plan_reason
     disp = tr.display(buy("UP", 0.91), pred(0.95), t0 + 1)
     assert disp.action == "WAIT" and disp.reasons == ["no_plan"] and "room" in disp.headline
+
+
+def test_candidate_survives_a_short_gap_without_a_buy_signal():
+    """The edge hovers at the threshold: BUY, WAIT, BUY, WAIT... The candidate (and the 'setup forming' card)
+    must not reset on every WAIT second, and the plan still forms once the setup has been around confirm_s."""
+    cfg = TradingCfg(unit_dollars=10, confirm_s=3)
+    tr = PlanTracker(cfg)
+    t0 = time.time()
+    q = Quotes(0.19, 0.20, 0.79, 0.80)
+    p = pred(0.92)
+    wait = Signal("WAIT", "UP", None, 0, None, 0.5, "WAIT · no edge", ["d1", "d2"], ["priced_in"], "lean")
+    assert tr.update(t0, "W1", p, q, 90.0, 90.0, 480, buy("UP", 0.20), False) is None
+    assert tr.update(t0 + 1, "W1", p, q, 90.0, 90.0, 479, wait, False) is None
+    disp = tr.display(wait, p, t0 + 1)
+    assert disp.reasons == ["forming"] and "UP" in disp.headline  # still forming, not the plain WAIT text
+    assert tr.update(t0 + 2, "W1", p, q, 90.0, 90.0, 478, buy("UP", 0.20), False) is None
+    ev = tr.update(t0 + 3.5, "W1", p, q, 90.0, 90.0, 477, buy("UP", 0.20), False)
+    assert ev and ev.kind == "created"
+    # a long gap (more than confirm_s without a BUY) does reset it
+    tr2 = PlanTracker(cfg)
+    assert tr2.update(t0, "W1", p, q, 90.0, 90.0, 480, buy("UP", 0.20), False) is None
+    assert tr2.update(t0 + 4, "W1", p, q, 90.0, 90.0, 476, wait, False) is None
+    assert tr2._candidate is None and tr2.display(wait, p, t0 + 4) is wait
