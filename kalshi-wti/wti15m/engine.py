@@ -12,7 +12,7 @@ from collections import deque
 
 from . import clock
 from .config import Config
-from .decision import DecisionEngine, Position, Quotes, Signal, cash_out, cents, pct, qty_text
+from .decision import DecisionEngine, Position, Quotes, Signal, cash_out, cents, pct, pct5, qty_text
 from .fees import FeeSchedule, fee_per_contract, taker_fee
 from .feeds.base import PriceFeed, Tick
 from .kalshi import Market, MarketTracker
@@ -46,6 +46,7 @@ class Engine:
         self.position: Position | None = _position_from_row(store.get_open_position())
         self.plans = PlanTracker(t, self.fees, recent_amounts_fn=lambda: store.recent_amounts(10), decider=self.decider)
         self._paper_pos: Position | None = None  # the paper trade's Position, kept across seconds so its latches work
+        self._quick: dict = {"call": None, "options": [], "since": 0.0}  # the quick-scalps card (held calm for a few seconds)
         self._wait_sig: Signal | None = None  # WAIT text is held for a few seconds so the card reads calmly
         self._wait_since = 0.0
         for row in store.open_plans():  # plans from a previous run cannot be judged any more
@@ -320,8 +321,10 @@ class Engine:
                                + lag_txt)
 
     # ------------------------------------------------------------------ user positions
-    def open_position(self, side: str, amount: float, price: float | None = None, note: str = "") -> Position:
-        """Record what you bought in the Kalshi app: side, dollars spent, and the price (defaults to the live ask)."""
+    def open_position(self, side: str, amount: float, price: float | None = None, note: str = "",
+                      target: float | None = None) -> Position:
+        """Record what you bought in the Kalshi app: side, dollars spent, and the price (defaults to the live ask).
+        `target` (from the quick-scalps card) becomes the low end of the sell zone."""
         m = self.tracker.current
         if self.position:
             raise ValueError("a position is already open; sell or remove it first")
@@ -343,6 +346,7 @@ class Engine:
         entry_fee = taker_fee(price, qty, self.fees)
         now = time.time()
         high = quotes.bid(side)
+        own_target = target
         target = target_high = None
         plan = self.plans.plan
         if plan is not None and plan.side == side and plan.ticker == m.ticker:
@@ -350,6 +354,8 @@ class Engine:
             event = self.plans.mark_filled(now)
             if event and plan.id:
                 self.store.end_plan(plan.id, "filled", "you bought it", now, plan.hit_target, plan.best_bid, None)
+        if target is None and own_target is not None and 0 < own_target < 1:
+            target, target_high = own_target, None
         pid = self.store.open_position(m.ticker, side, qty, price, now, note, amount, entry_fee, high)
         zone_ts = 0.0
         if target is not None:
@@ -453,7 +459,9 @@ class Engine:
                 if event:
                     self._on_plan_event(event, now, quotes)
                 sig = self._calm_wait(self.plans.display(raw, pred, now) or raw, now)
+                self._quick_step(pred, quotes, tick.price, m.strike, tau, now)
             else:
+                self._quick = {"call": None, "options": [], "since": now}
                 self.plans.update(now, m.ticker, pred, quotes, tick.price, m.strike, tau, None, True)
                 sig = self._stable_position_signal(raw, pos, now)
             if sig.key != self._last_signal_key:
@@ -469,6 +477,24 @@ class Engine:
         self.pred = pred
         self.signal = sig
         self.state = self._build_state(now, m, tick, health, pred, sig, tau, elapsed, quotes_fresh)
+
+    def _quick_step(self, pred: Prediction, quotes: Quotes, price: float, strike, tau, now: float):
+        """The quick-scalps card: recomputed every second, but the shown call is held for 5 s unless its side
+        changes or its chance collapses, so it reads as a suggestion rather than a slot machine."""
+        if not self.cfg.trading.quick_scalps:
+            return
+        options = self.decider.quick_scalps(pred, quotes, price, strike, tau)
+        best = next((o for o in options if o["call"]), None)
+        cur = self._quick.get("call")
+        if cur is not None and now - self._quick.get("since", 0.0) < 5.0:
+            live = next((o for o in options if o["side"] == cur["side"]), None)
+            if live is not None and live["p_pop"] >= self.cfg.trading.quick_min_chance - 0.05 and abs(live["ask"] - cur["ask"]) <= 0.02:
+                self._quick = {"call": live, "options": options, "since": self._quick["since"]}
+                return
+        if best is not None and (cur is None or best["side"] != cur["side"] or abs(best["ask"] - cur["ask"]) > 0.02):
+            self.log_event("quick", f"quick scalp: BUY {best['side']} @ {cents(best['ask'])} · sell at {cents(best['target'])}+ · "
+                                    f"~{pct5(best['p_pop'])} chance within {best['horizon_s'] // 60:.0f} min")
+        self._quick = {"call": best, "options": options, "since": now if (best is None or cur is None or best["side"] != cur["side"]) else self._quick["since"]}
 
     def _calm_wait(self, sig: Signal, now: float, hold_s: float = 4.0) -> Signal:
         """Between plans the analysis text can flip every second; keep a WAIT headline for `hold_s` unless the
@@ -637,6 +663,7 @@ class Engine:
             "signal": sig.as_dict() if sig else None,
             "position": self._position_state(m, sig, quotes_fresh),
             "plan": self.plans.plan.as_dict() if self.plans.plan else None,
+            "quick": {"call": self._quick.get("call"), "options": self._quick.get("options", [])},
             "plan_cooldown_s": max(0, round(self.plans.cooldown_until - now)) if self.plans.plan is None else 0,
             "last_plan": self.plans.last.as_dict() if self.plans.last else None,
             "paper": paper,

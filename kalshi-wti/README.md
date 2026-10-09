@@ -95,6 +95,12 @@ automatically; nothing to click.
   confirmed setup cannot become a plan (not enough room to scalp, too little chance of reaching the target,
   model and Kalshi's odds too far apart). A refusal is held on the card instead of being reworded every
   second, and a setup refused in the last minute does not start a new countdown.
+- **Quick scalps** (since v8.4, the card under the signal card): for every side priced at or under 35¢ it
+  shows the simulated chance that the bid pops at least 3¢ (or 15%) within the next 3 minutes, and calls the
+  best one when that chance is at least 35% and the model or recent price action is not against it:
+  `BUY DOWN @ 31¢ · sell at 35¢+ · ~55% chance within 3 min`, sized at $5. It is riskier and less confident
+  than a plan on purpose; keep a hand on the sell button. "I bought this" pre-fills the position form and
+  makes that sell level the low end of your zone. The call is held for 5 s so it does not spin.
 - **Your position** (built for scalping): tap **UP** or **DOWN**, the price box fills with the live ask
   (edit it if your fill differed), type the dollars you spent, press Enter. The card then tracks it like
   Kalshi's sell sheet: shares, live sell price, **cash out** after fees and P&L, updating every second.

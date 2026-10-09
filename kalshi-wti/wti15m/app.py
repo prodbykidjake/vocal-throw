@@ -20,6 +20,7 @@ class PositionIn(BaseModel):
     amount: float  # dollars you spent
     price: float | None = None  # dollars per share (0.026 = 2.6¢); defaults to the live ask
     note: str = ""
+    target: float | None = None  # a sell target you took from the quick-scalps card (dollars)
 
 
 class CloseIn(BaseModel):
@@ -79,7 +80,7 @@ def create_app(engine: Engine) -> FastAPI:
     @app.post("/api/position")
     async def open_position(body: PositionIn):
         try:
-            pos = engine.open_position(body.side, body.amount, body.price, body.note)
+            pos = engine.open_position(body.side, body.amount, body.price, body.note, body.target)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         return pos.as_dict()

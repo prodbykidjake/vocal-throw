@@ -194,3 +194,26 @@ def test_store_prune_and_settled_count(tmp_path):
     store.upsert_window(Market.from_api({"ticker": "B", "status": "open"}))
     assert store.settled_window_count() == 1
     store.close()
+
+
+def test_quick_scalp_target_becomes_the_zone_low(tmp_path):
+    cfg = Config()
+    store = Store(str(tmp_path / "q.db"))
+    feed = SimFeed(start_price=90.0, warmup_minutes=40, seed=3)
+    engine = Engine(cfg, store, SimKalshi(feed, window_s=120), feed, Notifier(desktop=False, sound=False))
+    import asyncio
+    async def run():
+        await feed.start()
+        for _ in range(8):
+            await engine.tracker.poll_once()
+            engine.step()
+            await asyncio.sleep(0.05)
+        await feed.stop()
+    asyncio.run(run())
+    st = engine.state
+    assert "quick" in st and isinstance(st["quick"]["options"], list)
+    m = engine.tracker.current
+    side = "DOWN" if m.no_ask and m.no_ask <= 0.5 else "UP"
+    pos = engine.open_position(side, 5.0, target=0.80)
+    assert pos.target is not None and pos.target >= 0.80 - 1e-9 and pos.target_high > pos.target
+    store.close()

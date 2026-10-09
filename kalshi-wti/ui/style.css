@@ -81,6 +81,10 @@ input.amount { width: 180px; }
 .scalp-box.sell-now { background: rgba(240,180,41,.22); color: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
 .scalp-box.sell-at { background: rgba(90,169,255,.16); color: var(--info); }
 .scalp-box.ride { background: rgba(46,204,143,.14); color: var(--up); }
+.quick-box { font-size: 20px; font-weight: 800; text-align: center; padding: 12px; border-radius: 10px; margin: 6px 0 4px; background: var(--card2); color: var(--muted); letter-spacing: .02em; }
+.quick-box.call { background: rgba(240,180,41,.14); color: var(--warn); }
+.quick-box.call.down { background: rgba(255,99,99,.14); color: var(--down); }
+.quick-box.call.up { background: rgba(46,204,143,.14); color: var(--up); }
 @keyframes pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.35); } }
 .pos-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 10px; }
 .pos-grid .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }

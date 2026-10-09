@@ -436,3 +436,16 @@ def test_scalp_call_on_a_cheap_contract_the_model_slightly_favours():
     tr.update(1000.0, "W1", pred, q, px, 90.21, 480, sig, False)
     ev = tr.update(1000.5, "W1", pred, q, px, 90.21, 480, sig, False)
     assert ev and ev.kind == "created" and tr.plan.tier == "scalp" and tr.plan.target >= tr.plan.limit + 0.08
+
+
+def test_quick_scalps_list_cheap_sides_with_a_pop_chance():
+    m = warmed_model()
+    eng = engine()
+    pred = m.predict(90.23, 90.21, 540, p_market=0.70, feed_age_s=0.3)
+    opts = eng.quick_scalps(pred, Quotes(0.69, 0.71, 0.29, 0.31), 90.23, 90.21, 480)
+    assert len(opts) == 1 and opts[0]["side"] == "DOWN" and opts[0]["ask"] == 0.31
+    o = opts[0]
+    assert o["target"] >= o["limit"] + 0.03 and 0 <= o["p_pop"] <= 1 and o["horizon_s"] == 180 and o["amount"] == 5.0
+    # nothing under 35c: no options; too late in the window: none either
+    assert eng.quick_scalps(pred, Quotes(0.49, 0.51, 0.49, 0.51), 90.23, 90.21, 480) == []
+    assert eng.quick_scalps(pred, Quotes(0.69, 0.71, 0.29, 0.31), 90.23, 90.21, 30) == []

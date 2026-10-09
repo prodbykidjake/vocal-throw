@@ -368,6 +368,43 @@ class DecisionEngine:
         headline = f"BUY {side} · limit {cents(ask)} · ${amount:.0f} (≈ {shares:.0f} shares) · scalp to {cents(sc['target'])} (~{pct5(sc['p_touch'])} chance)"
         return Signal("BUY", side, ask, int(shares), sc["tilt"], sc["p_side"], headline, details, ["scalp"], "scalp", triggers)
 
+    def quick_scalps(self, pred: Prediction, quotes: Quotes, price: float, strike: float | None,
+                     seconds_left: float | None) -> list[dict]:
+        """The quick-scalps card: for each cheap side, the chance that its bid pops a few cents within the next
+        few minutes. Riskier and less confident than a plan; the user keeps a hand over the sell button."""
+        cfg = self.cfg
+        out: list[dict] = []
+        if strike is None or seconds_left is None or seconds_left <= 45 or pred.confidence in ("stale", "warming_up", "no_target"):
+            return out
+        feats = pred.features or []
+        mom_up = clamp(0.5 * (feats[3] + feats[4]), -2.0, 2.0) if len(feats) >= 5 else 0.0
+        horizon = min(float(cfg.quick_horizon_s), seconds_left - 15.0)
+        for side in ("UP", "DOWN"):
+            ask = quotes.ask(side)
+            if ask is None or ask <= 0.01 or ask > cfg.quick_max_ask:
+                continue
+            limit = round(ask + 0.005, 3)
+            target = max(limit + cfg.quick_target_cents / 100.0, limit * (1.0 + cfg.quick_target_pct))
+            target = math.ceil(target * 200 - 1e-6) / 200.0  # up to the next half cent
+            full = self.curve_for(pred, side, price, strike, seconds_left, quotes, exclude_last_s=0.0,
+                                  zone_exclude_last_s=max(0.0, seconds_left - horizon))
+            if full is None or full.zone is None:
+                continue
+            p_pop = full.zone.touch(target)
+            p_side = p_for_side(pred, side)
+            pm = None if pred.p_market is None else (pred.p_market if side == "UP" else 1 - pred.p_market)
+            mom = mom_up if side == "UP" else -mom_up
+            tilt = (0.0 if pm is None else p_side - pm) + 0.04 * mom
+            shares = cfg.quick_dollars / limit
+            profit = shares * (target - limit) - taker_fee(limit, shares, self.fees) - taker_fee(target, shares, self.fees)
+            out.append({"side": side, "ask": ask, "limit": limit, "target": round(target, 3), "p_pop": round(p_pop, 3),
+                        "tilt": round(tilt, 4), "mom": round(mom, 2), "p_side": round(p_side, 3),
+                        "p_market": None if pm is None else round(pm, 3), "score": round(p_pop + tilt, 4),
+                        "amount": cfg.quick_dollars, "shares": round(shares, 1), "profit": round(profit, 2),
+                        "call": bool(p_pop >= cfg.quick_min_chance and tilt >= -0.02), "horizon_s": round(horizon)})
+        out.sort(key=lambda o: o["score"], reverse=True)
+        return out
+
     # ------------------------------------------------------------------ open position (scalp-first, forward-looking)
     def breakeven(self, pos: Position) -> float:
         """The bid at which cashing out returns exactly what you put in (entry fee and exit fee included)."""

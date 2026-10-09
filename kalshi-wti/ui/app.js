@@ -88,6 +88,8 @@
       $("signal-headline").textContent = m ? "waiting for data…" : "no live window right now";
       $("signal-details").innerHTML = "";
     }
+    // quick scalps
+    renderQuick(s);
     // position
     renderPosition(s);
     const paper = s.paper;
@@ -104,6 +106,32 @@
       if (s.tick.ts > last[0]) { chartData.ticks.push([s.tick.ts, s.tick.price]); drawChart(); }
     }
   }
+
+  // ---------------------------------------------------------------- quick scalps card
+  function renderQuick(s) {
+    const q = s.quick || {}, call = q.call, box = $("quick-box");
+    const mins = (o) => Math.max(1, Math.round((o.horizon_s || 180) / 60));
+    if (s.position) { box.textContent = "position open · quick scalps paused"; box.className = "quick-box"; $("quick-sub").textContent = ""; $("quick-actions").classList.add("hidden"); $("quick-options").textContent = ""; return; }
+    if (call) {
+      box.textContent = `BUY ${call.side} @ ${fmtC(call.ask)} · sell at ${fmtC(call.target)}+ · ~${Math.round(call.p_pop * 20) * 5}% chance within ${mins(call)} min`;
+      box.className = "quick-box call " + call.side.toLowerCase();
+      $("quick-sub").textContent = `$${Number(call.amount).toFixed(0)} ≈ ${call.shares} shares · ≈ ${fmtUsd(call.profit)} at the target after fees · model ${fmtP(call.p_side)} vs market ${fmtP(call.p_market)}`;
+      $("quick-actions").classList.remove("hidden");
+    } else {
+      box.textContent = "no quick scalp right now"; box.className = "quick-box"; $("quick-sub").textContent = "";
+      $("quick-actions").classList.add("hidden");
+    }
+    $("quick-options").textContent = (q.options || []).map((o) => `${o.side} @ ${fmtC(o.ask)}: ~${Math.round(o.p_pop * 20) * 5}% chance of ${fmtC(o.target)} within ${mins(o)} min`).join("   ·   ");
+  }
+  $("quick-buy").addEventListener("click", () => {
+    const call = state && state.quick && state.quick.call; if (!call) return;
+    pendingSide = call.side;
+    const f = $("pos-form"); f.dataset.touched = "1"; f.dataset.target = String(call.target);
+    $("pos-side-label").textContent = call.side; $("pos-side-label").className = "pill " + (call.side === "UP" ? "BUY-UP" : "BUY-DOWN");
+    f.price_cents.value = (call.ask * 100).toFixed(1); f.amount.value = Number(call.amount).toFixed(2);
+    $("side-buttons").classList.add("hidden"); f.classList.remove("hidden"); f.amount.focus();
+    $("position-card").scrollIntoView({ behavior: "smooth", block: "center" });
+  });
 
   // ---------------------------------------------------------------- position card
   let pendingSide = null;
@@ -141,7 +169,7 @@
   }
   document.querySelectorAll(".side-btn").forEach((b) => b.addEventListener("click", () => {
     pendingSide = b.dataset.side;
-    const f = $("pos-form"); f.dataset.touched = "";
+    const f = $("pos-form"); f.dataset.touched = ""; f.dataset.target = "";
     $("pos-side-label").textContent = pendingSide; $("pos-side-label").className = "pill " + (pendingSide === "UP" ? "BUY-UP" : "BUY-DOWN");
     const m = state && state.market; const ask = m ? (pendingSide === "UP" ? m.yes_ask : m.no_ask) : null;
     f.price_cents.value = ask != null ? (ask * 100).toFixed(1) : "";
@@ -152,7 +180,7 @@
   $("plan-buy").addEventListener("click", () => {
     const plan = state && state.plan; if (!plan) return;
     pendingSide = plan.side;
-    const f = $("pos-form"); f.dataset.touched = "1";
+    const f = $("pos-form"); f.dataset.touched = "1"; f.dataset.target = "";
     $("pos-side-label").textContent = plan.side; $("pos-side-label").className = "pill " + (plan.side === "UP" ? "BUY-UP" : "BUY-DOWN");
     f.price_cents.value = (plan.limit * 100).toFixed(1); f.amount.value = plan.amount.toFixed(2);
     $("side-buttons").classList.add("hidden"); f.classList.remove("hidden"); f.amount.focus();
@@ -231,8 +259,9 @@
     if (!pendingSide || !(amount > 0)) return;
     const body = { side: pendingSide, amount };
     if (pc !== "") body.price = Number(pc) / 100;
+    if (f.dataset.target) body.target = Number(f.dataset.target);
     const res = await post("/api/position", body);
-    if (res) { pendingSide = null; f.classList.add("hidden"); $("side-buttons").classList.remove("hidden"); }
+    if (res) { pendingSide = null; f.dataset.target = ""; f.classList.add("hidden"); $("side-buttons").classList.remove("hidden"); }
   });
   $("sold-now").addEventListener("click", async () => {
     const res = await post("/api/position/close", {});

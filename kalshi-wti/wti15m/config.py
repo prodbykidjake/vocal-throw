@@ -76,6 +76,14 @@ class TradingCfg:
     scalp_max_ask: float = 0.55  # only contracts at or under this price get scalp calls
     scalp_min_chance: float = 0.40  # the sell level must have at least this simulated chance of being reached
     scalp_min_score: float = 0.50  # chance + tilt (model vs market, momentum) must reach this
+    # --- quick scalps card: cheap contracts, a few cents of profit, within a few minutes (riskier, less confident) ---
+    quick_scalps: bool = True
+    quick_max_ask: float = 0.35  # only contracts at or under this price
+    quick_target_cents: float = 3.0  # sell at least this much above the limit ...
+    quick_target_pct: float = 0.15  # ... or this fraction of the price, whichever is more
+    quick_horizon_s: float = 180.0  # the pop must be likely within this many seconds
+    quick_min_chance: float = 0.35  # minimum simulated chance of the pop
+    quick_dollars: float = 5.0  # suggested size
     mc_paths: int = 2000  # simulated price paths per evaluation
     # --- feed basis correction ---
     basis_min_windows: int = 6  # apply a signed feed shift only after this many measured windows ...
