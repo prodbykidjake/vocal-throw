@@ -85,8 +85,9 @@ def test_plan_lifecycle_confirm_hold_miss_cooldown():
     assert tr.update(t0 + 20, "W1", p, q, 90.0, 90.0, 460, buy("UP", 0.20), False) is None
     disp = tr.display(buy("UP", 0.20), p, t0 + 20)
     assert disp.action == "WAIT" and "analyzing again" in disp.headline
-    # after the cooldown a new setup can form again
+    # after the cooldown a new setup can form again (three BUY seconds)
     assert tr.update(t0 + 48, "W1", p, q, 90.0, 90.0, 432, buy("UP", 0.20), False) is None
+    assert tr.update(t0 + 49, "W1", p, q, 90.0, 90.0, 431, buy("UP", 0.20), False) is None
     ev = tr.update(t0 + 52, "W1", p, q, 90.0, 90.0, 428, buy("UP", 0.20), False)
     assert ev and ev.kind == "created"
 

@@ -85,7 +85,11 @@ automatically; nothing to click.
   near-certain = 3 (unit $10, max $50 per window by default; `learn_unit` uses the median of your own
   recent buys instead). A cheap contract below the lowest tier is still a plan when the edge after fees is
   there, tagged **longshot** (a 32% chance priced at 14¢): half a unit, a full unit when the model's chance
-  is at least double the price. The sell target is the model's fair exit, lowered to a price the simulated
+  is at least double the price. **Scalp calls** (since v8.3): on contracts at or under 55¢ the card also calls
+  a side when the simulated paths give its price at least a 40% chance of reaching a sell level 8¢ (or 30%)
+  higher before the close and the model or the last few minutes of price action lean its way, even with no
+  settlement edge; these show as `BUY DOWN · limit 41¢ · $10 · scalp to 54¢ (~70% chance)` and are sized at
+  one unit (half a unit under a 45% chance). The sell target is the model's fair exit, lowered to a price the simulated
   paths (below) reach with at least `plan_min_chance` (30%); the chance is printed next to it. Between plans
   the card shows the plain analysis, "setup forming" while a candidate confirms, and the exact reason when a
   confirmed setup cannot become a plan (not enough room to scalp, too little chance of reaching the target,

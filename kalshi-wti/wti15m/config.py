@@ -71,6 +71,11 @@ class TradingCfg:
     give_up_prob: float = 0.10  # sell at a loss only when the chance of getting back to breakeven is at or under this
     give_up_min_cash: float = 1.0  # ... and the sale still returns at least this many dollars
     plan_min_chance: float = 0.30  # a plan's sell target must have at least this chance of being reached
+    # --- scalp calls: cheap contracts, judged by the chance of a sell level being reached, not by settlement edge ---
+    scalp_calls: bool = True
+    scalp_max_ask: float = 0.55  # only contracts at or under this price get scalp calls
+    scalp_min_chance: float = 0.40  # the sell level must have at least this simulated chance of being reached
+    scalp_min_score: float = 0.50  # chance + tilt (model vs market, momentum) must reach this
     mc_paths: int = 2000  # simulated price paths per evaluation
     # --- feed basis correction ---
     basis_min_windows: int = 6  # apply a signed feed shift only after this many measured windows ...

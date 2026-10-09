@@ -17,6 +17,7 @@ confidence tier still become plans as 'longshots' when the edge after fees is th
 """
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 
@@ -92,6 +93,7 @@ class PlanTracker:
         self.cooldown_until = 0.0
         self._candidate: tuple[str, float] | None = None  # (side, first seen ts)
         self._candidate_seen = 0.0  # last time the entry signal was a BUY for the candidate's side
+        self._candidate_buys = 0  # BUY seconds seen for the candidate (only these count toward confirm_s)
         self._miss_since: float | None = None
         self._ticker: str | None = None
         self.no_plan_reason: str | None = None  # why a confirmed setup did not become a plan (shown on the card)
@@ -122,11 +124,12 @@ class PlanTracker:
         if r and r["side"] == side and r["code"] == code and now - r["ts"] < 15:
             text = r["text"]
         else:
-            self._reject = {"side": side, "code": code, "text": text, "ts": now}
+            ask = self._candidate_sig.price if self._candidate_sig is not None else None
+            self._reject = {"side": side, "code": code, "text": text, "ts": now, "ask": ask}
         self.no_plan_reason = text
 
     def _build(self, now: float, ticker: str, side: str, pred: Prediction, quotes: Quotes, price: float | None,
-               strike, seconds_left: float | None) -> Plan | None:
+               strike, seconds_left: float | None, entry_signal: Signal | None = None) -> Plan | None:
         cfg = self.cfg
         ask = quotes.ask(side)
         if ask is None or ask <= 0 or ask >= 0.97:
@@ -136,18 +139,26 @@ class PlanTracker:
             self._refuse(now, side, "disagree", "model and Kalshi's odds disagree a lot right now; no plan until they agree")
             return None
         p = p_for_side(pred, side)
-        est_shares = max(1.0, cfg.unit_dollars / ask)  # the fee per contract of a realistic order, like the entry card
-        fee1 = taker_fee(ask, est_shares, self.fees) / est_shares
-        sized = dollars_for(p, cfg, self.recent_amounts_fn(), ask=ask, fee=fee1)
-        if sized is None:
-            self._refuse(now, side, "edge", f"{side} {round(p * 100)}% at {cents(ask)} is not enough edge after fees")
-            return None
-        amount, tier = sized
+        scalp = (entry_signal.triggers or {}).get("scalp") if (entry_signal is not None and entry_signal.reasons[:1] == ["scalp"]) else None
+        if scalp is not None:
+            # a scalp call: sized by the chance of the sell level, not by the settlement odds
+            units = 1.0 if scalp.get("p_touch", 0) >= 0.45 else 0.5
+            amount, tier = round(min(units * cfg.unit_dollars, cfg.max_trade_dollars), 2), "scalp"
+        else:
+            est_shares = max(1.0, cfg.unit_dollars / ask)  # the fee per contract of a realistic order, like the entry card
+            fee1 = taker_fee(ask, est_shares, self.fees) / est_shares
+            sized = dollars_for(p, cfg, self.recent_amounts_fn(), ask=ask, fee=fee1)
+            if sized is None:
+                self._refuse(now, side, "edge", f"{side} {round(p * 100)}% at {cents(ask)} is not enough edge after fees")
+                return None
+            amount, tier = sized
         limit = round(ask + 0.005, 3)
         shares = amount / limit
         fee_in = taker_fee(limit, shares, self.fees)
         fee_pc = fee_in / shares if shares > 0 else 0.0
         target = round(scalp_target(p, limit, fee_pc, cfg), 3)
+        if scalp is not None:
+            target = math.ceil(max(target, limit + max(cfg.min_scalp_cents / 100.0, 0.3 * limit)) * 1000 - 1e-6) / 1000.0
         breakeven = (limit * shares + fee_in + taker_fee(target, shares, self.fees)) / shares if shares > 0 else limit
         p_target = None
         target_high = None
@@ -164,14 +175,16 @@ class PlanTracker:
             target_high = round(min(0.95, target + 0.10), 2)
         target_high = max(target_high, round(target + 0.02, 3))
         min_scalp = max(cfg.min_scalp_cents / 100.0, 0.3 * limit)
-        if target - limit < min_scalp:
+        if target - limit < min_scalp - 1e-9:
             if p_model_target is not None and p_model_target < cfg.plan_min_chance:
                 # the model's exit had the room but not the chance; say that, not the lowered number
                 self._refuse(now, side, "chance", f"{side} at {cents(ask)}: only ~{pct5(p_model_target)} chance of reaching "
                                                    f"the {cents(model_target)} a scalp would need before the close")
+            elif limit + min_scalp >= 0.97:
+                self._refuse(now, side, "room", f"{side} at {cents(ask)} has edge but no room to scalp that high up")
             else:
                 self._refuse(now, side, "room", f"{side} at {cents(ask)} has edge but not enough room to scalp "
-                                                 f"(sell target {cents(target)} is under {cents(limit + min_scalp)})")
+                                                 f"(a scalp needs ≥ {cents(limit + min_scalp)}, the sell target is {cents(target)})")
             return None
         if p_target is not None and p_target < cfg.plan_min_chance:
             self._refuse(now, side, "chance", f"{side} at {cents(ask)}: only ~{pct5(p_target)} chance of reaching {cents(target)}")
@@ -189,6 +202,7 @@ class PlanTracker:
             self._ticker = ticker
             self._candidate = None
             self._candidate_seen = 0.0
+            self._candidate_buys = 0
             self._candidate_sig = None
             self._miss_since = None
             self.no_plan_reason = None
@@ -219,15 +233,18 @@ class PlanTracker:
         if self._candidate is None or self._candidate[0] != side:
             self._candidate = (side, now)
             self._candidate_seen = now
-            # a setup refused moments ago for this side keeps its refusal on the card instead of counting down
+            self._candidate_buys = 1
+            # the same setup refused in the last 15 s keeps its refusal on the card instead of counting down
             # "setup forming" again for something that cannot become a plan
             r = self._reject
-            self.no_plan_reason = r["text"] if (r and r["side"] == side and now - r["ts"] < 60) else None
+            same = bool(r and r["side"] == side and now - r["ts"] < 15 and abs((r.get("ask") or 0) - (entry_signal.price or 0)) <= 0.02)
+            self.no_plan_reason = r["text"] if same else None
             return None
         self._candidate_seen = now
-        if now - self._candidate[1] < self.cfg.confirm_s:
-            return None
-        plan = self._build(now, ticker, side, pred, quotes, price, strike, seconds_left)
+        self._candidate_buys += 1
+        if self._candidate_buys < max(1, round(self.cfg.confirm_s)) or now - self._candidate[1] < self.cfg.confirm_s:
+            return None  # only BUY seconds count toward the confirmation
+        plan = self._build(now, ticker, side, pred, quotes, price, strike, seconds_left, entry_signal)
         if plan is None:
             return None
         self.plan = plan
@@ -304,8 +321,7 @@ class PlanTracker:
                           pred.confidence if pred else "")
         if entry_signal is not None and (entry_signal.action == "BUY" or self._candidate is not None):
             side = self._candidate[0] if self._candidate else entry_signal.side
-            since = self._candidate[1] if self._candidate else now
-            held = max(0.0, now - since)
+            held = float(min(self._candidate_buys, round(self.cfg.confirm_s))) if self._candidate else 0.0  # BUY seconds only
             base = self._candidate_sig if (self._candidate_sig is not None and self._candidate_sig.side == side) else entry_signal
             if self.no_plan_reason:
                 return Signal("WAIT", side, None, 0, base.edge, base.p_side, f"WAIT · {self.no_plan_reason}",

@@ -50,7 +50,8 @@ def test_price_for_probability_round_trips():
 def test_screenshot_1026_left_two_cents_below_is_a_wait():
     m = warmed_model()
     pred = m.predict(90.19, 90.21, 626, p_market=0.485, feed_age_s=0.3)
-    sig = engine().decide(pred, Quotes(0.48, 0.49, 0.51, 0.52), 90.19, 90.21, 626, 274)
+    # without scalp calls this is a plain coin-flip WAIT; with them, a cheap side the model slightly favours gets a call
+    sig = engine(scalp_calls=False).decide(pred, Quotes(0.48, 0.49, 0.51, 0.52), 90.19, 90.21, 626, 274)
     assert sig.action == "WAIT"
     assert sig.reasons[0] in ("coin_flip", "edge_too_small", "priced_in")
     assert "Would buy" in " ".join(sig.details)
@@ -203,7 +204,7 @@ def test_model_flip_alone_never_sells_at_a_loss():
 def test_rollover_lock_in():
     m = warmed_model()
     eng = engine()
-    pos = Position("T", "UP", 100, 0.02, 0.0, amount=2.0, high_bid=0.10)
+    pos = Position("T", "UP", 100, 0.02, 0.0, amount=2.0, high_bid=0.10, target=0.16, target_high=0.30, zone_ts=990.0)
     pred = m.predict(90.24, 90.21, 400, p_market=0.07, feed_age_s=0.3)
     sig = shown(eng, pred, Quotes(0.06, 0.08, 0.92, 0.94), 90.24, 90.21, 400, 500, pos, now=1000.0)
     # bid 0.06 is 40% off the 0.10 high while still in profit -> lock it in (or it is already inside the zone: also a SELL)
@@ -254,25 +255,25 @@ def test_sell_rules_latch_instead_of_flickering():
     sig = shown(eng, pred, Quotes(0.64, 0.66, 0.35, 0.37), 90.19, 90.21, 300, 600, pos, now=1000.0)
     assert sig.action == "SELL" and sig.reasons == ["zone"]
     sig = shown(eng, pred, Quotes(0.655, 0.675, 0.335, 0.355), 90.19, 90.21, 300, 600, pos, now=1002.0)
-    assert sig.action == "SELL" and sig.reasons == ["zone"] and "dipped" in sig.headline
+    assert sig.action == "SELL" and sig.reasons == ["zone"] and ("dipped" in sig.headline or "slipped" in sig.headline)
     # a real drop: one second keeps the SELL (debounce), the second second lets go
     sig = eng.decide(pred, Quotes(0.69, 0.71, 0.30, 0.32), 90.19, 90.21, 300, 600, pos, now=1004.0)
     assert sig.action == "SELL" and sig.triggers["raw_rule"] == "hold"
     sig = shown(eng, pred, Quotes(0.69, 0.71, 0.30, 0.32), 90.19, 90.21, 300, 600, pos, now=1004.0)
     assert sig.action == "HOLD"
     # rollover re-arms only on a new high: once ignored, the same dip does not nag again
-    pos = Position("T", "UP", 136.0, 0.22, 0.0, amount=30.0, entry_fee=0.3, target=0.41, target_high=0.79, zone_ts=990.0, high_bid=0.36)
+    pos = Position("T", "UP", 136.0, 0.22, 0.0, amount=30.0, entry_fee=0.3, target=0.60, target_high=0.79, zone_ts=990.0, high_bid=0.45)
     pred = m.predict(90.17, 90.21, 500, p_market=0.28, feed_age_s=0.3)
     q = Quotes(0.27, 0.29, 0.71, 0.73)
     first = eng.decide(pred, q, 90.17, 90.21, 440, 460, pos, now=1000.0)
     assert first.action == "HOLD" and pos.rollover_ref is None  # a hidden first second must not disarm the rule
     sig = shown(eng, pred, q, 90.17, 90.21, 440, 460, pos, now=1000.0)
-    assert sig.action == "SELL" and sig.reasons == ["rollover"] and pos.rollover_ref == 0.36
-    sig = shown(eng, pred, Quotes(0.32, 0.34, 0.66, 0.68), 90.17, 90.21, 440, 460, pos, now=1002.0)
+    assert sig.action == "SELL" and sig.reasons == ["rollover"] and pos.rollover_ref == 0.45
+    sig = shown(eng, pred, Quotes(0.40, 0.42, 0.58, 0.60), 90.17, 90.21, 440, 460, pos, now=1002.0)
     assert sig.action == "HOLD"  # recovered above 85% of the high: back to the zone plan
     sig = shown(eng, pred, q, 90.17, 90.21, 440, 460, pos, now=1004.0, n=3)
     assert sig.action == "HOLD"  # same dip again, no new high: not re-armed
-    pos.high_bid = 0.40
+    pos.high_bid = 0.49
     sig = shown(eng, pred, Quotes(0.29, 0.31, 0.69, 0.71), 90.17, 90.21, 440, 460, pos, now=1007.0)
     assert sig.action == "SELL" and sig.reasons == ["rollover"]
 
@@ -342,6 +343,7 @@ def test_alternating_sell_rules_still_show_and_a_kept_sell_is_never_a_loss():
     pos = Position("T", "UP", 136.0, 0.22, 0.0, amount=30.0, entry_fee=0.3, target=0.41, target_high=0.79, zone_ts=990.0, high_bid=0.45)
     pred = m.predict(90.17, 90.21, 500, p_market=0.28, feed_age_s=0.3)
     s1 = eng.decide(pred, Quotes(0.41, 0.43, 0.57, 0.59), 90.17, 90.21, 440, 460, pos, now=1000.0)  # raw: zone
+    pos.target = 0.60  # make the zone the less likely outcome so the rollover rule is allowed to fire next
     assert s1.action == "HOLD" and s1.triggers["raw_rule"] == "zone" and "confirming" in s1.scalp["text"]
     pos.last_reason, pos.last_raw_reason = s1.reasons[0], s1.triggers["raw_rule"]
     s2 = eng.decide(pred, Quotes(0.30, 0.32, 0.68, 0.70), 90.17, 90.21, 440, 460, pos, now=1001.0)  # raw: rollover (bid <= 75% of 45c)
@@ -408,3 +410,29 @@ def test_sub_cent_bid_in_the_last_seconds_still_gets_the_take_profit_call():
     q = Quotes(0.325, 0.345, 0.655, 0.675)
     sig = shown(eng, pred, q, 90.205, 90.21, 20, 880, pos, n=3, now=1000.0)
     assert sig.action == "SELL" and "before the close" in sig.headline
+
+
+def test_scalp_call_on_a_cheap_contract_the_model_slightly_favours():
+    """The user's ask: under 55c, if a scalp is plausible, say so. Here DOWN is 30c, the price has drifted
+    DOWN's way and the model gives DOWN a bit more than the market: a scalp call with the chance printed."""
+    m = warmed_model()
+    import random
+    rng = random.Random(5)
+    px = 90.27
+    for t in range(2401, 2581):  # three minutes drifting down 6c, ending right at the target
+        px -= 0.0003 + rng.gauss(0, 0.002)
+        m.vol.update(t, px)
+    pred = m.predict(px, 90.21, 540, p_market=0.60, feed_age_s=0.3, price_60=px + 0.02, price_180=px + 0.06)
+    q = Quotes(0.59, 0.61, 0.39, 0.41)  # DOWN at 41c: no settlement edge to speak of, but a scalp candidate
+    sig = engine().decide(pred, q, px, 90.21, 480, 420)
+    assert sig.action == "BUY" and sig.side == "DOWN" and sig.reasons == ["scalp"]
+    assert "scalp to" in sig.headline and "chance" in sig.headline and sig.triggers["scalp"]["p_touch"] >= 0.40
+    # the same picture with the cheap side above 55c is not a scalp call
+    sig2 = engine().decide(pred, Quotes(0.39, 0.41, 0.59, 0.61), px, 90.21, 480, 420)
+    assert not (sig2.action == "BUY" and sig2.reasons == ["scalp"] and sig2.side == "DOWN")
+    # and it becomes a plan sized as a scalp
+    from wti15m.plans import PlanTracker
+    tr = PlanTracker(TradingCfg(confirm_s=0), decider=engine())
+    tr.update(1000.0, "W1", pred, q, px, 90.21, 480, sig, False)
+    ev = tr.update(1000.5, "W1", pred, q, px, 90.21, 480, sig, False)
+    assert ev and ev.kind == "created" and tr.plan.tier == "scalp" and tr.plan.target >= tr.plan.limit + 0.08

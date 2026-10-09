@@ -284,6 +284,10 @@ class DecisionEngine:
         if seconds_left < cfg.late_entry_s and abs(pred.z) < cfg.late_entry_min_z:
             return wait("too_late", f"WAIT · under {int(cfg.late_entry_s)} s left and the result is not lopsided enough",
                         extra, triggers)
+        if cfg.scalp_calls and (best["edge"] < cfg.edge_min or pred.confidence == "coinflip"):
+            sc = self._scalp_candidate(pred, quotes, price, strike, seconds_left)
+            if sc is not None:
+                return self._scalp_signal(sc, pred, details, triggers)
         if best["edge"] < cfg.edge_min:
             if abs(pred.z) < 0.5:
                 return wait("coin_flip", "WAIT · coin flip: the gap to target is inside normal noise", extra, triggers)
@@ -305,6 +309,64 @@ class DecisionEngine:
         if self.fees.is_estimate:
             details.append("Fee is an estimate: this series uses a fee table the app cannot read.")
         return Signal("BUY", side, ask, size, edge, p, headline, details, ["edge"], pred.confidence, triggers)
+
+    # ------------------------------------------------------------------ scalp calls
+    def _scalp_candidate(self, pred: Prediction, quotes: Quotes, price: float, strike: float | None,
+                         seconds_left: float | None) -> dict | None:
+        """A cheap contract whose price has a real chance of reaching a sell level before the close, with the
+        model and the last few minutes of price action not against it. This is the scalper's call: it does not
+        need the model to beat Kalshi on where the window settles."""
+        cfg = self.cfg
+        if strike is None or seconds_left is None or seconds_left <= cfg.late_entry_s:
+            return None
+        feats = pred.features or []
+        mom_up = 0.0
+        if len(feats) >= 5:
+            mom_up = clamp(0.5 * (feats[3] + feats[4]), -2.0, 2.0)  # 1-min and 3-min momentum in sigma units, UP positive
+        best = None
+        for side in ("UP", "DOWN"):
+            ask = quotes.ask(side)
+            if ask is None or ask <= 0.01 or ask > cfg.scalp_max_ask:
+                continue
+            limit = round(ask + 0.005, 3)
+            target = math.ceil((limit + max(cfg.min_scalp_cents / 100.0, 0.3 * limit)) * 1000 - 1e-6) / 1000.0
+            if target >= 0.97:
+                continue
+            curve = self.curve_for(pred, side, price, strike, seconds_left, quotes)
+            if curve is None:
+                continue
+            p_touch = curve.touch(target)
+            p_side = p_for_side(pred, side)
+            pm = None if pred.p_market is None else (pred.p_market if side == "UP" else 1 - pred.p_market)
+            mom = mom_up if side == "UP" else -mom_up
+            tilt = (0.0 if pm is None else p_side - pm) + 0.04 * mom
+            score = p_touch + tilt
+            if p_touch < cfg.scalp_min_chance or tilt < 0.02 or score < cfg.scalp_min_score:
+                continue  # needs the model or the price action at least slightly on its side
+            if False:
+                continue
+            cand = {"side": side, "ask": ask, "limit": limit, "target": target, "p_touch": p_touch, "tilt": tilt,
+                    "mom": mom, "p_side": p_side, "p_market": pm, "score": score}
+            if best is None or cand["score"] > best["score"]:
+                best = cand
+        return best
+
+    def _scalp_signal(self, sc: dict, pred: Prediction, details: list[str], triggers: dict) -> Signal:
+        cfg = self.cfg
+        side, ask = sc["side"], sc["ask"]
+        units = 1.0 if sc["p_touch"] >= 0.45 else 0.5
+        amount = round(min(units * cfg.unit_dollars, cfg.max_trade_dollars), 2)
+        shares = amount / ask
+        mom_txt = (f"the last 1–3 min moved {side}'s way ({sc['mom']:+.1f}σ)" if sc["mom"] >= 0.3 else
+                   f"price action is flat" if abs(sc["mom"]) < 0.3 else f"price action slightly against ({sc['mom']:+.1f}σ)")
+        mkt = f"model {pct(sc['p_side'])} vs market {pct(sc['p_market'])}" if sc["p_market"] is not None else f"model {pct(sc['p_side'])}"
+        details.append(f"Scalp call: ~{pct5(sc['p_touch'])} chance the {side} price reaches {cents(sc['target'])} before the close "
+                       f"(from {cents(ask)}); {mkt}; {mom_txt}.")
+        details.append(f"Size: scalp → ${amount:.0f}; max loss ${amount:.2f}. Sell inside the zone the card shows after you report the buy.")
+        triggers = dict(triggers)
+        triggers.update({"side": side, "current_ask": ask, "scalp": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in sc.items()}})
+        headline = f"BUY {side} · limit {cents(ask)} · ${amount:.0f} (≈ {shares:.0f} shares) · scalp to {cents(sc['target'])} (~{pct5(sc['p_touch'])} chance)"
+        return Signal("BUY", side, ask, int(shares), sc["tilt"], sc["p_side"], headline, details, ["scalp"], "scalp", triggers)
 
     # ------------------------------------------------------------------ open position (scalp-first, forward-looking)
     def breakeven(self, pos: Position) -> float:
@@ -342,9 +404,9 @@ class DecisionEngine:
         floor_be = round(breakeven + 0.02, 3)
         # the level is floored to the cent (a sub-cent bid must not end up just under a rounded-up low)
         low = max(math.floor(curve.level(cfg.zone_low_prob) * 100 + 1e-9) / 100.0, floor_be)
-        low = min(low, max(0.93, floor_be))  # capped, but never under breakeven + 2¢
+        low = min(low, max(0.93, floor_be), 0.98)  # capped, never under breakeven + 2¢, never above a tradable price
         high = round(max(curve.level(cfg.zone_high_prob), low + 0.05), 2)
-        high = min(high, max(0.95, round(low + 0.02, 3)))
+        high = min(high, max(0.95, round(low + 0.02, 3)), 0.99)
         return round(low, 3), round(high, 3)
 
     def _manage_position(self, pred: Prediction, quotes: Quotes, price: float, strike: float | None,
@@ -453,7 +515,9 @@ class DecisionEngine:
         rolled = False
         if pos.high_bid:
             rolled = (armed and bid <= pos.high_bid * 0.75) or (was("rollover") and bid <= pos.high_bid * 0.85)
-        rollover = ran and pnl > 0 and bid > pos.avg_price and rolled
+        # a rollover must lock in something real, and only when the zone has become the less likely outcome
+        worth_locking = pnl >= max(1.0, 0.03 * qty) and (p_low is None or p_low < 0.5 or was("rollover"))
+        rollover = ran and worth_locking and bid > pos.avg_price and rolled
         hopeless = p_recover is not None and (p_recover <= cfg.give_up_prob
                                               or (was("give_up", "lottery") and p_recover <= 2 * cfg.give_up_prob))
         min_cash = min(cfg.give_up_min_cash, 0.2 * pos.cost) * (0.5 if prev == "give_up" else 1.0)
@@ -503,7 +567,9 @@ class DecisionEngine:
                 why = f"last {mmss(seconds_left)} · take the profit before the close · {money(pnl)}"
             else:
                 where = "top of" if bid >= high - 0.002 else "in"
-                dipped = "" if bid >= low - 0.002 else (" (dipped a hair under it)" if latched else " (just left it)")
+                gap = low - bid
+                dipped = "" if gap <= 0.002 else (" (dipped a hair under it)" if gap <= 0.01 else
+                                                  f" (slipped {cents(gap)} under it, still worth taking)" if latched else " (just left it)")
                 why = f"{where} your sell zone {zone_txt}{dipped} · {money(pnl)}"
             return out(sell("zone", f"SELL NOW {side} at {cents(bid)} · {why}", scalp("SELL NOW", "zone", why, cash, pnl), sell_val - hold_val))
         if shown == "rollover":
@@ -511,14 +577,15 @@ class DecisionEngine:
             return out(sell("rollover", f"SELL NOW {side} at {cents(bid)} · lock in {money(pnl)}; bid rolled over from {cents(pos.high_bid)}",
                             scalp("SELL NOW", "rollover", f"bid rolled over from {cents(pos.high_bid)} · lock in {money(pnl)}", cash, pnl), sell_val - hold_val))
         if shown == "give_up":
-            return out(sell("give_up", f"SELL NOW {side} at {cents(bid)} · only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)}; "
+            return out(sell("give_up", f"SELL NOW {side} at {cents(bid)} · only {pct(p_recover)} chance of getting back to {cents(breakeven)}; "
                             f"salvage ${cash:.2f} ({money(pnl)})",
-                            scalp("SELL NOW", "give_up", f"only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)} · salvage ${cash:.2f}", cash, pnl,
+                            scalp("SELL NOW", "give_up", f"only {pct(p_recover)} chance of getting back to {cents(breakeven)} · salvage ${cash:.2f}", cash, pnl,
                                   p_recover=None if p_recover is None else round(p_recover, 3), breakeven=round(breakeven, 3)), sell_val - hold_val))
         if shown == "lottery":
             details.append("Selling would return almost nothing; a lottery ticket is worth more than that.")
-            return out(hold("lottery", f"HOLD {side} · ride it as a {pct5(p)} lottery ticket (cash out is only ${cash:.2f})",
-                            scalp("HOLD", "lottery", f"{pct5(p)} lottery ticket · cash out is only ${cash:.2f}", cash, pnl), hold_val - sell_val))
+            lot = pct(p) if p >= 0.005 else "<1%"
+            return out(hold("lottery", f"HOLD {side} · ride it as a {lot} lottery ticket (cash out is only ${cash:.2f})",
+                            scalp("HOLD", "lottery", f"{lot} lottery ticket · cash out is only ${cash:.2f}", cash, pnl), hold_val - sell_val))
         # hold for the zone, and say how likely it is (in the last 30 s the zone curve has no time left: no chances)
         text = f"now {cents(bid)}"
         chance = ""

@@ -106,13 +106,31 @@ def simulate(side: str, s0: float, strike: float | None, sigma: float, seconds_l
         return flat
     n_paths = max(2, n_paths)
     half = n_paths // 2
-    dw = _normal_block(seed, half, n_steps) * (sigma * math.sqrt(step_s))
+    # The grid is anchored to the close: step boundaries sit at fixed times before the close, the first step is
+    # the partial one, and each step draws the random column that belongs to its absolute slot. As the clock
+    # runs the same future step keeps the same increment, so the numbers move with the price, not with the grid.
+    first = seconds_left - math.floor(seconds_left / step_s + 1e-9) * step_s
+    if first < 1e-6:
+        first = step_s
+    times = first + step_s * np.arange(0, n_steps)
+    times = times[times <= horizon + 1e-9]
+    n_steps = len(times)
+    if n_steps < 1:
+        flat = TouchCurve(side, start, np.full(1, start), 0.0)
+        if n_zone is not None:
+            flat.zone = TouchCurve(side, start, np.full(1, start), 0.0)
+        return flat
+    slots = np.rint((seconds_left - times) / step_s).astype(int)  # steps remaining to the close at each grid point
+    block = _normal_block(seed, half, int(slots.max()) + 1)
+    dts = np.concatenate([[first], np.full(n_steps - 1, step_s)])
+    dw = block[:, slots] * (sigma * np.sqrt(dts))
     dw = np.vstack([dw, -dw])  # antithetic pairs
     s = s0 + np.cumsum(dw, axis=1)
     # the max between grid points is missed on a 5-s grid: shift the path toward the side's favour by the
     # discrete-monitoring correction so touch()/level() are not biased low
     s = s + (BG_BETA * sigma * math.sqrt(step_s)) * (1.0 if side == "UP" else -1.0)
-    times = step_s * np.arange(1, n_steps + 1)
+    if n_zone is not None:
+        n_zone = int(np.sum(times <= seconds_left - zone_exclude_last_s + 1e-9))
     tau = (seconds_left - times) + settle_lag_s  # horizon still ahead of each simulated moment
     z = (s - strike + tie_adj) / (sigma * np.sqrt(np.maximum(tau, 1.0)))
     c = norm_cdf(z)
