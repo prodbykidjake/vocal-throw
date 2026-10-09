@@ -258,3 +258,26 @@ def test_sell_rules_latch_instead_of_flickering():
     pos.high_bid = 0.40
     sig = eng.decide(pred, Quotes(0.29, 0.31, 0.69, 0.71), 90.17, 90.21, 440, 460, pos, now=1003.0)
     assert sig.action == "SELL" and sig.reasons == ["rollover"]
+
+
+def test_recovery_chance_runs_to_the_close_and_never_below_the_win_chance():
+    """Review finding: the zone curve stops 30 s before the close, so with 34 s left a 58% favourite that was
+    slightly under water read '0% chance of getting back to breakeven' and got a salvage SELL."""
+    m = warmed_model()
+    eng = engine()
+    pos = Position("T", "UP", 20.0, 0.60, 0.0, amount=12.0, entry_fee=0.34)
+    for left in (35, 34, 10, 3):
+        pred = m.predict(90.215, 90.21, left + 60, p_market=0.56, feed_age_s=0.3)
+        sig = eng.decide(pred, Quotes(0.55, 0.57, 0.43, 0.45), 90.215, 90.21, left, 900 - left, pos, now=1000.0)
+        assert sig.action == "HOLD", (left, sig.headline)
+        assert sig.scalp["p_recover"] >= pred.p_final - 1e-6
+
+
+def test_zone_latch_never_sells_at_a_loss():
+    m = warmed_model()
+    eng = engine()
+    pos = Position("T", "UP", 22.2, 0.45, 0.0, amount=10.0, entry_fee=0.17, target=0.50, target_high=0.60, zone_ts=990.0, high_bid=0.50)
+    pos.last_reason = "zone"
+    pred = m.predict(90.21, 90.21, 360, p_market=0.47, feed_age_s=0.3)
+    sig = eng.decide(pred, Quotes(0.46, 0.48, 0.52, 0.54), 90.21, 90.21, 300, 600, pos, now=1000.0)
+    assert not (sig.action == "SELL" and sig.scalp["pnl"] < 0 and sig.reasons != ["give_up"])

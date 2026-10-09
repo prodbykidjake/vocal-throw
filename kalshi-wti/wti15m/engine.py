@@ -289,8 +289,12 @@ class Engine:
             bias *= len(recent) / (len(recent) + 1.0)  # one sample counts half, three count 3/4, ...
         bias = round(bias, 4)
         n = len(recent)
-        se = statistics.pstdev(recent) / math.sqrt(n) if n >= 2 else float("inf")
-        consistent = n >= t.basis_min_windows and abs(bias) >= t.basis_min_t * se
+        t_stat = 0.0
+        if n >= 2:
+            sd = statistics.stdev(recent)
+            mean = statistics.fmean(recent)
+            t_stat = abs(mean) / (sd / math.sqrt(n)) if sd > 0 else (float("inf") if abs(mean) > 0 else 0.0)
+        consistent = n >= t.basis_min_windows and t_stat >= t.basis_min_t
         applied = bias if consistent else 0.0
         self.store.set_state(f"basis_error:{source}", str(basis))
         self.store.set_state(f"basis_signed:{source}", str(applied))

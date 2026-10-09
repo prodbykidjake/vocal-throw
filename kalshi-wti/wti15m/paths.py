@@ -20,6 +20,19 @@ import numpy as np
 from .model import clamp
 
 SQRT2 = math.sqrt(2.0)
+BG_BETA = 0.5826  # Broadie–Glasserman: a path checked every Δt under-reports its true max by ≈ 0.5826·σ·√Δt
+_BLOCK_CACHE: dict[tuple[int, int], np.ndarray] = {}
+
+
+def _normal_block(seed: int, rows: int, n_steps: int) -> np.ndarray:
+    """A fixed block of standard normals per (seed, rows), sliced to n_steps: as the horizon shrinks by a
+    step every few seconds each path keeps the same increments, so the numbers do not jump on the dice."""
+    key = (seed, rows)
+    blk = _BLOCK_CACHE.get(key)
+    if blk is None or blk.shape[1] < n_steps:
+        blk = np.random.default_rng(seed).standard_normal((rows, max(n_steps, 200)))
+        _BLOCK_CACHE[key] = blk
+    return blk[:, :n_steps]
 
 
 def norm_cdf(x: np.ndarray) -> np.ndarray:
@@ -85,10 +98,12 @@ def simulate(side: str, s0: float, strike: float | None, sigma: float, seconds_l
         return TouchCurve(side, start, np.full(1, start), 0.0)
     n_paths = max(2, n_paths)
     half = n_paths // 2
-    rng = np.random.default_rng(seed)
-    dw = rng.standard_normal((half, n_steps)) * (sigma * math.sqrt(step_s))
+    dw = _normal_block(seed, half, n_steps) * (sigma * math.sqrt(step_s))
     dw = np.vstack([dw, -dw])  # antithetic pairs
     s = s0 + np.cumsum(dw, axis=1)
+    # the max between grid points is missed on a 5-s grid: shift the path toward the side's favour by the
+    # discrete-monitoring correction so touch()/level() are not biased low
+    s = s + (BG_BETA * sigma * math.sqrt(step_s)) * (1.0 if side == "UP" else -1.0)
     times = step_s * np.arange(1, n_steps + 1)
     tau = (seconds_left - times) + settle_lag_s  # horizon still ahead of each simulated moment
     z = (s - strike + tie_adj) / (sigma * np.sqrt(np.maximum(tau, 1.0)))

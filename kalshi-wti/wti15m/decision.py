@@ -409,8 +409,11 @@ class DecisionEngine:
                     commit = (fresh_low, max(fresh_high, fresh_low + 0.05))
                     low, high = commit
             p_low, p_high = curve.touch(low), curve.touch(high)
-            if losing:
-                p_recover = curve.touch(breakeven)
+        if losing:
+            # chance of ever seeing breakeven again: paths to the very end of trading (the zone curve stops
+            # 30 s early), and never below the chance of simply winning, since a win pays $1 > breakeven
+            full = self.curve_for(pred, side, price, strike, seconds_left, quotes, exclude_last_s=0.0)
+            p_recover = max(full.touch(breakeven) if full is not None else 0.0, p)
         if low is None or high is None:
             low = round(max(breakeven + 0.05, bid + 0.01), 2)
             high = max(min(0.95, round(low + 0.10, 2)), round(low + 0.02, 3))
@@ -435,7 +438,8 @@ class DecisionEngine:
                         scalp("HOLD", "ride_to_settle", f"{side} {pct(p)} with {mmss(seconds_left)} left · selling gives up {cents(hold_val - sell_val)} a share", cash, pnl),
                         hold_val - sell_val)
         # 2. the bid is inside the zone: take it
-        if bid >= low - 0.002 or (prev == "zone" and bid >= low - max(0.02, 0.08 * low)):
+        latched = prev == "zone" and bid >= max(low - max(0.02, 0.08 * low), breakeven + 0.005)  # never a loss
+        if bid >= low - 0.002 or latched:
             where = "top of" if bid >= high - 0.002 else "in"
             dipped = "" if bid >= low - 0.002 else " (dipped a hair under it)"
             return sell("zone", f"SELL NOW {side} at {cents(bid)} · {where} your sell zone {zone_txt}{dipped} · {money(pnl)}",
