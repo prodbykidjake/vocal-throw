@@ -31,11 +31,16 @@ def test_parse_order_fixed_point_and_legacy():
     o = parse_order({"order": {"order_id": "abc", "client_order_id": "c1", "status": "executed", "fill_count_fp": "16.13",
                                "remaining_count_fp": "0.00", "taker_fill_cost_dollars": "4.8390", "taker_fees_dollars": "0.17"}})
     assert o.order_id == "abc" and o.status == "executed" and o.filled == 16.13 and o.remaining == 0.0 and o.done
-    assert abs(o.avg_price - 0.30) < 1e-6 and o.fees == 0.17
+    assert o.avg_price is None and o.fees == 0.17  # the Order object's cost fields are not trusted for the price; the fills ledger is
     legacy = parse_order({"order": {"order_id": "x", "status": "resting", "fill_count": 5, "remaining_count": 5, "taker_fees": 7}})
     assert legacy.filled == 5 and legacy.remaining == 5 and not legacy.done and legacy.fees == 0.07
-    v2 = parse_order({"order_id": "y", "status": "resting", "fill_count": "0.00", "remaining_count": "10.00"})
-    assert v2.order_id == "y" and v2.remaining == 10.0 and v2.filled == 0.0
+    v2 = parse_order({"order_id": "y", "fill_count": "0.00", "remaining_count": "10.00", "ts_ms": 1})
+    assert v2.order_id == "y" and v2.remaining == 10.0 and v2.filled == 0.0 and not v2.done
+    # v2 create response for a Down buy placed as an ask at 0.69: the average fill price is on the Yes book
+    v2 = parse_order({"order_id": "z", "fill_count": "10.00", "remaining_count": "0.00", "average_fill_price": "0.6900",
+                      "average_fee_paid": "0.0150", "ts_ms": 1}, "DOWN")
+    assert v2.done and abs(v2.avg_price - 0.31) < 1e-9 and abs(v2.fees - 0.15) < 1e-9
+    assert parse_order({"order_id": "c", "reduced_by": "10.00", "ts_ms": 1}).status == "unknown"  # v2 cancel response
 
 
 def test_parse_positions_and_fills():
@@ -45,8 +50,8 @@ def test_parse_positions_and_fills():
     assert pos[0].side == "DOWN" and pos[0].qty == 16.13 and abs(pos[0].avg_price - 0.30) < 1e-3
     assert pos[1].side is None and pos[1].qty == 0
     fills = parse_fills({"fills": [{"order_id": "o", "count_fp": "10.00", "yes_price_dollars": "0.6900", "no_price_dollars": "0.3100",
-                                    "is_taker": True, "fee_dollars": "0.15"}]}, "DOWN")
-    assert fills[0]["price"] == 0.31 and fills[0]["count"] == 10.0 and fills[0]["fee"] == 0.15
+                                    "is_taker": True, "fee_cost": "0.15"}]}, "DOWN")
+    assert fills[0]["price"] == 0.31 and fills[0]["count"] == 10.0 and fills[0]["fee"] == 0.15  # fee_cost is dollars
     assert parse_fills({"fills": [{"count_fp": "1", "yes_price": 69}]}, "UP")[0]["price"] == 0.69
 
 
@@ -72,10 +77,28 @@ def test_signature_covers_timestamp_method_and_full_path(pem):
     msg = f"{ts}POST/trade-api/v2/portfolio/events/orders".encode()
     key.public_key().verify(base64.b64decode(h["KALSHI-ACCESS-SIGNATURE"]), msg,
                             padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH), hashes.SHA256())
+    assert auth.key_type == "rsa"
     with pytest.raises(BrokerError):
         KalshiAuth("", path)
     with pytest.raises(BrokerError):
         KalshiAuth("k", str(path) + ".missing")
+
+
+def test_ed25519_key_signs_the_text_itself(tmp_path):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    key = Ed25519PrivateKey.generate()
+    path = tmp_path / "kalshi-key.txt"  # Kalshi downloads the key as a .txt; the PEM header is the generic one
+    path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    auth = KalshiAuth("kid", str(path))
+    assert auth.key_type == "ed25519"
+    h = auth.headers("GET", "/portfolio/balance")
+    key.public_key().verify(base64.b64decode(h["KALSHI-ACCESS-SIGNATURE"]),
+                            f"{h['KALSHI-ACCESS-TIMESTAMP']}GET/trade-api/v2/portfolio/balance".encode())
+    bad = tmp_path / "junk.txt"
+    bad.write_text("not a key")
+    with pytest.raises(BrokerError):
+        KalshiAuth("kid", str(bad))
 
 
 @pytest.mark.asyncio
@@ -98,6 +121,8 @@ async def test_broker_sends_v2_orders_and_falls_back_to_legacy(pem):
             return httpx.Response(200, json={"order": {"order_id": "o1", "status": "canceled"}}) if request.method == "DELETE" else \
                 httpx.Response(200, json={"order": {"order_id": "o1", "status": "resting", "fill_count_fp": "0", "remaining_count_fp": "16.13"}})
         if request.url.path.endswith("/portfolio/events/orders/o1"):
+            if request.url.params.get("market_ticker") == "KXWTI15M-X":
+                return httpx.Response(200, json={"order_id": "o1", "reduced_by": "16.13", "ts_ms": 1})
             return httpx.Response(405)
         return httpx.Response(500, text="boom")
     handler.v2_ok = True
@@ -108,6 +133,7 @@ async def test_broker_sends_v2_orders_and_falls_back_to_legacy(pem):
     assert (method, p, key) == ("POST", "/trade-api/v2/portfolio/events/orders", "kid")
     assert body["side"] == "ask" and body["price"] == "0.6900" and body["count"] == "16.13" and body["time_in_force"] == "good_till_canceled"
     assert body["expiration_time"] >= int(time.time()) + 19 and len(body["client_order_id"]) == 36
+    assert body["self_trade_prevention_type"] == "taker_at_cross"  # required by the v2 schema
     assert res.order_id == "o1" and res.status == "resting" and res.remaining == 16.13
     sell = await b.place("KXWTI15M-X", "DOWN", "sell", 0.40, 16.13, "immediate_or_cancel", None, None, True)
     body = seen[-1][2]
@@ -115,13 +141,15 @@ async def test_broker_sends_v2_orders_and_falls_back_to_legacy(pem):
     assert (await b.balance()) == 123.45
     got = await b.order("o1", "DOWN")
     assert got.status == "resting" and got.remaining == 16.13
-    assert (await b.cancel("o1")).status == "canceled"  # v2 path 405 -> legacy cancel path
+    assert (await b.cancel("o1", "KXWTI15M-X")).status == "unknown"  # v2 cancel: routed by market_ticker, no status in the reply
+    assert (await b.cancel("o1")).status == "canceled"  # without a ticker the v2 path fails (405) -> legacy cancel path
     # v2 gone: the broker switches to the legacy order API by itself
     handler.v2_ok = False
     res = await b.place("KXWTI15M-X", "UP", "buy", 0.31, 10, "good_till_canceled", 20)
     method, p, body, _ = seen[-1]
     assert p == "/trade-api/v2/portfolio/orders" and b.order_api == "legacy"
     assert body["action"] == "buy" and body["side"] == "yes" and body["yes_price_dollars"] == "0.3100" and body["count_fp"] == "10.00"
+    assert body["time_in_force"] == "good_till_canceled" and body["expiration_ts"] >= int(time.time()) + 19
     assert res.order_id == "o2" and res.filled == 16.13
     with pytest.raises(BrokerError) as exc:
         await b.fills("T")

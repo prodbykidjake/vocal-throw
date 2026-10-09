@@ -3,8 +3,9 @@
 Authentication (Kalshi trade-api v2): every request carries
     KALSHI-ACCESS-KEY        the API key id
     KALSHI-ACCESS-TIMESTAMP  milliseconds since the epoch
-    KALSHI-ACCESS-SIGNATURE  base64( RSA-PSS-SHA256( timestamp + METHOD + "/trade-api/v2" + path ) )
-with the PSS salt length equal to the digest length and the query string left out of the signed path.
+    KALSHI-ACCESS-SIGNATURE  base64( sign( timestamp + METHOD + "/trade-api/v2" + path ) )
+where an Ed25519 key (Kalshi's default) signs the text itself and an RSA key uses RSA-PSS with SHA-256 and a
+salt as long as the digest; the query string is left out of the signed path. The key type is read from the file.
 
 Orders (v2, POST /portfolio/events/orders) are expressed on the YES price: `side` is "bid" (buy Yes / sell No) or
 "ask" (sell Yes / buy No), `price` and `count` are fixed-point strings ("0.3100", "16.13"). The legacy endpoint
@@ -128,15 +129,28 @@ class KalshiAuth:
             pass
         self.key_id = key_id
         self.prefix = prefix.rstrip("/")
-        self._key = serialization.load_pem_private_key(path.read_bytes(), password=None)
+        try:
+            self._key = serialization.load_pem_private_key(path.read_bytes(), password=None)
+        except (ValueError, TypeError) as exc:
+            raise BrokerError(f"could not read the private key in {path}: {exc}") from exc
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+        if isinstance(self._key, Ed25519PrivateKey):
+            self.key_type = "ed25519"
+        elif isinstance(self._key, RSAPrivateKey):
+            self.key_type = "rsa"
+        else:
+            raise BrokerError(f"{path} holds a {type(self._key).__name__}; Kalshi keys are Ed25519 or RSA")
 
     def sign(self, timestamp_ms: str, method: str, path: str) -> str:
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.asymmetric import padding
-
         msg = f"{timestamp_ms}{method.upper()}{self.prefix}{path}".encode("utf-8")
-        sig = self._key.sign(msg, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH),
-                             hashes.SHA256())
+        if self.key_type == "ed25519":
+            sig = self._key.sign(msg)  # Ed25519 signs the text itself
+        else:
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.asymmetric import padding
+            sig = self._key.sign(msg, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH),
+                                 hashes.SHA256())
         return base64.b64encode(sig).decode("ascii")
 
     def headers(self, method: str, path: str) -> dict[str, str]:
@@ -164,11 +178,14 @@ def parse_order(d: dict, side: str | None = None) -> OrderResult:
     remaining = _num(o, "remaining_count_fp", "remaining_count", default=0.0) or 0.0
     fees = (_num(o, "taker_fees_dollars", "taker_fees", default=0.0, cents_keys=("taker_fees",)) or 0.0) + \
            (_num(o, "maker_fees_dollars", "maker_fees", default=0.0, cents_keys=("maker_fees",)) or 0.0)
+    fee_each = _num(o, "average_fee_paid")  # v2 create response: per contract
+    if fee_each is not None and filled > 0 and fees == 0.0:
+        fees = fee_each * filled
     avg = None
-    cost = (_num(o, "taker_fill_cost_dollars", "taker_fill_cost", default=0.0, cents_keys=("taker_fill_cost",)) or 0.0) + \
-           (_num(o, "maker_fill_cost_dollars", "maker_fill_cost", default=0.0, cents_keys=("maker_fill_cost",)) or 0.0)
-    if filled > 0 and cost > 0:
-        avg = cost / filled  # Kalshi reports the cost in the order's own side terms
+    avg_book = _num(o, "average_fill_price")  # v2 create response: on the Yes book, like the submitted price
+    if avg_book is not None and filled > 0:
+        avg = (1.0 - avg_book) if side == "DOWN" else avg_book
+    # (the Order object's *_fill_cost_dollars are not used for the price: the fills ledger states both sides' prices)
     return OrderResult(str(o.get("order_id") or o.get("id") or ""), str(o.get("client_order_id") or ""), status, filled,
                        remaining, avg, fees, o)
 
@@ -199,7 +216,7 @@ def parse_fills(d: dict, side: str) -> list[dict]:
             px = no_px if no_px is not None else (None if yes_px is None else 1.0 - yes_px)
         if count <= 0 or px is None:
             continue
-        out.append({"count": count, "price": px, "fee": _num(f, "fee_dollars", "fee", "fee_cost", default=0.0, cents_keys=("fee", "fee_cost")) or 0.0,
+        out.append({"count": count, "price": px, "fee": _num(f, "fee_cost", "fee_dollars", "fee", default=0.0, cents_keys=("fee",)) or 0.0,
                     "is_taker": bool(f.get("is_taker", True)), "order_id": str(f.get("order_id") or ""),
                     "ts": f.get("created_time"), "trade_id": str(f.get("trade_id") or "")})
     return out
@@ -279,19 +296,19 @@ class KalshiBroker:
             body: dict = {"ticker": ticker, "client_order_id": coid, "action": action, "side": "yes" if side == "UP" else "no",
                           "type": "limit", "count_fp": count_s,
                           ("yes_price_dollars" if side == "UP" else "no_price_dollars"): fmt_price(price, "up" if action == "buy" else "down")}
-            if tif in ("immediate_or_cancel", "fill_or_kill"):
-                body["time_in_force"] = tif
-            elif ttl_s:
+            body["time_in_force"] = tif
+            if tif == "good_till_canceled" and ttl_s:
                 body["expiration_ts"] = int(time.time() + ttl_s)
             if reduce_only:
-                body["sell_position_capped"] = True
+                body["reduce_only"] = True
             d = await self._request("POST", "/portfolio/orders", body=body)
             return parse_order(d, side)
         book_side, yes_px = to_yes_terms(side, action, price)
         # rounding on the yes grid: a buy must not end up cheaper than the ask it is meant to take
         direction = "up" if (action == "buy") == (side == "UP") else "down"
         body = {"ticker": ticker, "client_order_id": coid, "side": book_side, "count": count_s,
-                "price": fmt_price(yes_px, direction), "time_in_force": tif}
+                "price": fmt_price(yes_px, direction), "time_in_force": tif,
+                "self_trade_prevention_type": "taker_at_cross"}  # required by the v2 schema
         if tif == "good_till_canceled" and ttl_s:
             body["expiration_time"] = int(time.time() + ttl_s)
         if reduce_only:
@@ -313,13 +330,16 @@ class KalshiBroker:
         d = await self._request("GET", f"/portfolio/orders/{order_id}")
         return parse_order(d, side)
 
-    async def cancel(self, order_id: str) -> OrderResult | None:
+    async def cancel(self, order_id: str, ticker: str | None = None) -> OrderResult | None:
+        """The v2 cancel needs the market ticker to route the request; its response carries no status, so the
+        caller reads the order afterwards."""
         paths = ((f"/portfolio/events/orders/{order_id}", f"/portfolio/orders/{order_id}") if self.order_api == "v2"
                  else (f"/portfolio/orders/{order_id}",))
         last: BrokerError | None = None
         for path in paths:
             try:
-                d = await self._request("DELETE", path)
+                params = {"market_ticker": ticker} if (ticker and "/events/" in path) else None
+                d = await self._request("DELETE", path, params=params)
                 return parse_order(d)
             except BrokerError as exc:
                 last = exc  # try the other shape of the cancel endpoint before giving up
@@ -432,7 +452,7 @@ class SimBroker:
         self._try_fill(o)
         return self._result(o)
 
-    async def cancel(self, order_id: str) -> OrderResult | None:
+    async def cancel(self, order_id: str, ticker: str | None = None) -> OrderResult | None:
         o = self.orders.get(order_id)
         if o and o["status"] == "resting":
             o["status"] = "canceled"

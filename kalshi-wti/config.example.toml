@@ -67,16 +67,21 @@ basis_min_windows = 6           # apply a signed feed correction only after this
 basis_min_t = 1.5               # ... and only when the bias is this many standard errors from zero
 
 # Auto trading: the app places the coach's calls on YOUR Kalshi account, no button presses.
-# 1. Kalshi app/site > Settings > API keys > create a key: note the key id, save the .pem file it gives you
-#    somewhere outside this folder (e.g. ~/kalshi-key.pem). Never commit it (config.toml and *.pem are git-ignored).
+# 1. kalshi.com/account/profile > API Keys > Create API key: Ed25519 (the default) or RSA both work. Permissions:
+#    tick "Read all data" and the granular "Trade" (write::trade) only; leave "Full access" off so the key can
+#    never move money out. Note the key id and keep the private-key file it downloads somewhere outside this
+#    folder (e.g. ~/kalshi-key.txt). Never commit or share it (config.toml, *.pem and *.key are git-ignored).
 # 2. python -m wti15m auth        (checks the key: balance and positions, places nothing)
 # 3. enabled = true, dry_run = true: same code path, fills simulated on the real quotes; watch the Auto card for a day
 # 4. dry_run = false: live. PAUSE/STOP on the dashboard stop buying at once; sells still run while paused.
+# Kalshi's demo exchange (play money, separate account and keys from demo.kalshi.co): set
+#   [kalshi] base_url = "https://external-api.demo.kalshi.co/trade-api/v2"
+# and use a key made there; if the demo has no WTI 15-minute market the dashboard says "no open market".
 [auto]
 enabled = false
 dry_run = true
 api_key_id = ""                 # or env KALSHI_API_KEY_ID
-private_key_path = ""           # or env KALSHI_PRIVATE_KEY_PATH, e.g. "~/kalshi-key.pem"
+private_key_path = ""           # or env KALSHI_PRIVATE_KEY_PATH, e.g. "~/kalshi-key.txt"
 take_plans = true               # buy the signal card's plans at their limit
 take_quick = true               # buy the quick-scalps card's calls
 max_order_dollars = 20          # cap on one buy

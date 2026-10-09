@@ -91,7 +91,7 @@ class AutoTrader:
     async def stop_all(self):
         if self.order:
             try:
-                await self.broker.cancel(self.order["order_id"])
+                await self.broker.cancel(self.order["order_id"], self.order["ticker"])
             except BrokerError as exc:
                 self.say(f"cancel failed: {exc}")
         self.pause("stopped by you")
@@ -314,7 +314,7 @@ class AutoTrader:
         if not o["cancel_sent"] and (expired or ticker != o["ticker"] or (o["action"] == "buy" and plan_dead)):
             o["cancel_sent"] = True
             try:
-                await self.broker.cancel(o["order_id"])
+                await self.broker.cancel(o["order_id"], o["ticker"])
             except BrokerError as exc:
                 self.say(f"cancel failed: {exc}")
         try:

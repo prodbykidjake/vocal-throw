@@ -140,18 +140,21 @@ Treat the coach as untested until Stats shows a model Brier score at least as go
 
 The app can place the orders itself, no button presses. Setup, in this order:
 
-1. In the Kalshi app or site: **Settings → API keys → Create key**. Note the key id and save the `.pem` private key
-   file it gives you somewhere outside this folder, e.g. `~/kalshi-key.pem`. Never commit or share it
-   (`config.toml` and `*.pem` are git-ignored). The key is as powerful as your login: anyone with the file can trade
-   your account.
+1. At `kalshi.com/account/profile` → **API Keys → Create API key**. Key type: Ed25519 (the default) or RSA, both
+   work. Permissions: tick **Read all data** and the granular **Trade** (`write::trade`); leave **Full access** off
+   so the key can never move money out of the account. Note the key id and keep the private-key file Kalshi
+   downloads (a `.txt`) somewhere outside this folder, e.g. `~/kalshi-key.txt`. Never commit or share it
+   (`config.toml`, `*.pem` and `*.key` are git-ignored). Anyone with the file can trade your account.
 2. In `config.toml`:
    ```toml
    [auto]
    enabled = true
    dry_run = true
    api_key_id = "xxxxxxxx-xxxx-..."
-   private_key_path = "~/kalshi-key.pem"
+   private_key_path = "~/kalshi-key.txt"
    ```
+   For Kalshi's play-money **demo exchange** (separate account and keys at `demo.kalshi.co`), also set
+   `[kalshi] base_url = "https://external-api.demo.kalshi.co/trade-api/v2"`.
 3. `python -m wti15m auth` prints your balance and open positions. If it says 401/403, the key id or file is wrong
    (or the Mac's clock is off).
 4. `python -m wti15m serve` as usual. With `dry_run = true` the **Auto trading** card runs the whole thing against a
@@ -179,10 +182,11 @@ What it does every second (`wti15m/autotrader.py`):
   when it is not buying. Live mode refuses to start unless the dashboard is bound to `127.0.0.1`.
 
 Orders go to Kalshi's v2 order endpoint (`/portfolio/events/orders`, bid/ask on the Yes price, fixed-point
-strings); if that endpoint is unavailable the client falls back to the legacy `/portfolio/orders` by itself.
-Fractional contracts are used (`fractional = true`); if Kalshi rejects the count it switches to whole contracts.
-Every order, fill and error is logged (History tab and the card). The first live orders deserve watching: Kalshi's
-API shapes changed in 2026 and the dry run cannot prove the order format.
+strings, checked against Kalshi's OpenAPI spec 3.34.0); if that endpoint is unavailable the client falls back to
+the legacy `/portfolio/orders` by itself. Fractional contracts are used (`fractional = true`); if Kalshi rejects
+the count it switches to whole contracts. Fill prices and fees come from the fills ledger, which states both the
+Yes and the No price of every fill. Every order, fill and error is logged (History tab and the card). The first
+live orders still deserve watching.
 
 ## Configuration (`config.toml`)
 

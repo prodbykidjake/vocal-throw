@@ -87,6 +87,7 @@ async def run_auth(cfg) -> int:
         print(f"not configured: {exc}")
         return 1
     broker = KalshiBroker(cfg.kalshi.base_url, auth, cfg.kalshi.timeout_s, cfg.auto.order_api, cfg.auto.fractional)
+    print(f"key {auth.key_id[:8]}… ({auth.key_type}) against {cfg.kalshi.base_url}")
     try:
         st = await broker.exchange_status()
         print(f"exchange: {st}")
