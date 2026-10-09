@@ -51,6 +51,17 @@ class TradingCfg:
     # Kalshi settles on the CLOSE of the 1-minute Pyth candle AT the close time (e.g. the 7:00 PM candle,
     # which ends at 7:00:59), so the price keeps moving ~60 s after trading stops. Added to the horizon.
     settle_lag_s: float = 60.0
+    # --- committed trade plans and dollar sizing (scalping) ---
+    unit_dollars: float = 10.0  # one "unit"; tiers: lean 0.5, confident 1, strong 2, near-certain 3 units
+    learn_unit: bool = False  # use the median of your last reported buys as the unit instead
+    max_trade_dollars: float = 50.0
+    min_scalp_cents: float = 8.0  # a plan needs at least this much room between the limit and the sell target
+    confirm_s: float = 3.0  # a setup must persist this long before it becomes a plan
+    min_hold_s: float = 20.0  # within this, only a hard invalidation cancels a plan
+    miss_margin_cents: float = 4.0  # ask this far past the limit ...
+    miss_seconds: float = 10.0  # ... for this long = missed
+    cooldown_s: float = 30.0  # after a missed/cancelled plan, before the next one
+    settle_advice: str = "when_clearly_worse"  # when_clearly_worse | never
 
 
 @dataclass

@@ -14,6 +14,7 @@ from statistics import NormalDist
 from .config import TradingCfg
 from .fees import FeeSchedule, fee_per_contract, taker_fee
 from .model import Prediction, clamp
+from .sizing import dollars_for
 
 _ND = NormalDist()
 
@@ -82,6 +83,7 @@ class Position:
     amount: float | None = None  # dollars paid (what you typed into Kalshi)
     entry_fee: float = 0.0
     high_bid: float | None = None  # best bid for this side since entry
+    target: float | None = None  # committed sell target (from the plan, or set once at entry); ratchets up only
 
     @property
     def cost(self) -> float:
@@ -91,7 +93,7 @@ class Position:
     def as_dict(self) -> dict:
         return {"id": self.id, "ticker": self.ticker, "side": self.side, "qty": round(self.qty, 4),
                 "avg_price": self.avg_price, "opened_ts": self.opened_ts, "amount": self.amount,
-                "entry_fee": self.entry_fee, "cost": round(self.cost, 2), "high_bid": self.high_bid}
+                "entry_fee": self.entry_fee, "cost": round(self.cost, 2), "high_bid": self.high_bid, "target": self.target}
 
 
 @dataclass
@@ -281,10 +283,12 @@ class DecisionEngine:
         if pred.confidence == "coinflip":
             return wait("not_confident", "WAIT · edge exists on paper but the model is not confident", extra, triggers)
 
-        stake = size * ask
-        headline = f"BUY {side} · limit {cents(ask)} · {size} contract{'s' if size != 1 else ''} (${stake:.2f})"
-        details.append(f"Size: ¼-Kelly on a ${cfg.bankroll:.0f} bankroll → {size} contracts; max loss ${stake:.2f}, "
-                       f"win pays ${size * (1 - ask):.2f} before fees.")
+        sized = dollars_for(p, cfg)
+        amount, tier = sized if sized else (round(size * ask, 2), "lean")
+        shares = amount / ask
+        headline = f"BUY {side} · limit {cents(ask)} · ${amount:.0f} (≈ {shares:.0f} shares) · {tier}"
+        details.append(f"Size: {tier} → ${amount:.0f} (unit ${cfg.unit_dollars:.0f}, max ${cfg.max_trade_dollars:.0f}); "
+                       f"max loss ${amount:.2f}, win pays ${shares * (1 - ask):.2f} before fees.")
         details.append(self._exit_plan(side, ask))
         if self.fees.is_estimate:
             details.append("Fee is an estimate: this series uses a fee table the app cannot read.")
@@ -304,7 +308,7 @@ class DecisionEngine:
         for note in pred.notes:
             if not note.startswith("warming up"):
                 details.append(note)
-        tp = self._take_profit(pos.avg_price)
+        tp = pos.target if pos.target else self._take_profit(pos.avg_price)
         triggers = {"stop_prob": cfg.stop_prob, "take_profit_bid": tp}
 
         def hold(code: str, headline: str, scalp: dict | None, edge: float | None = None) -> Signal:
@@ -347,16 +351,17 @@ class DecisionEngine:
         # 1. market pays more than the model thinks it is worth
         if sell_val >= hold_val + 0.03:
             return sell("overpriced", f"SELL NOW {side} at {cents(bid)} · market pays {cents(bid)} for something worth ≈ {cents(hold_val)}")
-        # 2. nearly settled and strongly in your favour: don't pay to exit
-        if seconds_left is not None and seconds_left <= 120 and p >= cfg.hold_to_settle_prob and hold_val >= sell_val:
+        # 2. nearly settled and strongly in your favour: don't pay to exit (only if selling is clearly worse)
+        if (cfg.settle_advice != "never" and seconds_left is not None and seconds_left <= 120
+                and p >= cfg.hold_to_settle_prob and hold_val >= sell_val + 0.01):
             return hold("ride_to_settle", f"HOLD to settlement · {side} {pct(p)} with {mmss(seconds_left)} left; selling would give up "
                         f"{cents(hold_val - sell_val)} per share", scalp("HOLD", None, "ride_to_settle"), hold_val - sell_val)
         # 3. in profit and the bid rolled over hard from its high since entry
         if pos.high_bid and pnl > 0 and bid > pos.avg_price and bid <= pos.high_bid * 0.75:
             return sell("rollover", f"SELL NOW {side} at {cents(bid)} · lock in {money(pnl)}; bid rolled over from {cents(pos.high_bid)}")
-        # 4. take-profit target reached and the edge is gone
-        if bid >= tp and (p - bid - fee_pc) < cfg.edge_min / 2:
-            return sell("take_profit", f"SELL NOW {side} at {cents(bid)} · target hit, {money(pnl)}, edge is gone")
+        # 4. the committed sell target is reached
+        if bid >= tp - 0.002:
+            return sell("take_profit", f"SELL NOW {side} at {cents(bid)} · target {cents(tp)} reached, {money(pnl)}")
         # 5. model flipped against you (only if selling still gets you something close to its value)
         if p <= cfg.stop_prob:
             if sell_val >= hold_val - cfg.edge_min or pred.disagree:
@@ -366,18 +371,26 @@ class DecisionEngine:
                            f"selling would lock in more loss than holding is worth.")
             return hold("too_late_to_cut", f"HOLD {side} · too late to cut; ride it as a {pct(p)} lottery ticket",
                         scalp("HOLD", None, "too_late_to_cut"), hold_val - sell_val)
-        # 6. otherwise: a concrete sell target where the market would have caught up to the model
-        target = min(tp, hold_val - fee_pc - cfg.edge_min / 2)
+        # 6. otherwise: hold for the committed sell target. It only moves UP, and only when the model's fair exit
+        #    has clearly risen, so the number on screen stays put instead of re-deciding every second.
+        computed = min(self._take_profit(pos.avg_price), hold_val - fee_pc - cfg.edge_min / 2)
         if pred.disagree:
-            # the model and the market disagree a lot (feed probably off): don't promise a target far from the book
-            target = min(target, bid + max(0.02, bid * 0.5))
+            computed = min(computed, bid + max(0.02, bid * 0.5))
             details.append("Target capped near the current bid because the model and the market disagree a lot right now.")
-        target = clamp(target, bid + 0.005, 0.99)
+        computed = clamp(computed, bid + 0.005, 0.99)
+        if pos.target is None:
+            target = computed
+        elif computed >= pos.target + 0.03:
+            target = computed  # ratchet up
+        else:
+            target = pos.target
         if target <= bid + 0.006:
-            return sell("fair_exit", f"SELL NOW {side} at {cents(bid)} · bid is already at the model's fair exit ({money(pnl)})")
+            return sell("fair_exit", f"SELL NOW {side} at {cents(bid)} · bid is already at the fair exit ({money(pnl)})")
         gap_txt = "the market agrees with the model" if abs(sell_val - hold_val) <= 0.03 else \
             f"the bid ({cents(bid)}) is below the model's value ({cents(hold_val)})"
         details.append(f"Will say SELL NOW at ≈ {cents(target)}, if the bid rolls over hard while you're in profit, "
                        f"or if {side} drops under {pct(cfg.stop_prob)} with a bid still worth taking.")
-        return hold("hold", f"HOLD {side} · set a sell at {cents(target)} · now {cents(bid)}, cash out {money(pnl)} · {gap_txt}",
-                    scalp("SELL AT", target, "hold"), hold_val - sell_val)
+        sc = scalp("SELL AT", target, "hold")
+        sc["commit_target"] = round(target, 3)  # the engine persists this on the position
+        return hold("hold", f"HOLD {side} · sell at {cents(target)} · now {cents(bid)}, cash out {money(pnl)} · {gap_txt}",
+                    sc, hold_val - sell_val)

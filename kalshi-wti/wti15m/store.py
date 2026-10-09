@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS paper_trades (id INTEGER PRIMARY KEY, ticker TEXT, si
 CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, ticker TEXT, side TEXT, qty REAL, avg_price REAL,
   opened_ts REAL, closed_ts REAL, exit_price REAL, pnl REAL, note TEXT, amount REAL, entry_fee REAL, high_bid REAL);
 CREATE TABLE IF NOT EXISTS model_state (key TEXT PRIMARY KEY, value TEXT, updated_ts REAL);
+CREATE TABLE IF NOT EXISTS plans (id INTEGER PRIMARY KEY, ticker TEXT, side TEXT, limit_price REAL, amount REAL, shares REAL,
+  target REAL, p_at_plan REAL, tier TEXT, created_ts REAL, ended_ts REAL, status TEXT, status_text TEXT,
+  hit_target INTEGER, best_bid REAL, hypo_pnl REAL, expected_profit REAL);
 """
 
 
@@ -58,7 +61,7 @@ class Store:
             if col not in have:
                 self.conn.execute(f"ALTER TABLE windows ADD COLUMN {col} {typ}")
         have = {row[1] for row in self.conn.execute("PRAGMA table_info(positions)")}
-        for col, typ in (("amount", "REAL"), ("entry_fee", "REAL"), ("high_bid", "REAL")):
+        for col, typ in (("amount", "REAL"), ("entry_fee", "REAL"), ("high_bid", "REAL"), ("target", "REAL")):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE positions ADD COLUMN {col} {typ}")
 
@@ -267,6 +270,48 @@ class Store:
 
     def update_position_high(self, pos_id: int, high_bid: float):
         self.conn.execute("UPDATE positions SET high_bid=? WHERE id=?", (high_bid, pos_id))
+
+    def update_position_target(self, pos_id: int, target: float):
+        self.conn.execute("UPDATE positions SET target=? WHERE id=?", (target, pos_id))
+
+    def recent_amounts(self, limit: int = 10) -> list[float]:
+        rows = self.conn.execute("SELECT amount FROM positions WHERE amount IS NOT NULL ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [float(r[0]) for r in rows]
+
+    # ------------------------------------------------------------------ plans
+    def add_plan(self, plan) -> int:
+        cur = self.conn.execute(
+            """INSERT INTO plans (ticker, side, limit_price, amount, shares, target, p_at_plan, tier, created_ts, status, status_text, expected_profit)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (plan.ticker, plan.side, plan.limit, plan.amount, plan.shares, plan.target, plan.p_at_plan, plan.tier,
+             plan.created_ts, plan.status, plan.status_text, plan.expected_profit))
+        return int(cur.lastrowid)
+
+    def end_plan(self, plan_id: int, status: str, status_text: str, ended_ts: float, hit_target: bool | None,
+                 best_bid: float | None, hypo_pnl: float | None):
+        self.conn.execute("UPDATE plans SET status=?, status_text=?, ended_ts=?, hit_target=?, best_bid=?, hypo_pnl=? WHERE id=?",
+                          (status, status_text, ended_ts, None if hit_target is None else int(hit_target), best_bid, hypo_pnl, plan_id))
+
+    def open_plans(self) -> list[dict]:
+        return [dict(r) for r in self.conn.execute("SELECT * FROM plans WHERE status='open' ORDER BY id").fetchall()]
+
+    def plans(self, limit: int = 100) -> list[dict]:
+        return [dict(r) for r in self.conn.execute("SELECT * FROM plans ORDER BY id DESC LIMIT ?", (limit,)).fetchall()]
+
+    def plan_stats(self) -> dict:
+        rows = self.conn.execute("SELECT tier, status, hit_target, hypo_pnl FROM plans WHERE status != 'open'").fetchall()
+        out: dict = {"n": len(rows), "by_tier": {}}
+        for r in rows:
+            t = out["by_tier"].setdefault(r["tier"] or "?", {"n": 0, "hit": 0, "pnl": 0.0})
+            t["n"] += 1
+            t["hit"] += 1 if r["hit_target"] else 0
+            t["pnl"] += r["hypo_pnl"] or 0.0
+        for t in out["by_tier"].values():
+            t["hit_rate"] = round(t["hit"] / t["n"], 3) if t["n"] else None
+            t["pnl"] = round(t["pnl"], 2)
+        out["hit"] = sum(1 for r in rows if r["hit_target"])
+        out["pnl"] = round(sum((r["hypo_pnl"] or 0.0) for r in rows), 2)
+        return out
 
     def delete_position(self, pos_id: int):
         self.conn.execute("DELETE FROM positions WHERE id=?", (pos_id,))

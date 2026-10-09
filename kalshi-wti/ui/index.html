@@ -66,6 +66,10 @@
         <span id="signal-headline" class="headline">waiting for data…</span>
       </div>
       <ul id="signal-details" class="details"></ul>
+      <div class="row hidden" id="plan-actions">
+        <button type="button" id="plan-buy">I bought this plan</button>
+        <span class="sub" id="plan-status"></span>
+      </div>
       <div class="sub" id="signal-triggers"></div>
     </div>
 
@@ -124,6 +128,13 @@
     </table>
   </div>
   <div class="card">
+    <div class="card-title">Plans (every committed call, and how it ended)</div>
+    <table id="plans-table" class="table">
+      <thead><tr><th>Window</th><th>Side</th><th>Limit</th><th>$</th><th>Target</th><th>Tier</th><th>Ended</th><th>Best bid</th><th>Hit?</th><th>If taken</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="card">
     <div class="card-title">Paper trades (what the coach would have done)</div>
     <table id="paper-table" class="table">
       <thead><tr><th>Window</th><th>Side</th><th>Entry</th><th>Size</th><th>Exit</th><th>Reason</th><th>P&amp;L</th><th>Conf.</th></tr></thead>
@@ -144,6 +155,7 @@
     <div class="card"><div class="card-title">Is the model any good? (Brier score, lower is better, 0.25 = coin flip)</div><div id="brier"></div></div>
     <div class="card"><div class="card-title">Calibration (when it says X%, how often Up?)</div><div id="calibration"></div></div>
     <div class="card"><div class="card-title">Paper P&amp;L by confidence</div><div id="paper-stats"></div></div>
+    <div class="card"><div class="card-title">Plans: did the calls work?</div><div id="plan-stats"></div></div>
     <div class="card"><div class="card-title">Learner</div><div id="learner"></div></div>
   </div>
 </section>

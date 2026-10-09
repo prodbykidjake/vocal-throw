@@ -16,6 +16,7 @@ from .feeds.base import PriceFeed, Tick
 from .kalshi import Market, MarketTracker
 from .model import Calibrator, Model, Prediction
 from .notify import Notifier
+from .plans import PlanEvent, PlanTracker
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,13 @@ class Engine:
         self.tracker = MarketTracker(kalshi_client, cfg.kalshi.series_ticker, cfg.kalshi.poll_interval_s,
                                      on_event=self.on_market_event)
         self.position: Position | None = _position_from_row(store.get_open_position())
+        self.plans = PlanTracker(t, self.fees, recent_amounts_fn=lambda: store.recent_amounts(10))
+        self._sell_streak = 0
+        self._last_hold_sig: Signal | None = None
+        self._wait_sig: Signal | None = None  # WAIT text is held for a few seconds so the card reads calmly
+        self._wait_since = 0.0
+        for row in store.open_plans():  # plans from a previous run cannot be judged any more
+            store.end_plan(row["id"], "expired", "app restarted", time.time(), None, None, None)
         self.events: deque[dict] = deque(maxlen=60)
         self.state: dict = {"status": "starting"}
         self.pred: Prediction | None = None
@@ -136,6 +144,7 @@ class Engine:
                                         or self.fees.multiplier != self.tracker.series.fee_multiplier):
                 self.fees = FeeSchedule.from_series(self.tracker.series.fee_type, self.tracker.series.fee_multiplier)
                 self.decider.fees = self.fees
+                self.plans.fees = self.fees
         elif kind == "window_open":
             self.store.upsert_window(m)
             self._last_signal_key = None
@@ -304,9 +313,21 @@ class Engine:
         entry_fee = taker_fee(price, qty, self.fees)
         now = time.time()
         high = quotes.bid(side)
+        target = None
+        plan = self.plans.plan
+        if plan is not None and plan.side == side and plan.ticker == m.ticker:
+            target = plan.target
+            event = self.plans.mark_filled(now)
+            if event and plan.id:
+                self.store.end_plan(plan.id, "filled", "you bought it", now, plan.hit_target, plan.best_bid, None)
         pid = self.store.open_position(m.ticker, side, qty, price, now, note, amount, entry_fee, high)
-        self.position = Position(m.ticker, side, qty, price, now, pid, amount, entry_fee, high)
-        self.log_event("you", f"you bought ${amount:.2f} of {side} @ {cents(price)} = {qty_text(qty)} shares on {m.ticker}")
+        if target is not None:
+            self.store.update_position_target(pid, target)
+        self.position = Position(m.ticker, side, qty, price, now, pid, amount, entry_fee, high, target)
+        self._sell_streak = 0
+        self._last_hold_sig = None
+        self.log_event("you", f"you bought ${amount:.2f} of {side} @ {cents(price)} = {qty_text(qty)} shares on {m.ticker}"
+                              + (f" · sell target {cents(target)}" if target else ""))
         return self.position
 
     def close_position(self, price: float | None = None) -> dict:
@@ -388,19 +409,86 @@ class Engine:
                 if bid is not None and (pos.high_bid is None or bid > pos.high_bid):
                     pos.high_bid = bid
                     self.store.update_position_high(pos.id, bid)
-            sig = self.decider.decide(pred, quotes, tick.price, m.strike, tau, elapsed, pos)
+            raw = self.decider.decide(pred, quotes, tick.price, m.strike, tau, elapsed, pos)
             if tau is not None and tau > 0 and now - self._last_snapshot >= 15:
                 self._last_snapshot = now
                 self.store.add_snapshot(now, m.ticker, tau, tick.price, m.strike, pred)
+            if pos is None:
+                event = self.plans.update(now, m.ticker, pred, quotes, tick.price, m.strike, tau, raw, False)
+                if event:
+                    self._on_plan_event(event, now, quotes)
+                sig = self._calm_wait(self.plans.display(raw, pred, now) or raw, now)
+            else:
+                self.plans.update(now, m.ticker, pred, quotes, tick.price, m.strike, tau, None, True)
+                sig = self._stable_position_signal(raw, pos)
             if sig.key != self._last_signal_key:
                 self.store.add_signal(now, m.ticker, sig, pred, tau)
                 self.log_event("signal", sig.headline)
                 self._last_signal_key = sig.key
             self._maybe_notify(sig, now)
-            self._paper_step(m, pred, sig, tick.price, tau, elapsed, now, quotes)
+            self._paper_step(m, pred, tick.price, tau, elapsed, now, quotes)
+        else:
+            event = self.plans.update(now, m.ticker if m else None, None, Quotes(), None, None, None, None, self.position is not None)
+            if event:
+                self._on_plan_event(event, now, Quotes())
         self.pred = pred
         self.signal = sig
         self.state = self._build_state(now, m, tick, health, pred, sig, tau, elapsed, quotes_fresh)
+
+    def _calm_wait(self, sig: Signal, now: float, hold_s: float = 4.0) -> Signal:
+        """Between plans the analysis text can flip every second; keep a WAIT headline for `hold_s` unless the
+        action changes or a plan/cooldown message arrives."""
+        if sig.action != "WAIT" or sig.reasons[:1] in (["plan"], ["forming"], ["missed"], ["cancelled"], ["expired"]):
+            self._wait_sig, self._wait_since = None, 0.0
+            return sig
+        if self._wait_sig is not None and now - self._wait_since < hold_s and self._wait_sig.reasons != sig.reasons:
+            return self._wait_sig
+        if self._wait_sig is None or self._wait_sig.reasons != sig.reasons:
+            self._wait_since = now
+        self._wait_sig = sig
+        return sig
+
+    def _stable_position_signal(self, raw: Signal, pos: Position) -> Signal:
+        """Commit the sell target (ratchet up only) and require SELL NOW to hold for 2 consecutive seconds."""
+        sc = raw.scalp or {}
+        commit = sc.get("commit_target")
+        if commit is not None and (pos.target is None or commit > pos.target):
+            pos.target = commit
+            self.store.update_position_target(pos.id, commit)
+        if raw.action == "SELL":
+            self._sell_streak += 1
+            if self._sell_streak < 2 and self._last_hold_sig is not None:
+                return self._last_hold_sig
+            return raw
+        self._sell_streak = 0
+        self._last_hold_sig = raw
+        return raw
+
+    def _on_plan_event(self, event: PlanEvent, now: float, quotes: Quotes):
+        plan = event.plan
+        if event.kind == "created":
+            plan.id = self.store.add_plan(plan)
+            self.log_event("plan", event.text)
+            if now - self._last_notified.get("PLAN", 0.0) >= 30:
+                self._last_notified["PLAN"] = now
+                self.notifier.notify(f"WTI 15m: PLAN {plan.side}", event.text, "Glass")
+            # paper: assume a fill at the limit
+            fee = taker_fee(plan.limit, plan.shares, self.fees)
+            if self.store.open_paper_trade_for(plan.ticker) is None:
+                self.store.open_paper_trade(plan.ticker, plan.side, now, plan.limit, plan.shares, fee, plan.tier, plan.p_at_plan)
+                self.store.set_state(f"paper_target:{plan.ticker}", str(plan.target))
+            return
+        hypo = None
+        if event.kind in ("cancelled", "expired"):
+            exit_px = plan.target if plan.hit_target else quotes.bid(plan.side)
+            if exit_px is not None:
+                hypo = plan.shares * (exit_px - plan.limit) - taker_fee(plan.limit, plan.shares, self.fees) - taker_fee(exit_px, plan.shares, self.fees)
+        if plan.id:
+            self.store.end_plan(plan.id, event.kind, event.text, now, plan.hit_target, plan.best_bid, hypo)
+        self.log_event("plan", f"plan {plan.side} up to {cents(plan.limit)}: {event.kind} · {event.text}")
+        if event.kind in ("missed", "cancelled") and now - self._last_notified.get("PLAN_END", 0.0) >= 30:
+            self._last_notified["PLAN_END"] = now
+            self.notifier.notify(f"WTI 15m: plan {event.kind}", event.text, "Submarine")
 
     def _maybe_notify(self, sig: Signal, now: float):
         """Notify on BUY/SELL only once the call has held for 2 consecutive seconds, at most once per 30 s per action.
@@ -417,19 +505,16 @@ class Engine:
             self.notifier.notify(f"WTI 15m: {sig.action} {sig.side or ''}".strip(), sig.headline,
                                  "Glass" if sig.action == "BUY" else "Submarine")
 
-    def _paper_step(self, m: Market, pred: Prediction, sig: Signal, price: float, tau, elapsed, now: float, quotes: Quotes):
+    def _paper_step(self, m: Market, pred: Prediction, price: float, tau, elapsed, now: float, quotes: Quotes):
+        """Paper trades are opened when a plan is created (fill assumed at the limit) and managed like a position."""
         paper = self.store.open_paper_trade_for(m.ticker)
         if paper is None:
-            if sig.action == "BUY" and m.ticker not in self._paper_done and sig.price:
-                fee = fee_per_contract(sig.price, sig.size, self.fees) * sig.size
-                self.store.open_paper_trade(m.ticker, sig.side, now, sig.price, sig.size, fee, sig.confidence, sig.p_side or 0.5)
-                self._paper_done.add(m.ticker)
-                self.log_event("paper", f"paper BUY {sig.size} {sig.side} @ {cents(sig.price)}")
             return
         if tau is not None and tau <= 0:
             return  # settlement will close it
+        target = _float(self.store.get_state(f"paper_target:{m.ticker}"), 0.0) or None
         pos = Position(m.ticker, paper["side"], float(paper["size"]), paper["entry_price"], paper["entry_ts"], paper["id"],
-                       amount=paper["entry_price"] * paper["size"], entry_fee=paper["entry_fee"] or 0.0)
+                       amount=paper["entry_price"] * paper["size"], entry_fee=paper["entry_fee"] or 0.0, target=target)
         psig = self.decider.decide(pred, quotes, price, m.strike, tau, elapsed, pos)
         if psig.action == "SELL" and psig.price is not None:
             fee = taker_fee(psig.price, pos.qty, self.fees)
@@ -448,6 +533,7 @@ class Engine:
             data["calibrator"] = {"n_windows": self.model.cal.n_windows, "n_samples": self.model.cal.n_samples,
                                   "shrink": round(self.model.cal.shrink, 3), "weights": self.model.cal.weights()}
             data["basis_error"] = self.model.basis_error
+            data["plans"] = self.store.plan_stats()
             self._stats_cache = (time.time(), data)
             return data
         return cached
@@ -487,6 +573,9 @@ class Engine:
             "prediction": pred.as_dict() if pred else None,
             "signal": sig.as_dict() if sig else None,
             "position": self._position_state(m, sig, quotes_fresh),
+            "plan": self.plans.plan.as_dict() if self.plans.plan else None,
+            "plan_cooldown_s": max(0, round(self.plans.cooldown_until - now)) if self.plans.plan is None else 0,
+            "last_plan": self.plans.last.as_dict() if self.plans.last else None,
             "paper": paper,
             "tracker": {"last_error": self.tracker.last_error, "polls": self.tracker.poll_count,
                         "pending_settlements": list(self.tracker.pending.keys()),
@@ -495,7 +584,8 @@ class Engine:
             "events": list(self.events)[:25],
             "config": {"bankroll": self.cfg.trading.bankroll, "edge_min": self.cfg.trading.edge_min,
                        "min_warmup_minutes": self.cfg.trading.min_warmup_minutes, "feed": self.cfg.feed.source,
-                       "settle_lag_s": self.cfg.trading.settle_lag_s},
+                       "settle_lag_s": self.cfg.trading.settle_lag_s, "unit_dollars": self.cfg.trading.unit_dollars,
+                       "max_trade_dollars": self.cfg.trading.max_trade_dollars},
         }
 
     def chart(self, minutes: float = 20) -> dict:
@@ -524,4 +614,4 @@ def _position_from_row(row: dict | None) -> Position | None:
     if not row:
         return None
     return Position(row["ticker"], row["side"], float(row["qty"]), float(row["avg_price"]), float(row["opened_ts"]), row["id"],
-                    row.get("amount"), float(row.get("entry_fee") or 0.0), row.get("high_bid"))
+                    row.get("amount"), float(row.get("entry_fee") or 0.0), row.get("high_bid"), row.get("target"))

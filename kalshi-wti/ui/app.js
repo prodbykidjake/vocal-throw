@@ -77,6 +77,9 @@
       $("signal-headline").textContent = sig.headline;
       $("signal-details").innerHTML = sig.details.map((d) => `<li>${esc(d)}</li>`).join("");
       $("signal-triggers").textContent = "";
+      const plan = s.plan;
+      $("plan-actions").classList.toggle("hidden", !plan || !!s.position);
+      if (plan) $("plan-status").textContent = plan.status_text || "";
       const key = sig.action + ":" + (sig.side || "") + ":" + (sig.reasons[0] || "");
       if (lastSignalKey !== null && key !== lastSignalKey && (sig.action === "BUY" || sig.action === "SELL")) notify(sig);
       lastSignalKey = key;
@@ -88,7 +91,7 @@
     // position
     renderPosition(s);
     const paper = s.paper;
-    $("paper-line").textContent = paper ? `Paper position this window: ${paper.size} ${paper.side} @ ${fmtC(paper.entry_price)} (what the coach would have done)` : "No paper position this window.";
+    $("paper-line").textContent = paper ? `Paper position this window: ${Number(paper.size).toFixed(2)} ${paper.side} @ ${fmtC(paper.entry_price)} (what the coach would have done)` : "No paper position this window.";
     // events
     $("events").innerHTML = (s.events || []).map((e) => `<li><span class="k">${new Date(e.ts * 1000).toLocaleTimeString()} ${esc(e.kind)}</span>${esc(e.text)}</li>`).join("");
     // chart
@@ -144,6 +147,15 @@
     $("side-buttons").classList.add("hidden"); f.classList.remove("hidden"); f.amount.focus();
   }));
   $("pos-form").price_cents.addEventListener("input", () => { $("pos-form").dataset.touched = "1"; });
+  $("plan-buy").addEventListener("click", () => {
+    const plan = state && state.plan; if (!plan) return;
+    pendingSide = plan.side;
+    const f = $("pos-form"); f.dataset.touched = "1";
+    $("pos-side-label").textContent = plan.side; $("pos-side-label").className = "pill " + (plan.side === "UP" ? "BUY-UP" : "BUY-DOWN");
+    f.price_cents.value = (plan.limit * 100).toFixed(1); f.amount.value = plan.amount.toFixed(2);
+    $("side-buttons").classList.add("hidden"); f.classList.remove("hidden"); f.amount.focus();
+    $("position-card").scrollIntoView({ behavior: "smooth", block: "center" });
+  });
   $("pos-back").addEventListener("click", () => { pendingSide = null; $("pos-form").classList.add("hidden"); $("side-buttons").classList.remove("hidden"); });
 
   function esc(t) { return String(t).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
@@ -241,6 +253,9 @@
       <td>${fmtP(w.p_at_10min)}</td><td>${fmtP(w.p_at_3min)}</td><td>${fmtP(w.p_market_at_close)}</td>
       <td>${w.settle_price != null ? "$" + w.settle_price.toFixed(2) : ""} ${w.feed_error == null ? "--" : (w.feed_error >= 0 ? "+" : "") + w.feed_error.toFixed(2)}</td>
       <td>${w.buy_signals || 0}</td><td class="${(w.paper_pnl || 0) >= 0 ? "up" : "down"}">${w.paper_pnl == null ? "--" : fmtUsd(w.paper_pnl)}</td></tr>`).join("");
+    $("plans-table").querySelector("tbody").innerHTML = (d.plans || []).map((p) => `<tr><td class="mono">${p.ticker.slice(-9)}</td><td class="${p.side === "UP" ? "up" : "down"}">${p.side}</td>
+      <td>${fmtC(p.limit_price)}</td><td>$${Number(p.amount).toFixed(0)}</td><td>${fmtC(p.target)}</td><td>${p.tier || ""}</td><td>${p.status}${p.status_text ? " · " + esc(p.status_text) : ""}</td>
+      <td>${fmtC(p.best_bid)}</td><td>${p.hit_target == null ? "--" : p.hit_target ? "yes" : "no"}</td><td class="${(p.hypo_pnl || 0) >= 0 ? "up" : "down"}">${p.hypo_pnl == null ? "--" : fmtUsd(p.hypo_pnl)}</td></tr>`).join("");
     $("paper-table").querySelector("tbody").innerHTML = d.paper.map((t) => `<tr><td class="mono">${t.ticker}</td><td class="${t.side === "UP" ? "up" : "down"}">${t.side}</td>
       <td>${fmtC(t.entry_price)}</td><td>${t.size}</td><td>${t.exit_price == null ? "open" : fmtC(t.exit_price)}</td><td>${t.exit_reason || ""}</td>
       <td class="${(t.pnl || 0) >= 0 ? "up" : "down"}">${t.pnl == null ? "--" : fmtUsd(t.pnl)}</td><td>${t.confidence || ""}</td></tr>`).join("");
@@ -263,6 +278,11 @@
       (pp.by_confidence && Object.keys(pp.by_confidence).length ? `<table class="table"><thead><tr><th>confidence</th><th>n</th><th>hit rate</th><th>P&amp;L</th></tr></thead><tbody>` +
       Object.entries(pp.by_confidence).map(([k, v]) => `<tr><td>${k}</td><td>${v.n}</td><td>${fmtP(v.hit_rate)}</td><td>${fmtUsd(v.pnl)}</td></tr>`).join("") + "</tbody></table>" : "") +
       `<div class="sub">Your reported trades: ${d.real?.trades || 0}, P&amp;L ${fmtUsd(d.real?.pnl || 0)}</div>`;
+    const ps = d.plans || {};
+    $("plan-stats").innerHTML = ps.n ? `<div>${ps.n} ended plans · target reached in ${ps.hit} · if every non-missed plan had been taken at its limit: ${fmtUsd(ps.pnl)} after fees</div>` +
+      `<table class="table"><thead><tr><th>tier</th><th>n</th><th>target hit</th><th>if taken</th></tr></thead><tbody>` +
+      Object.entries(ps.by_tier || {}).map(([k, v]) => `<tr><td>${k}</td><td>${v.n}</td><td>${fmtP(v.hit_rate)}</td><td>${fmtUsd(v.pnl)}</td></tr>`).join("") + "</tbody></table>"
+      : `<div class="sub">No ended plans yet.</div>`;
     const l = d.calibrator || {};
     $("learner").innerHTML = `<div>Trained on ${l.n_windows || 0} settled windows (${l.n_samples || 0} snapshots) · weight in final answer ${Math.round((l.shrink || 0) * 100)}%</div>` +
       `<div class="sub">Feed basis allowance: $${(d.basis_error || 0).toFixed(2)}</div>` +

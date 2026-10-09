@@ -14,12 +14,13 @@ from .model import base_probability
 
 class SimKalshi:
     def __init__(self, feed: SimFeed, window_s: int = 900, series_ticker: str = "KXWTI15M", settle_delay_s: float = 5.0,
-                 spread: float = 0.03, seed: int | None = None):
+                 spread: float = 0.03, seed: int | None = None, quote_lag_s: float = 20.0):
         self.feed = feed
         self.window_s = window_s
         self.series_ticker = series_ticker
         self.settle_delay_s = settle_delay_s
         self.spread = spread
+        self.quote_lag_s = quote_lag_s  # the simulated book reprices from a slightly stale price, like a real book
         self.rng = random.Random(seed)
         self._strikes: dict[str, float] = {}
         self._settle_px: dict[str, float] = {}
@@ -40,6 +41,7 @@ class SimKalshi:
         strike = self._strikes[ticker]
         last = self.feed.latest()
         price = last.price if last else strike
+        quote_price = self.feed.buffer.price_at(at - self.quote_lag_s) or price
         tau = max(0.0, close_epoch - at)
         status = "open" if at < close_epoch else "closed"
         result = ""
@@ -49,7 +51,7 @@ class SimKalshi:
             if at >= close_epoch + self.settle_delay_s:
                 status = "settled"
                 result = "yes" if round(self._settle_px[ticker], 2) >= strike else "no"
-        p, _ = base_probability(price, strike, 0.005, max(tau, 1.0))
+        p, _ = base_probability(quote_price, strike, 0.005, max(tau, 1.0))
         noise = self.rng.gauss(0, 0.02)
         mid = min(0.99, max(0.01, p + noise))
         yes_bid = round(max(0.01, mid - self.spread / 2), 2)

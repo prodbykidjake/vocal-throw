@@ -74,8 +74,16 @@ automatically; nothing to click.
 - **Target** is the WTI price when the window opened. Up pays if the close price is at or above it.
 - **Model vs Kalshi odds**: the model's Up chance next to the market's. Confidence labels: `confident`
   (≥ 20 points from 50%), `lean`, `coinflip`, `warming_up`, `stale` (feed too old to trust).
-- **Signal card**: BUY/SELL/HOLD/WAIT, the headline, and the details (gap, time left, expected move,
-  edge after fees, size, exit plan, and "would buy if…").
+- **Signal card** (since v7, built for scalping): the app does not re-decide every second. When a setup has
+  held for a few seconds it commits to a **plan**: `BUY UP · up to 23¢ · $20 (≈ 87 shares) · sell at 45¢ ·
+  ≈ +$19 if it gets there`, with a status line (`valid: ask 22¢ ≤ 23¢ · buy now`). The plan stays on screen
+  until you report a buy ("I bought this plan" pre-fills the position form), the ask runs 4¢ past the limit
+  for 10 s (**missed**), the thesis breaks (**cancelled**: model collapses or the market disagrees strongly),
+  or the window ends. After a missed or cancelled plan it says so and waits 30 s before the next one.
+  Dollar amounts come from the model's confidence: lean = half a unit, confident = 1 unit, strong = 2,
+  near-certain = 3 (unit $10, max $50 per window by default; `learn_unit` uses the median of your own
+  recent buys instead). Between plans the card shows the plain analysis and "setup forming" while a
+  candidate confirms.
 - **Your position** (built for scalping): tap **UP** or **DOWN**, the price box fills with the live ask
   (edit it if your fill differed), type the dollars you spent, press Enter. The card then tracks it like
   Kalshi's sell sheet: shares, live sell price, **cash out** after fees and P&L, updating every second,
@@ -88,14 +96,18 @@ automatically; nothing to click.
 - **History**: every window with target, result, model Up at 10 and 3 minutes, market Up at close,
   whether the feed agreed with the settlement, and what a paper trade would have made.
 - **Stats**: Brier score (0.25 = coin flip; lower is better) for model vs market at 10/5/2/1 minutes
-  left, calibration table (when it said 60-70%, how often Up?), paper P&L by confidence, learner weights.
+  left, calibration table (when it said 60-70%, how often Up?), paper P&L by confidence, learner weights,
+  and **plan results**: how often each tier's sell target was reached and what taking every plan at its
+  limit would have made after fees.
 
 Treat the coach as untested until Stats shows a model Brier score at least as good as the market's over
 100+ windows and paper P&L after fees is positive.
 
 ## Configuration (`config.toml`)
 
-See `config.example.toml`. The ones that matter: `bankroll`, `edge_min` (default 5 points),
+See `config.example.toml`. For plans and sizing: `unit_dollars`, `max_trade_dollars`, `learn_unit`,
+`min_scalp_cents`, `confirm_s`, `min_hold_s`, `miss_margin_cents`, `miss_seconds`, `cooldown_s`,
+`settle_advice`. The others that matter: `bankroll`, `edge_min` (default 5 points),
 `kelly_fraction`, `max_contracts`, `confident_margin`, `min_warmup_minutes`, `no_entry_first_s`,
 `late_entry_s`, `stop_prob`, `profit_target`, `hold_to_settle_prob`, and `[feed] hyperliquid_symbol`
 if auto-detection picks the wrong market.

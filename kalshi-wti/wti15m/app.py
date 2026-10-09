@@ -55,7 +55,7 @@ def create_app(engine: Engine) -> FastAPI:
     @app.get("/api/history")
     async def history(limit: int = 60):
         return JSONResponse({"windows": engine.store.recent_windows(limit), "paper": engine.store.paper_trades(60),
-                             "positions": engine.store.positions(60)})
+                             "positions": engine.store.positions(60), "plans": engine.store.plans(60)})
 
     @app.get("/api/stats")
     async def stats():
