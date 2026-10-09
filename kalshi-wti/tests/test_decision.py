@@ -333,3 +333,23 @@ def test_debounce_hides_one_second_blips_both_ways():
     assert shown_rules[:4] == ["hold", "hold", "hold", "hold"]
     assert shown_rules[4] == "hold" and shown_rules[5] == "zone" and shown_rules[6] == "zone" and shown_rules[7] == "zone"
     assert shown_rules[8] == "zone" and shown_rules[9] == "hold"
+
+
+def test_alternating_sell_rules_still_show_and_a_kept_sell_is_never_a_loss():
+    m = warmed_model()
+    eng = engine()
+    # zone one second, rollover the next: two SELL rules in a row count as two seconds of SELL
+    pos = Position("T", "UP", 136.0, 0.22, 0.0, amount=30.0, entry_fee=0.3, target=0.41, target_high=0.79, zone_ts=990.0, high_bid=0.45)
+    pred = m.predict(90.17, 90.21, 500, p_market=0.28, feed_age_s=0.3)
+    s1 = eng.decide(pred, Quotes(0.41, 0.43, 0.57, 0.59), 90.17, 90.21, 440, 460, pos, now=1000.0)  # raw: zone
+    assert s1.action == "HOLD" and s1.triggers["raw_rule"] == "zone" and "confirming" in s1.scalp["text"]
+    pos.last_reason, pos.last_raw_reason = s1.reasons[0], s1.triggers["raw_rule"]
+    s2 = eng.decide(pred, Quotes(0.30, 0.32, 0.68, 0.70), 90.17, 90.21, 440, 460, pos, now=1001.0)  # raw: rollover (bid <= 75% of 45c)
+    assert s2.action == "SELL" and s2.reasons == ["rollover"]
+    # a shown zone SELL is kept one second after the bid leaves, but never as a loss
+    pos = Position("T", "DOWN", 125.0, 0.24, 0.0, amount=30.0, entry_fee=0.32, target=0.35, target_high=0.64, zone_ts=990.0, high_bid=0.35)
+    pred = m.predict(90.19, 90.21, 360, p_market=0.64, feed_age_s=0.3)
+    sig = shown(eng, pred, Quotes(0.64, 0.66, 0.35, 0.37), 90.19, 90.21, 300, 600, pos, now=1000.0)
+    assert sig.action == "SELL" and sig.reasons == ["zone"]
+    sig = eng.decide(pred, Quotes(0.79, 0.81, 0.19, 0.21), 90.19, 90.21, 300, 600, pos, now=1002.0)  # crashed under breakeven
+    assert sig.action == "HOLD" and sig.scalp["pnl"] < 0

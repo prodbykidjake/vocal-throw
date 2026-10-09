@@ -407,7 +407,7 @@ class DecisionEngine:
                 low = low if low else fresh_low  # a plan's target is kept; otherwise plan the zone now
                 high = max(min(max(high if high else 0.0, fresh_high, low + 0.05), 0.95), round(low + 0.02, 3))
                 commit = (low, high)
-            elif now - pos.zone_ts >= cfg.zone_refresh_s or closing:
+            elif now - pos.zone_ts >= cfg.zone_refresh_s or (closing and now - pos.zone_ts >= 5):
                 # The zone never chases the price upward (that would move the goalposts every time the bid
                 # climbed); it comes down only when the old low has become unlikely.
                 if curve.touch(low) < cfg.zone_drop_prob and fresh_low <= low - 0.02:
@@ -466,52 +466,66 @@ class DecisionEngine:
         # answer has been something else two seconds in a row.
         prev_raw = pos.last_raw_reason
         shown = rule
-        if rule in SELL_RULES and prev not in SELL_RULES and prev_raw != rule:
-            shown = prev if prev in ("ride_to_settle", "lottery") else "hold"
+        confirming = False
+        if rule in SELL_RULES and prev not in SELL_RULES and prev_raw not in SELL_RULES:
+            shown = prev if prev in ("ride_to_settle", "lottery") else "hold"  # first second: not yet
+            confirming = True
         elif rule not in SELL_RULES and prev in SELL_RULES and prev_raw in SELL_RULES:
-            shown = prev
+            shown = prev  # one more second before letting go
+            # ... but never as a loss (zone/rollover) and never a salvage call on a position back in profit
+            if (shown in ("zone", "rollover") and pnl <= 0) or (shown == "give_up" and not losing):
+                shown = rule
         triggers["raw_rule"] = rule
+
+        def out(sig: Signal) -> Signal:
+            if commit and sig.scalp is not None:
+                sig.scalp["commit_zone"] = [low, high]  # the engine persists this on the position
+            return sig
 
         # --- render the shown rule with fresh numbers ---
         if shown == "ride_to_settle":
-            return hold("ride_to_settle", f"HOLD to settlement · {side} {pct(p)} with {mmss(seconds_left)} left; selling would give up "
-                        f"{cents(max(hold_val - sell_val, 0.0))} per share",
-                        scalp("HOLD", "ride_to_settle", f"{side} {pct(p)} with {mmss(seconds_left)} left · selling gives up {cents(max(hold_val - sell_val, 0.0))} a share", cash, pnl),
-                        hold_val - sell_val)
+            return out(hold("ride_to_settle", f"HOLD to settlement · {side} {pct(p)} with {mmss(seconds_left)} left; selling would give up "
+                            f"{cents(max(hold_val - sell_val, 0.0))} per share",
+                            scalp("HOLD", "ride_to_settle", f"{side} {pct(p)} with {mmss(seconds_left)} left · selling gives up {cents(max(hold_val - sell_val, 0.0))} a share", cash, pnl),
+                            hold_val - sell_val))
         if shown == "zone":
             if closing and not losing and (commit or prev == "zone"):
                 # the zone came down to the bid because the clock ran out, not because the price got there
                 why = f"last {mmss(seconds_left)} · take the profit before the close · {money(pnl)}"
             else:
                 where = "top of" if bid >= high - 0.002 else "in"
-                dipped = "" if bid >= low - 0.002 else " (dipped a hair under it)"
+                dipped = "" if bid >= low - 0.002 else (" (dipped a hair under it)" if latched else " (just left it)")
                 why = f"{where} your sell zone {zone_txt}{dipped} · {money(pnl)}"
-            return sell("zone", f"SELL NOW {side} at {cents(bid)} · {why}", scalp("SELL NOW", "zone", why, cash, pnl), sell_val - hold_val)
+            return out(sell("zone", f"SELL NOW {side} at {cents(bid)} · {why}", scalp("SELL NOW", "zone", why, cash, pnl), sell_val - hold_val))
         if shown == "rollover":
             pos.rollover_ref = pos.high_bid  # shown, so the rule re-arms only after a new high (3¢ above this one)
-            return sell("rollover", f"SELL NOW {side} at {cents(bid)} · lock in {money(pnl)}; bid rolled over from {cents(pos.high_bid)}",
-                        scalp("SELL NOW", "rollover", f"bid rolled over from {cents(pos.high_bid)} · lock in {money(pnl)}", cash, pnl), sell_val - hold_val)
+            return out(sell("rollover", f"SELL NOW {side} at {cents(bid)} · lock in {money(pnl)}; bid rolled over from {cents(pos.high_bid)}",
+                            scalp("SELL NOW", "rollover", f"bid rolled over from {cents(pos.high_bid)} · lock in {money(pnl)}", cash, pnl), sell_val - hold_val))
         if shown == "give_up":
-            return sell("give_up", f"SELL NOW {side} at {cents(bid)} · only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)}; "
-                        f"salvage ${cash:.2f} ({money(pnl)})",
-                        scalp("SELL NOW", "give_up", f"only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)} · salvage ${cash:.2f}", cash, pnl,
-                              p_recover=None if p_recover is None else round(p_recover, 3), breakeven=round(breakeven, 3)), sell_val - hold_val)
+            return out(sell("give_up", f"SELL NOW {side} at {cents(bid)} · only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)}; "
+                            f"salvage ${cash:.2f} ({money(pnl)})",
+                            scalp("SELL NOW", "give_up", f"only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)} · salvage ${cash:.2f}", cash, pnl,
+                                  p_recover=None if p_recover is None else round(p_recover, 3), breakeven=round(breakeven, 3)), sell_val - hold_val))
         if shown == "lottery":
             details.append("Selling would return almost nothing; a lottery ticket is worth more than that.")
-            return hold("lottery", f"HOLD {side} · ride it as a {pct(p)} lottery ticket (cash out is only ${cash:.2f})",
-                        scalp("HOLD", "lottery", f"{pct(p)} lottery ticket · cash out is only ${cash:.2f}", cash, pnl), hold_val - sell_val)
-        # hold for the zone, and say how likely it is
+            return out(hold("lottery", f"HOLD {side} · ride it as a {pct(p)} lottery ticket (cash out is only ${cash:.2f})",
+                            scalp("HOLD", "lottery", f"{pct(p)} lottery ticket · cash out is only ${cash:.2f}", cash, pnl), hold_val - sell_val))
+        # hold for the zone, and say how likely it is (in the last 30 s the zone curve has no time left: no chances)
         text = f"now {cents(bid)}"
-        if p_low is not None:
+        chance = ""
+        if closing:
+            text += f" · last {mmss(seconds_left)} of trading"
+        elif p_low is not None:
             text += f" · ~{pct5(p_low)} chance of {cents(low)} · ~{pct5(p_high)} chance of {cents(high)}"
+            chance = f" · ~{pct5(p_low)} chance of {cents(low)}"
         if losing and p_recover is not None:
             text += f" · ~{pct5(p_recover)} chance of getting back to {cents(breakeven)} or winning"
+        if confirming:
+            text += " · confirming SELL NOW…"
+            chance = " · confirming SELL NOW…"
         details.append(f"Will say SELL NOW when the bid enters the zone, if a profitable run rolls over hard, or if the chance of "
                        f"getting back to breakeven drops to {pct(cfg.give_up_prob)}.")
         sc = scalp("SELL BETWEEN", "hold", text, cash, pnl, target=low, target_high=high,
                    p_low=None if p_low is None else round(p_low, 3), p_high=None if p_high is None else round(p_high, 3),
                    p_recover=None if p_recover is None else round(p_recover, 3), breakeven=round(breakeven, 3))
-        if commit:
-            sc["commit_zone"] = [low, high]  # the engine persists this on the position
-        chance = f" · ~{pct5(p_low)} chance of {cents(low)}" if p_low is not None else ""
-        return hold("hold", f"HOLD {side} · sell between {zone_txt}{chance}", sc, hold_val - sell_val)
+        return out(hold("hold", f"HOLD {side} · sell between {zone_txt}{chance}", sc, hold_val - sell_val))
