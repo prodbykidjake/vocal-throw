@@ -317,7 +317,8 @@ class DecisionEngine:
         return min(b, 0.99)
 
     def curve_for(self, pred: Prediction, side: str, price: float, strike: float | None, seconds_left: float | None,
-                  quotes: Quotes | None = None, exclude_last_s: float | None = None) -> TouchCurve | None:
+                  quotes: Quotes | None = None, exclude_last_s: float | None = None,
+                  zone_exclude_last_s: float | None = None) -> TouchCurve | None:
         """Simulated paths of the BID for `side` from here to the close. They start from where Kalshi's own odds
         put the price (the model's price only when there are no odds), minus half the spread, so "chance of
         reaching 35¢" is about the price you can actually sell at, not about the model's opinion of it."""
@@ -332,16 +333,19 @@ class DecisionEngine:
             offset = clamp((quotes.ask(side) - quotes.bid(side)) / 2.0, 0.0, 0.05)
         sigma = pred.sigma_eff or pred.sigma
         return simulate(side, s0, strike, sigma, seconds_left, cfg.settle_lag_s, cfg.tie_adj, cfg.mc_paths,
-                        exclude_last_s=cfg.zone_exclude_last_s if exclude_last_s is None else exclude_last_s, offset=offset)
+                        exclude_last_s=cfg.zone_exclude_last_s if exclude_last_s is None else exclude_last_s, offset=offset,
+                        zone_exclude_last_s=zone_exclude_last_s)
 
     def zone_from(self, curve: TouchCurve, breakeven: float) -> tuple[float, float]:
         """SELL BETWEEN low–high: low = the price reached with `zone_low_prob` (never a loss), high = with `zone_high_prob`."""
         cfg = self.cfg
-        low = round(max(curve.level(cfg.zone_low_prob), breakeven + 0.02), 2)
-        low = min(low, max(0.93, round(breakeven + 0.01, 3)))  # capped, but never under breakeven
+        floor_be = round(breakeven + 0.02, 3)
+        # the level is floored to the cent (a sub-cent bid must not end up just under a rounded-up low)
+        low = max(math.floor(curve.level(cfg.zone_low_prob) * 100 + 1e-9) / 100.0, floor_be)
+        low = min(low, max(0.93, floor_be))  # capped, but never under breakeven + 2¢
         high = round(max(curve.level(cfg.zone_high_prob), low + 0.05), 2)
         high = min(high, max(0.95, round(low + 0.02, 3)))
-        return low, high
+        return round(low, 3), round(high, 3)
 
     def _manage_position(self, pred: Prediction, quotes: Quotes, price: float, strike: float | None,
                          seconds_left: float | None, pos: Position, now: float | None = None) -> Signal:
@@ -394,7 +398,10 @@ class DecisionEngine:
                         scalp("SELL AT", pred.confidence, "model can't judge right now; price-based target only", cash, pnl, target=target))
 
         # --- the sell zone: committed on the position, re-planned at most every zone_refresh_s ---
-        curve = self.curve_for(pred, side, price, strike, seconds_left, quotes)
+        # one simulation to the end of trading; its `.zone` view stops zone_exclude_last_s earlier
+        full = self.curve_for(pred, side, price, strike, seconds_left, quotes, exclude_last_s=0.0,
+                              zone_exclude_last_s=cfg.zone_exclude_last_s)
+        curve = full.zone if full is not None else None
         commit: tuple[float, float] | None = None
         p_low = p_high = p_recover = None
         low, high = pos.target, pos.target_high
@@ -417,7 +424,6 @@ class DecisionEngine:
         if losing:
             # chance of ever seeing breakeven again: paths to the very end of trading (the zone curve stops
             # 30 s early), and never below the chance of simply winning, since a win pays $1 > breakeven
-            full = self.curve_for(pred, side, price, strike, seconds_left, quotes, exclude_last_s=0.0)
             p_recover = max(full.touch(breakeven) if full is not None else 0.0, p)
         if low is None or high is None:
             low = round(max(breakeven + 0.05, bid + 0.01), 2)
@@ -430,22 +436,26 @@ class DecisionEngine:
                            + (f", ~{pct5(p_recover)} chance of getting back to breakeven ({cents(breakeven)}) or winning." if losing else "."))
 
         # --- which rule fires this second (the "raw" answer) ---
-        # Every SELL NOW rule latches on the PREVIOUSLY SHOWN rule, so a 1¢ wobble back across its threshold
-        # does not turn the box back to HOLD (that is the flicker the user hated).
+        # Every SELL NOW rule latches on the rule shown last second AND on the rule that fired last second (the
+        # confirming second shows HOLD, so the latch must already hold then), so a 1¢ wobble back across its
+        # threshold does not turn the box back to HOLD (that is the flicker the user hated).
         prev = pos.last_reason
+        prev_raw = pos.last_raw_reason
+        was = lambda *rules: prev in rules or prev_raw in rules  # noqa: E731
         ride_p = cfg.hold_to_settle_prob + (-0.05 if prev == "ride_to_settle" else 0.03 if prev in SELL_RULES else 0.0)
         ride_gap = 0.0 if prev == "ride_to_settle" else 0.01
         can_ride = (cfg.settle_advice != "never" and seconds_left is not None and seconds_left <= 120
                     and p >= ride_p and hold_val >= sell_val + ride_gap)
-        latched = prev == "zone" and bid >= max(low - max(0.02, 0.08 * low), breakeven + 0.005)  # never a loss
+        latched = was("zone") and bid >= max(low - max(0.02, 0.08 * low), breakeven + 0.005)  # never a loss
         in_zone = bid >= low - 0.002 or latched
         ran = pos.high_bid is not None and pos.high_bid >= pos.avg_price + 0.5 * (low - pos.avg_price)
         armed = pos.rollover_ref is None or (pos.high_bid is not None and pos.high_bid >= pos.rollover_ref + 0.03)
         rolled = False
         if pos.high_bid:
-            rolled = (armed and bid <= pos.high_bid * 0.75) or (prev == "rollover" and bid <= pos.high_bid * 0.85)
+            rolled = (armed and bid <= pos.high_bid * 0.75) or (was("rollover") and bid <= pos.high_bid * 0.85)
         rollover = ran and pnl > 0 and bid > pos.avg_price and rolled
-        hopeless = p_recover is not None and (p_recover <= cfg.give_up_prob or (prev == "give_up" and p_recover <= 2 * cfg.give_up_prob))
+        hopeless = p_recover is not None and (p_recover <= cfg.give_up_prob
+                                              or (was("give_up", "lottery") and p_recover <= 2 * cfg.give_up_prob))
         min_cash = min(cfg.give_up_min_cash, 0.2 * pos.cost) * (0.5 if prev == "give_up" else 1.0)
         # vs the model's settlement value: a lottery ticket beats salvage when the bid is far under it; with
         # hysteresis so a 1¢ wobble does not flip salvage <-> lottery every second
@@ -464,7 +474,6 @@ class DecisionEngine:
         # --- debounce, done here so the shown card always carries this second's numbers ---
         # A SELL has to be the raw answer two seconds in a row before it shows; a shown SELL stays until the raw
         # answer has been something else two seconds in a row.
-        prev_raw = pos.last_raw_reason
         shown = rule
         confirming = False
         if rule in SELL_RULES and prev not in SELL_RULES and prev_raw not in SELL_RULES:
@@ -472,8 +481,8 @@ class DecisionEngine:
             confirming = True
         elif rule not in SELL_RULES and prev in SELL_RULES and prev_raw in SELL_RULES:
             shown = prev  # one more second before letting go
-            # ... but never as a loss (zone/rollover) and never a salvage call on a position back in profit
-            if (shown in ("zone", "rollover") and pnl <= 0) or (shown == "give_up" and not losing):
+            # ... but never as a loss (zone/rollover) and never a salvage call that is no longer hopeless
+            if (shown in ("zone", "rollover") and pnl <= 0) or (shown == "give_up" and (not losing or not hopeless)):
                 shown = rule
         triggers["raw_rule"] = rule
 
@@ -489,7 +498,7 @@ class DecisionEngine:
                             scalp("HOLD", "ride_to_settle", f"{side} {pct(p)} with {mmss(seconds_left)} left · selling gives up {cents(max(hold_val - sell_val, 0.0))} a share", cash, pnl),
                             hold_val - sell_val))
         if shown == "zone":
-            if closing and not losing and (commit or prev == "zone"):
+            if closing and not losing and low <= bid + 0.01:
                 # the zone came down to the bid because the clock ran out, not because the price got there
                 why = f"last {mmss(seconds_left)} · take the profit before the close · {money(pnl)}"
             else:
@@ -508,8 +517,8 @@ class DecisionEngine:
                                   p_recover=None if p_recover is None else round(p_recover, 3), breakeven=round(breakeven, 3)), sell_val - hold_val))
         if shown == "lottery":
             details.append("Selling would return almost nothing; a lottery ticket is worth more than that.")
-            return out(hold("lottery", f"HOLD {side} · ride it as a {pct(p)} lottery ticket (cash out is only ${cash:.2f})",
-                            scalp("HOLD", "lottery", f"{pct(p)} lottery ticket · cash out is only ${cash:.2f}", cash, pnl), hold_val - sell_val))
+            return out(hold("lottery", f"HOLD {side} · ride it as a {pct5(p)} lottery ticket (cash out is only ${cash:.2f})",
+                            scalp("HOLD", "lottery", f"{pct5(p)} lottery ticket · cash out is only ${cash:.2f}", cash, pnl), hold_val - sell_val))
         # hold for the zone, and say how likely it is (in the last 30 s the zone curve has no time left: no chances)
         text = f"now {cents(bid)}"
         chance = ""

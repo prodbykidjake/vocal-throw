@@ -26,7 +26,7 @@ def tier_for(p_side: float, ask: float | None = None, fee: float = 0.0, edge_min
             return label, units
     if ask is not None and 0 < ask < 1:
         cost = ask + fee
-        if p_side - cost >= edge_min:
+        if p_side - cost >= edge_min - 1e-9:
             return "longshot", LONGSHOT_UNITS[1] if p_side >= 2.0 * cost else LONGSHOT_UNITS[0]
     return None
 

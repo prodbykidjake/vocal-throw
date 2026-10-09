@@ -50,6 +50,7 @@ class TouchCurve:
     start: float  # fair contract price for the side right now
     maxima: np.ndarray  # running max per path, sorted ascending
     horizon_s: float  # seconds of sellable time simulated
+    zone: "TouchCurve | None" = None  # the same paths cut off `zone_exclude_last_s` earlier (one simulation, two horizons)
 
     def touch(self, level: float) -> float:
         """Probability the side's price reaches `level` at some point before the close."""
@@ -84,18 +85,25 @@ def fair_price(side: str, s: float, strike: float, sigma: float, tau_s: float, t
 
 def simulate(side: str, s0: float, strike: float | None, sigma: float, seconds_left: float | None, settle_lag_s: float,
              tie_adj: float = 0.005, n_paths: int = 2000, step_s: float = 5.0, exclude_last_s: float = 10.0,
-             seed: int = 7, offset: float = 0.0) -> TouchCurve | None:
+             seed: int = 7, offset: float = 0.0, zone_exclude_last_s: float | None = None) -> TouchCurve | None:
     """Touch curve for `side` from the current state. None when there is nothing to simulate.
     `offset` is subtracted from every simulated fair price: pass half the spread so the curve describes the
-    BID you can actually sell into rather than the mid."""
+    BID you can actually sell into rather than the mid. With `zone_exclude_last_s` the result also carries
+    `.zone`, the same paths cut off that many seconds before the close (no second simulation)."""
     if strike is None or seconds_left is None or sigma <= 0 or s0 <= 0:
         return None
     side = "UP" if side == "UP" else "DOWN"
     start = fair_price(side, s0, strike, sigma, seconds_left + settle_lag_s, tie_adj) - offset
     horizon = seconds_left - exclude_last_s
     n_steps = int(horizon // step_s)
+    n_zone = None
+    if zone_exclude_last_s is not None:
+        n_zone = max(0, min(n_steps, int((seconds_left - zone_exclude_last_s) // step_s)))
     if n_steps < 1:
-        return TouchCurve(side, start, np.full(1, start), 0.0)
+        flat = TouchCurve(side, start, np.full(1, start), 0.0)
+        if n_zone is not None:
+            flat.zone = TouchCurve(side, start, np.full(1, start), 0.0)
+        return flat
     n_paths = max(2, n_paths)
     half = n_paths // 2
     dw = _normal_block(seed, half, n_steps) * (sigma * math.sqrt(step_s))
@@ -112,4 +120,12 @@ def simulate(side: str, s0: float, strike: float | None, sigma: float, seconds_l
         c = 1.0 - c
     maxima = np.maximum(c.max(axis=1) - offset, start)
     maxima.sort()
-    return TouchCurve(side, start, maxima, float(n_steps * step_s))
+    out = TouchCurve(side, start, maxima, float(n_steps * step_s))
+    if n_zone is not None:
+        if n_zone < 1:
+            out.zone = TouchCurve(side, start, np.full(1, start), 0.0)
+        else:
+            zm = np.maximum(c[:, :n_zone].max(axis=1) - offset, start)
+            zm.sort()
+            out.zone = TouchCurve(side, start, zm, float(n_zone * step_s))
+    return out

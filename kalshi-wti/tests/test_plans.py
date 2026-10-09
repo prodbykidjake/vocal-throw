@@ -108,8 +108,10 @@ def test_plan_cancels_on_hard_invalidation_and_expires_on_new_window():
     assert ev and ev.kind == "created"
     # market disagrees strongly while the model got MORE confident: that is the scalp, not a broken thesis
     assert tr.update(t0 + 4, "W1", pred(0.90, disagree=True), q, 90.0, 90.0, 476, None, False) is None
-    # market disagrees strongly and the model has weakened since the plan: cancelled, and the text says why
-    ev = tr.update(t0 + 4.5, "W1", pred(0.80, disagree=True), q, 90.0, 90.0, 476, None, False)
+    # a 1-point dip is noise, not a weakening: still no cancel
+    assert tr.update(t0 + 4.2, "W1", pred(0.84, disagree=True), q, 90.0, 90.0, 476, None, False) is None
+    # market disagrees strongly and the model has clearly weakened since the plan: cancelled, and the text says why
+    ev = tr.update(t0 + 4.5, "W1", pred(0.78, disagree=True), q, 90.0, 90.0, 476, None, False)
     assert ev and ev.kind == "cancelled" and "market disagrees" in ev.text
     tr.cooldown_until = 0
     tr.update(t0 + 5, "W1", pred(0.85), q, 90.0, 90.0, 475, buy("UP", 0.30), False)
@@ -198,3 +200,40 @@ def test_candidate_survives_a_short_gap_without_a_buy_signal():
     assert tr2.update(t0, "W1", p, q, 90.0, 90.0, 480, buy("UP", 0.20), False) is None
     assert tr2.update(t0 + 4, "W1", p, q, 90.0, 90.0, 476, wait, False) is None
     assert tr2._candidate is None and tr2.display(wait, p, t0 + 4) is wait
+
+
+def test_no_plan_while_model_and_market_disagree():
+    cfg = TradingCfg(confirm_s=0)
+    tr = PlanTracker(cfg)
+    t0 = time.time()
+    q = Quotes(0.29, 0.30, 0.69, 0.70)
+    tr.update(t0, "W1", pred(0.92, disagree=True), q, 90.0, 90.0, 480, buy("UP", 0.30), False)
+    assert tr.update(t0 + 0.5, "W1", pred(0.92, disagree=True), q, 90.0, 90.0, 480, buy("UP", 0.30), False) is None
+    assert tr.plan is None and "disagree" in tr.no_plan_reason
+    disp = tr.display(buy("UP", 0.30), pred(0.92, disagree=True), t0 + 1)
+    assert disp.reasons == ["no_plan"] and "disagree" in disp.headline
+
+
+def test_refusal_text_is_calm_and_a_refused_setup_does_not_count_down_again():
+    """Review finding: the refusal text rewrote itself every second with that second's cents, and each time the
+    edge re-crossed the threshold the card ran another 'setup forming 0/3' for a setup it had just refused."""
+    cfg = TradingCfg(confirm_s=3, min_scalp_cents=8)
+    tr = PlanTracker(cfg)
+    t0 = time.time()
+    wait = Signal("WAIT", "UP", None, 0, None, 0.5, "WAIT · no edge", ["d1", "d2"], ["priced_in"], "lean")
+    texts = set()
+    for i in range(8):  # ask wobbling 3-4c, model ~10-12%: edge, but never 8c of room
+        ask = 0.03 if i % 2 else 0.04
+        p = pred(0.10 + 0.005 * (i % 3))
+        tr.update(t0 + i, "W1", p, Quotes(ask - 0.01, ask, 1 - ask - 0.01, 1 - ask), 90.0, 90.0, 480 - i, buy("UP", ask), False)
+        d = tr.display(buy("UP", ask), p, t0 + i)
+        if d.reasons == ["no_plan"]:
+            texts.add(d.headline)
+    assert len(texts) == 1, texts  # one wording, held, not a new number every second
+    # the signal drops to WAIT for longer than the grace, then the same setup comes back: no new countdown
+    for i in range(8, 13):
+        tr.update(t0 + i, "W1", pred(0.10), Quotes(0.03, 0.04, 0.95, 0.96), 90.0, 90.0, 480 - i, wait, False)
+    assert tr._candidate is None
+    tr.update(t0 + 13, "W1", pred(0.10), Quotes(0.03, 0.04, 0.95, 0.96), 90.0, 90.0, 467, buy("UP", 0.04), False)
+    d = tr.display(buy("UP", 0.04), pred(0.10), t0 + 13)
+    assert d.reasons == ["no_plan"] and "forming" not in d.headline

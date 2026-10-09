@@ -353,3 +353,58 @@ def test_alternating_sell_rules_still_show_and_a_kept_sell_is_never_a_loss():
     assert sig.action == "SELL" and sig.reasons == ["zone"]
     sig = eng.decide(pred, Quotes(0.79, 0.81, 0.19, 0.21), 90.19, 90.21, 300, 600, pos, now=1002.0)  # crashed under breakeven
     assert sig.action == "HOLD" and sig.scalp["pnl"] < 0
+
+
+def test_wobble_on_the_zone_line_still_shows_sell_now():
+    """Review finding: the latches keyed on the SHOWN rule only, so during the confirming second a bid chattering
+    1c across the zone line restarted the confirmation forever and SELL NOW never appeared."""
+    m = warmed_model()
+    eng = engine()
+    pos = Position("T", "UP", 100.0, 0.30, 0.0, amount=30.0, entry_fee=0.5, target=0.50, target_high=0.70, zone_ts=990.0, high_bid=0.50)
+    pred = m.predict(90.22, 90.21, 360, p_market=0.50, feed_age_s=0.3)
+    shown_rules = []
+    for i in range(8):
+        bid = 0.50 if i % 2 == 0 else 0.49
+        sig = eng.decide(pred, Quotes(bid, bid + 0.02, 1 - bid - 0.02, 1 - bid), 90.22, 90.21, 300, 600, pos, now=1000.0 + i)
+        pos.last_reason, pos.last_raw_reason = sig.reasons[0], sig.triggers.get("raw_rule", sig.reasons[0])
+        shown_rules.append(sig.reasons[0])
+    assert "zone" in shown_rules[:3] and all(r == "zone" for r in shown_rules[2:])
+
+
+def test_positions_bought_near_the_top_do_not_replan_every_second():
+    m = warmed_model()
+    eng = engine()
+    pos = Position("T", "UP", 10.87, 0.92, 0.0, amount=10.0, entry_fee=0.06)
+    pred = m.predict(90.30, 90.21, 500, p_market=0.92, feed_age_s=0.3)
+    q = Quotes(0.91, 0.93, 0.07, 0.09)
+    commits = 0
+    for i in range(6):
+        sig = eng.decide(pred, q, 90.30, 90.21, 440, 460, pos, now=1000.0 + i)
+        if sig.scalp and sig.scalp.get("commit_zone"):
+            commits += 1
+            pos.target, pos.target_high, pos.zone_ts = sig.scalp["commit_zone"][0], sig.scalp["commit_zone"][1], 1000.0 + i
+        pos.last_reason, pos.last_raw_reason = sig.reasons[0], sig.triggers.get("raw_rule", sig.reasons[0])
+    assert commits == 1 and pos.target >= round(eng.breakeven(pos) + 0.02, 3) - 1e-9
+
+
+def test_kept_salvage_call_is_dropped_when_no_longer_hopeless():
+    m = warmed_model()
+    eng = engine()
+    pos = Position("T", "UP", 75.0, 0.40, 0.0, amount=30.0, entry_fee=0.5)
+    pred = m.predict(90.05, 90.21, 260, p_market=0.04, feed_age_s=0.3)
+    sig = shown(eng, pred, Quotes(0.03, 0.05, 0.95, 0.97), 90.05, 90.21, 200, 700, pos, now=1000.0)
+    assert sig.action == "SELL" and sig.reasons == ["give_up"]
+    # the bid jumps and the recovery chance is far above 20%: the kept second must not show a salvage call
+    pred2 = m.predict(90.16, 90.21, 260, p_market=0.30, feed_age_s=0.3)
+    sig = eng.decide(pred2, Quotes(0.29, 0.31, 0.69, 0.71), 90.16, 90.21, 200, 700, pos, now=1002.0)
+    assert sig.action == "HOLD"
+
+
+def test_sub_cent_bid_in_the_last_seconds_still_gets_the_take_profit_call():
+    m = warmed_model()
+    eng = engine()
+    pos = Position("T", "UP", 50.0, 0.20, 0.0, amount=10.0, entry_fee=0.1, target=0.50, target_high=0.70, zone_ts=900.0, high_bid=0.33)
+    pred = m.predict(90.205, 90.21, 80, p_market=0.335, feed_age_s=0.3)
+    q = Quotes(0.325, 0.345, 0.655, 0.675)
+    sig = shown(eng, pred, q, 90.205, 90.21, 20, 880, pos, n=3, now=1000.0)
+    assert sig.action == "SELL" and "before the close" in sig.headline

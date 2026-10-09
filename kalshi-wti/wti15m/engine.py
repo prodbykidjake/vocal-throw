@@ -531,8 +531,8 @@ class Engine:
             self.notifier.notify(f"WTI 15m: plan {event.kind}", event.text, "Submarine")
 
     def _maybe_notify(self, sig: Signal, now: float):
-        """Notify on BUY/SELL only once the call has held for 2 consecutive seconds, at most once per 30 s per action.
-        The on-screen box still flips instantly; this only de-spams the sound/notification."""
+        """Desktop notification at most once per 30 s per action. A SELL is already debounced by the decider
+        (two seconds in a row before it shows), so it notifies the second it appears; a BUY must hold 2 s."""
         if sig.action not in ("BUY", "SELL"):
             self._pending_key, self._pending_count = None, 0
             return
@@ -540,7 +540,8 @@ class Engine:
             self._pending_count += 1
         else:
             self._pending_key, self._pending_count = sig.key, 1
-        if self._pending_count == 2 and now - self._last_notified.get(sig.action, 0.0) >= 30:
+        needed = 1 if sig.action == "SELL" else 2
+        if self._pending_count == needed and now - self._last_notified.get(sig.action, 0.0) >= 30:
             self._last_notified[sig.action] = now
             self.notifier.notify(f"WTI 15m: {sig.action} {sig.side or ''}".strip(), sig.headline,
                                  "Glass" if sig.action == "BUY" else "Submarine")

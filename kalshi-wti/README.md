@@ -88,7 +88,9 @@ automatically; nothing to click.
   is at least double the price. The sell target is the model's fair exit, lowered to a price the simulated
   paths (below) reach with at least `plan_min_chance` (30%); the chance is printed next to it. Between plans
   the card shows the plain analysis, "setup forming" while a candidate confirms, and the exact reason when a
-  confirmed setup cannot become a plan (not enough room to scalp, too little chance of reaching the target).
+  confirmed setup cannot become a plan (not enough room to scalp, too little chance of reaching the target,
+  model and Kalshi's odds too far apart). A refusal is held on the card instead of being reworded every
+  second, and a setup refused in the last minute does not start a new countdown.
 - **Your position** (built for scalping): tap **UP** or **DOWN**, the price box fills with the live ask
   (edit it if your fill differed), type the dollars you spent, press Enter. The card then tracks it like
   Kalshi's sell sheet: shares, live sell price, **cash out** after fees and P&L, updating every second.
