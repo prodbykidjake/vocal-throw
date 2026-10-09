@@ -270,7 +270,7 @@ def test_recovery_chance_runs_to_the_close_and_never_below_the_win_chance():
         pred = m.predict(90.215, 90.21, left + 60, p_market=0.56, feed_age_s=0.3)
         sig = eng.decide(pred, Quotes(0.55, 0.57, 0.43, 0.45), 90.215, 90.21, left, 900 - left, pos, now=1000.0)
         assert sig.action == "HOLD", (left, sig.headline)
-        assert sig.scalp["p_recover"] >= pred.p_final - 1e-6
+        assert sig.scalp["p_recover"] >= pred.p_final - 0.0011  # scalp values are rounded to 3 decimals
 
 
 def test_zone_latch_never_sells_at_a_loss():
