@@ -281,3 +281,18 @@ def test_zone_latch_never_sells_at_a_loss():
     pred = m.predict(90.21, 90.21, 360, p_market=0.47, feed_age_s=0.3)
     sig = eng.decide(pred, Quotes(0.46, 0.48, 0.52, 0.54), 90.21, 90.21, 300, 600, pos, now=1000.0)
     assert not (sig.action == "SELL" and sig.scalp["pnl"] < 0 and sig.reasons != ["give_up"])
+
+
+def test_last_seconds_take_the_profit_but_never_a_loss():
+    m = warmed_model()
+    eng = engine()
+    # in profit with 20 s left and a zone that is out of reach: the card says take the profit before the close
+    pos = Position("T", "DOWN", 125.0, 0.24, 0.0, amount=30.0, entry_fee=0.32, target=0.50, target_high=0.70, zone_ts=900.0, high_bid=0.33)
+    pred = m.predict(90.20, 90.21, 80, p_market=0.67, feed_age_s=0.3)
+    sig = eng.decide(pred, Quotes(0.66, 0.68, 0.32, 0.34), 90.20, 90.21, 20, 880, pos, now=1000.0)
+    assert sig.action == "SELL" and sig.reasons == ["zone"] and "before the close" in sig.headline and sig.scalp["pnl"] > 0
+    # under water with 20 s left and a real chance of winning: no sell, and the chance shown is at least the win chance
+    pos = Position("T", "DOWN", 125.0, 0.24, 0.0, amount=30.0, entry_fee=0.32, target=0.35, target_high=0.64, zone_ts=900.0, high_bid=0.24)
+    pred = m.predict(90.215, 90.21, 80, p_market=0.60, feed_age_s=0.3)
+    sig = eng.decide(pred, Quotes(0.59, 0.61, 0.39 - 0.19, 0.41 - 0.19), 90.215, 90.21, 20, 880, pos, now=1000.0)
+    assert sig.action == "HOLD" and sig.scalp["p_recover"] >= round(pred.p_down, 3) - 0.0011

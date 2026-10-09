@@ -396,17 +396,18 @@ class DecisionEngine:
         commit: tuple[float, float] | None = None
         p_low = p_high = p_recover = None
         low, high = pos.target, pos.target_high
+        closing = curve is not None and curve.horizon_s <= 0  # no sellable time left before the last seconds
         if curve is not None:
             fresh_low, fresh_high = self.zone_from(curve, breakeven)
             if low is None or high is None:
                 low = low if low else fresh_low  # a plan's target is kept; otherwise plan the zone now
                 high = max(min(max(high if high else 0.0, fresh_high, low + 0.05), 0.95), round(low + 0.02, 3))
                 commit = (low, high)
-            elif now - pos.zone_ts >= cfg.zone_refresh_s:
+            elif now - pos.zone_ts >= cfg.zone_refresh_s or closing:
                 # The zone never chases the price upward (that would move the goalposts every time the bid
                 # climbed); it comes down only when the old low has become unlikely.
                 if curve.touch(low) < cfg.zone_drop_prob and fresh_low <= low - 0.02:
-                    commit = (fresh_low, max(fresh_high, fresh_low + 0.05))
+                    commit = (fresh_low, min(max(fresh_high, fresh_low + 0.05), max(0.95, round(fresh_low + 0.02, 3))))
                     low, high = commit
             p_low, p_high = curve.touch(low), curve.touch(high)
         if losing:
@@ -422,7 +423,7 @@ class DecisionEngine:
         if curve is not None:
             details.append(f"Simulated {curve.horizon_s / 60:.0f} min of price paths: ~{pct5(p_low)} chance the {side} price reaches "
                            f"{cents(low)} before the close, ~{pct5(p_high)} chance of {cents(high)}"
-                           + (f", ~{pct5(p_recover)} chance of getting back to breakeven ({cents(breakeven)})." if losing else "."))
+                           + (f", ~{pct5(p_recover)} chance of getting back to breakeven ({cents(breakeven)}) or winning." if losing else "."))
 
         # Each SELL NOW rule latches: once it has fired, a 1¢ wobble back across its threshold does not
         # turn the box back to HOLD (that is the flicker the user hated). The latch is the previous rule.
@@ -440,10 +441,14 @@ class DecisionEngine:
         # 2. the bid is inside the zone: take it
         latched = prev == "zone" and bid >= max(low - max(0.02, 0.08 * low), breakeven + 0.005)  # never a loss
         if bid >= low - 0.002 or latched:
-            where = "top of" if bid >= high - 0.002 else "in"
-            dipped = "" if bid >= low - 0.002 else " (dipped a hair under it)"
-            return sell("zone", f"SELL NOW {side} at {cents(bid)} · {where} your sell zone {zone_txt}{dipped} · {money(pnl)}",
-                        scalp("SELL NOW", "zone", f"{where} your sell zone {zone_txt}{dipped} · {money(pnl)}", cash, pnl), sell_val - hold_val)
+            if closing and not losing and (commit or prev == "zone"):
+                # the zone came down to the bid because the clock ran out, not because the price got there
+                why = f"last {mmss(seconds_left)} · take the profit before the close · {money(pnl)}"
+            else:
+                where = "top of" if bid >= high - 0.002 else "in"
+                dipped = "" if bid >= low - 0.002 else " (dipped a hair under it)"
+                why = f"{where} your sell zone {zone_txt}{dipped} · {money(pnl)}"
+            return sell("zone", f"SELL NOW {side} at {cents(bid)} · {why}", scalp("SELL NOW", "zone", why, cash, pnl), sell_val - hold_val)
         # 3. in profit, a real run happened, and the bid rolled over hard from its high: lock it in.
         #    Once ignored, it re-arms only after a NEW high (3¢ above the one it fired on), not on every dip.
         ran = pos.high_bid is not None and pos.high_bid >= pos.avg_price + 0.5 * (low - pos.avg_price)
@@ -476,7 +481,7 @@ class DecisionEngine:
         if p_low is not None:
             text += f" · ~{pct5(p_low)} chance of {cents(low)} · ~{pct5(p_high)} chance of {cents(high)}"
         if losing and p_recover is not None:
-            text += f" · ~{pct5(p_recover)} chance of getting back to {cents(breakeven)}"
+            text += f" · ~{pct5(p_recover)} chance of getting back to {cents(breakeven)} or winning"
         details.append(f"Will say SELL NOW when the bid enters the zone, if a profitable run rolls over hard, or if the chance of "
                        f"getting back to breakeven drops to {pct(cfg.give_up_prob)}.")
         sc = scalp("SELL BETWEEN", "hold", text, cash, pnl, target=low, target_high=high,

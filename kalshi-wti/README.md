@@ -93,17 +93,22 @@ automatically; nothing to click.
   (edit it if your fill differed), type the dollars you spent, press Enter. The card then tracks it like
   Kalshi's sell sheet: shares, live sell price, **cash out** after fees and P&L, updating every second.
   The box above them is forward-looking (since v8): **HOLD · SELL BETWEEN 39¢ – 75¢** with a line under it
-  such as `now 22¢ · ~50% chance of 39¢ · ~20% chance of 75¢ · ~80% chance of getting back to 25.6¢`.
-  The chances come from 2,000 simulated price paths from the current market price to the close, using the
-  model's volatility: the low end of the zone is the price reached in half the paths, the high end the
-  price reached in one in five. The zone is set once (from the plan if you took one) and never chases the
-  price upward; it comes down only when the old low has become unlikely, and never below breakeven.
+  such as `now 22¢ · ~50% chance of 39¢ · ~20% chance of 75¢ · ~80% chance of getting back to 25.6¢ or
+  winning`. The chances come from 2,000 simulated price paths from the current market price to the close,
+  using the model's volatility: the low end of the zone is the price reached in half the paths, the high end
+  the price reached in one in five; the "getting back to breakeven" chance runs to the very end of trading
+  and is never below the chance of simply winning (a win pays $1). The zone is set once (from the plan if
+  you took one) and never chases the price upward; it comes down only when the old low has become
+  unlikely, and never below breakeven.
   **SELL NOW** (lit up) fires when the bid enters the zone, when a profitable run rolls over 25% from its
-  high, or, the only loss-taking case, when the chance of getting back to breakeven is at or under
-  `give_up_prob` (10%) and the sale still returns something worth clicking for; otherwise a hopeless
-  position is called a lottery ticket and left alone. **HOLD TO SETTLEMENT** appears only in the last two
-  minutes with ≥ 90% and selling clearly worse. "I sold at the bid" records the exit at the live price in
-  one click; "I sold at this" takes the price you actually got.
+  high (and then re-arms only after a new high, so it does not nag on every dip), in the last 30 s when a
+  profit is on the table and the zone is out of reach ("take the profit before the close"), or, the only
+  loss-taking case, when the chance of getting back to breakeven is at or under `give_up_prob` (10%) and
+  the sale still returns something worth clicking for; otherwise a hopeless position is called a lottery
+  ticket and left alone. Every SELL NOW latches: a 1¢ wobble back across its threshold does not flip the
+  box back to HOLD. **HOLD TO SETTLEMENT** appears only in the last two minutes with ≥ 90% and selling
+  clearly worse. "I sold at the bid" records the exit at the live price in one click; "I sold at this"
+  takes the price you actually got.
 - **History**: every window with target, result, model Up at 10 and 3 minutes, market Up at close,
   whether the feed agreed with the settlement, and what a paper trade would have made.
 - **Stats**: Brier score (0.25 = coin flip; lower is better) for model vs market at 10/5/2/1 minutes
