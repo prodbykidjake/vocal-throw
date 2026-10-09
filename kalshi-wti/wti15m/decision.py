@@ -97,6 +97,7 @@ class Position:
     last_reason: str | None = None  # the rule SHOWN last second (in memory only): the latches key on it
     last_raw_reason: str | None = None  # the rule that FIRED last second, before the two-second debounce
     rollover_ref: float | None = None  # high bid when a rollover SELL was last shown (in memory): it re-arms only on a new high
+    realized: float = 0.0  # P&L already banked by partial sells (auto trading)
 
     @property
     def cost(self) -> float:
@@ -107,7 +108,7 @@ class Position:
         return {"id": self.id, "ticker": self.ticker, "side": self.side, "qty": round(self.qty, 4),
                 "avg_price": self.avg_price, "opened_ts": self.opened_ts, "amount": self.amount,
                 "entry_fee": self.entry_fee, "cost": round(self.cost, 2), "high_bid": self.high_bid, "target": self.target,
-                "target_high": self.target_high, "zone_ts": self.zone_ts}
+                "target_high": self.target_high, "zone_ts": self.zone_ts, "realized": round(self.realized, 2)}
 
 
 @dataclass

@@ -88,6 +88,8 @@
       $("signal-headline").textContent = m ? "waiting for data…" : "no live window right now";
       $("signal-details").innerHTML = "";
     }
+    // auto trading
+    renderAuto(s);
     // quick scalps
     renderQuick(s);
     // position
@@ -106,6 +108,42 @@
       if (s.tick.ts > last[0]) { chartData.ticks.push([s.tick.ts, s.tick.price]); drawChart(); }
     }
   }
+
+  // ---------------------------------------------------------------- auto trading card
+  function renderAuto(s) {
+    const a = s.auto, card = $("auto-card");
+    if (!a) { card.classList.add("hidden"); badge($("auto-badge"), "auto: off", ""); return; }
+    card.classList.remove("hidden");
+    const modeLabel = a.mode === "live" ? "LIVE" : a.mode === "sim" ? "SIM" : "DRY RUN";
+    const pill = $("auto-mode");
+    pill.textContent = a.paused ? modeLabel + " · PAUSED" : modeLabel;
+    pill.className = "pill " + (a.paused ? "PAUSED" : a.mode === "live" ? "LIVE" : a.mode === "sim" ? "SIM" : "DRY");
+    card.className = "card" + (a.mode === "live" ? " live" : "") + (a.paused ? " paused" : "");
+    badge($("auto-badge"), "auto: " + (a.paused ? "paused" : modeLabel.toLowerCase()) + (a.sync_error ? " · sync error" : ""),
+      a.sync_error ? "bad" : a.paused ? "warn" : a.mode === "live" ? "bad" : "ok");
+    $("auto-note").textContent = a.mode === "live" ? "(real orders on your Kalshi account)" : a.mode === "sim" ? "(simulated account on the demo market)" : "(dry run: real quotes, simulated fills · nothing is sent to Kalshi)";
+    $("auto-text").textContent = a.last_text || "";
+    const d = a.day || {}, lim = a.limits || {};
+    $("auto-line").textContent = `balance ${a.balance == null ? "--" : "$" + Number(a.balance).toFixed(2)} · today bought $${Number(d.bought || 0).toFixed(2)} of $${lim.day} · today P&L ${fmtUsd(d.pnl || 0)} (stop at -$${lim.day_loss}) · this window $${Number(a.window_bought || 0).toFixed(2)} of $${lim.window} · max $${lim.order}/order · ${lim.take_plans ? "plans" : ""}${lim.take_plans && lim.take_quick ? " + " : ""}${lim.take_quick ? "quick scalps" : ""}` +
+      (d.losses_row ? ` · ${d.losses_row} loss${d.losses_row > 1 ? "es" : ""} in a row` : "") + (a.sync_age_s != null ? ` · account synced ${a.sync_age_s.toFixed(0)}s ago` : "") + (a.api ? ` · ${a.api}` : "");
+    const o = a.order, kp = a.kalshi_position;
+    let line = "";
+    if (o) line = `open order: ${o.action.toUpperCase()} ${o.side} ${o.count} shares at ${fmtC(o.price)} ($${o.amount}) · filled ${o.filled} · ${o.age_s}s · ${o.reason}`;
+    else if (a.paused) line = `paused: ${a.pause_reason}`;
+    else if (a.blocked) line = `not buying: ${a.blocked}`;
+    else line = s.position ? "position open · will sell when the card says SELL NOW" : "watching for a plan or a quick scalp";
+    if (kp) line += ` · Kalshi shows ${kp.qty} ${kp.side} ($${kp.exposure} in)`;
+    if (a.sync_error) line += ` · sync error: ${a.sync_error}`;
+    $("auto-order").textContent = line;
+    $("auto-pause").classList.toggle("hidden", a.paused);
+    $("auto-resume").classList.toggle("hidden", !a.paused);
+    $("auto-orders").innerHTML = (a.orders || []).map((r) => `<li><span class="k">${new Date(r.ts * 1000).toLocaleTimeString()} ${esc(r.mode)}</span>` +
+      `<b class="${r.side === "UP" ? "up" : "down"}">${esc(r.action.toUpperCase())} ${esc(r.side)}</b> ${Number(r.count).toFixed(2)} at ${fmtC(r.price)} · ${esc(r.status)}` +
+      (r.filled ? ` · filled ${Number(r.filled).toFixed(2)} @ ${fmtC(r.avg_price)} (fee $${Number(r.fees || 0).toFixed(2)})` : "") + ` · ${esc(r.reason)}${r.text ? " · " + esc(r.text) : ""}</li>`).join("");
+  }
+  $("auto-pause").addEventListener("click", () => post("/api/auto/pause", {}));
+  $("auto-resume").addEventListener("click", () => post("/api/auto/resume", {}));
+  $("auto-stop").addEventListener("click", () => { if (confirm("Cancel the open order and pause auto trading?")) post("/api/auto/stop", {}); });
 
   // ---------------------------------------------------------------- quick scalps card
   function renderQuick(s) {
@@ -249,7 +287,7 @@
 
   // ---------------------------------------------------------------- position forms
   async function post(url, body) {
-    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "X-WTI15M": "1" }, body: JSON.stringify(body) });
     if (!r.ok) { let d = {}; try { d = await r.json(); } catch (e) {} alert(d.detail || "request failed"); return null; }
     return r.json();
   }
@@ -273,24 +311,24 @@
     const res = await post("/api/position/close", { price: Number(pc) / 100 });
     if (res) { ev.target.reset(); alert(`Recorded. Cash out $${res.cash_out.toFixed(2)}, P&L ${fmtUsd(res.pnl)}`); }
   });
-  $("cancel-pos").addEventListener("click", () => { if (confirm("Remove this position entry? (use this only if you entered it by mistake)")) fetch("/api/position", { method: "DELETE" }); });
+  $("cancel-pos").addEventListener("click", () => { if (confirm("Remove this position entry? (use this only if you entered it by mistake)")) fetch("/api/position", { method: "DELETE", headers: { "X-WTI15M": "1" } }); });
 
   // ---------------------------------------------------------------- history / stats / rules
   async function loadHistory() {
     const d = await (await fetch("/api/history")).json();
     $("history-table").querySelector("tbody").innerHTML = d.windows.map((w) => `<tr>
       <td>${fmtT(w.close_time)}</td><td class="mono">${w.strike != null ? "$" + w.strike.toFixed(2) : "--"}</td>
-      <td class="${w.result === "yes" ? "up" : w.result === "no" ? "down" : "muted"}">${w.result === "yes" ? "UP" : w.result === "no" ? "DOWN" : w.status || "--"}</td>
+      <td class="${w.result === "yes" ? "up" : w.result === "no" ? "down" : "muted"}">${w.result === "yes" ? "UP" : w.result === "no" ? "DOWN" : esc(w.status || "--")}</td>
       <td>${fmtP(w.p_at_10min)}</td><td>${fmtP(w.p_at_3min)}</td><td>${fmtP(w.p_market_at_close)}</td>
       <td>${w.settle_price != null ? "$" + w.settle_price.toFixed(2) : ""} ${w.feed_error == null ? "--" : (w.feed_error >= 0 ? "+" : "") + w.feed_error.toFixed(2)}</td>
       <td>${w.buy_signals || 0}</td><td class="${(w.paper_pnl || 0) >= 0 ? "up" : "down"}">${w.paper_pnl == null ? "--" : fmtUsd(w.paper_pnl)}</td></tr>`).join("");
-    $("plans-table").querySelector("tbody").innerHTML = (d.plans || []).map((p) => `<tr><td class="mono">${p.ticker.slice(-9)}</td><td class="${p.side === "UP" ? "up" : "down"}">${p.side}</td>
-      <td>${fmtC(p.limit_price)}</td><td>$${Number(p.amount).toFixed(0)}</td><td>${fmtC(p.target)}</td><td>${p.tier || ""}</td><td>${p.status}${p.status_text ? " · " + esc(p.status_text) : ""}</td>
+    $("plans-table").querySelector("tbody").innerHTML = (d.plans || []).map((p) => `<tr><td class="mono">${esc(p.ticker.slice(-9))}</td><td class="${p.side === "UP" ? "up" : "down"}">${esc(p.side)}</td>
+      <td>${fmtC(p.limit_price)}</td><td>$${Number(p.amount).toFixed(0)}</td><td>${fmtC(p.target)}</td><td>${esc(p.tier || "")}</td><td>${esc(p.status)}${p.status_text ? " · " + esc(p.status_text) : ""}</td>
       <td>${fmtC(p.best_bid)}</td><td>${p.hit_target == null ? "--" : p.hit_target ? "yes" : "no"}</td><td class="${(p.hypo_pnl || 0) >= 0 ? "up" : "down"}">${p.hypo_pnl == null ? "--" : fmtUsd(p.hypo_pnl)}</td></tr>`).join("");
-    $("paper-table").querySelector("tbody").innerHTML = d.paper.map((t) => `<tr><td class="mono">${t.ticker}</td><td class="${t.side === "UP" ? "up" : "down"}">${t.side}</td>
-      <td>${fmtC(t.entry_price)}</td><td>${t.size}</td><td>${t.exit_price == null ? "open" : fmtC(t.exit_price)}</td><td>${t.exit_reason || ""}</td>
-      <td class="${(t.pnl || 0) >= 0 ? "up" : "down"}">${t.pnl == null ? "--" : fmtUsd(t.pnl)}</td><td>${t.confidence || ""}</td></tr>`).join("");
-    $("pos-table").querySelector("tbody").innerHTML = d.positions.map((t) => `<tr><td class="mono">${t.ticker}</td><td class="${t.side === "UP" ? "up" : "down"}">${t.side}</td>
+    $("paper-table").querySelector("tbody").innerHTML = d.paper.map((t) => `<tr><td class="mono">${esc(t.ticker)}</td><td class="${t.side === "UP" ? "up" : "down"}">${esc(t.side)}</td>
+      <td>${fmtC(t.entry_price)}</td><td>${t.size}</td><td>${t.exit_price == null ? "open" : fmtC(t.exit_price)}</td><td>${esc(t.exit_reason || "")}</td>
+      <td class="${(t.pnl || 0) >= 0 ? "up" : "down"}">${t.pnl == null ? "--" : fmtUsd(t.pnl)}</td><td>${esc(t.confidence || "")}</td></tr>`).join("");
+    $("pos-table").querySelector("tbody").innerHTML = d.positions.map((t) => `<tr><td class="mono">${esc(t.ticker)}</td><td class="${t.side === "UP" ? "up" : "down"}">${esc(t.side)}</td>
       <td>${Number(t.qty).toFixed(2)}${t.amount != null ? ` ($${Number(t.amount).toFixed(2)})` : ""}</td><td>${fmtC(t.avg_price)}</td><td>${t.exit_price == null ? "open" : fmtC(t.exit_price)}</td><td class="${(t.pnl || 0) >= 0 ? "up" : "down"}">${t.pnl == null ? "--" : fmtUsd(t.pnl)}</td></tr>`).join("");
   }
   async function loadStats() {

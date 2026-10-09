@@ -24,6 +24,7 @@
     <span class="badge" id="feed-badge">feed</span>
     <span class="badge" id="kalshi-badge">kalshi</span>
     <span class="badge" id="warm-badge">warm-up</span>
+    <span class="badge" id="auto-badge">auto: off</span>
   </div>
 </header>
 
@@ -60,6 +61,22 @@
       </div>
     </div>
 
+    <div class="card hidden" id="auto-card">
+      <div class="card-title">Auto trading <span class="muted" id="auto-note"></span></div>
+      <div class="signal-head">
+        <span class="pill" id="auto-mode">OFF</span>
+        <span id="auto-text" class="headline">not enabled</span>
+      </div>
+      <div class="sub" id="auto-line"></div>
+      <div class="sub" id="auto-order"></div>
+      <div class="row">
+        <button type="button" id="auto-pause">PAUSE buying</button>
+        <button type="button" id="auto-resume" class="ghost">RESUME</button>
+        <button type="button" id="auto-stop" class="danger">STOP: cancel order + pause</button>
+      </div>
+      <ul id="auto-orders" class="events"></ul>
+    </div>
+
     <div class="card" id="signal-card">
       <div class="signal-head">
         <span class="pill" id="signal-action">WAIT</span>
@@ -73,6 +90,11 @@
       <div class="sub" id="signal-triggers"></div>
     </div>
 
+    <div class="card chart-card">
+      <div class="card-title">WTI vs target <span class="muted" id="chart-note"></span></div>
+      <div id="chart"></div>
+    </div>
+
     <div class="card" id="quick-card">
       <div class="card-title">Quick scalps <span class="muted">(cheap contracts, a few cents of profit within minutes · riskier, less confident · hand on the sell button)</span></div>
       <div class="quick-box" id="quick-box">no quick scalp right now</div>
@@ -82,11 +104,6 @@
         <span class="sub" id="quick-note"></span>
       </div>
       <div class="sub" id="quick-options"></div>
-    </div>
-
-    <div class="card chart-card">
-      <div class="card-title">WTI vs target <span class="muted" id="chart-note"></span></div>
-      <div id="chart"></div>
     </div>
 
     <div class="card" id="position-card">
@@ -124,7 +141,7 @@
       <div class="sub" id="paper-line"></div>
     </div>
 
-    <div class="card">
+    <div class="card" id="log-card">
       <div class="card-title">Log</div>
       <ul id="events" class="events"></ul>
     </div>

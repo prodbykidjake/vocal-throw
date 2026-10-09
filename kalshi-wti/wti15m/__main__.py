@@ -30,17 +30,81 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--sim", action="store_true", help="use the simulated market + feed")
     s = sub.add_parser("serve", help="run the dashboard at http://127.0.0.1:8787")
     s.add_argument("--no-browser", action="store_true")
+    sub.add_parser("auth", help="check the Kalshi API key: exchange status, balance, open positions (places nothing)")
     d = sub.add_parser("demo", help="dashboard on a simulated market/feed (works offline)")
     d.add_argument("--window", type=int, default=120, help="simulated window length in seconds")
     d.add_argument("--warmup", type=int, default=10, help="simulated warm-up minutes required before signals")
     d.add_argument("--no-browser", action="store_true")
     d.add_argument("--db", default="data/demo.db")
+    d.add_argument("--auto", action="store_true", help="also run the auto trader against a simulated account")
     r = sub.add_parser("replay", help="re-score recorded windows")
     r.add_argument("--since", help="ISO date, e.g. 2026-10-08")
     r.add_argument("--retrain", action="store_true", help="walk-forward retrain the calibrator from scratch")
     r.add_argument("--save", action="store_true", help="with --retrain: save the retrained calibrator")
     r.add_argument("--db", help="database to read (default: the configured one)")
     return p
+
+
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+
+def attach_auto(cfg, engine, sim: bool = False):
+    """Give the engine an AutoTrader: a simulated account (demo, or dry_run on live quotes) or your Kalshi account."""
+    from .autotrader import AutoTrader
+    from .broker import KalshiAuth, KalshiBroker, SimBroker
+    from .fees import taker_fee
+
+    if not cfg.auto.enabled:
+        return None
+    if sim or cfg.auto.dry_run:
+        def quotes():
+            m = engine.tracker.current
+            return None if m is None else {"ticker": m.ticker, "yes_bid": m.yes_bid, "yes_ask": m.yes_ask, "no_bid": m.no_bid, "no_ask": m.no_ask}
+        broker = SimBroker(quotes, balance=cfg.trading.bankroll, fractional=cfg.auto.fractional,
+                           fee_fn=lambda p, c: taker_fee(p, c, engine.fees))
+        mode = "sim" if sim else "dry_run"
+    else:
+        if cfg.server.host not in LOOPBACK:
+            raise SystemExit(f"refusing LIVE auto trading with the dashboard bound to {cfg.server.host}: "
+                             f"anyone on the network could pause/stop it. Set [server] host = \"127.0.0.1\".")
+        auth = KalshiAuth(cfg.auto.api_key_id, cfg.auto.private_key_path)
+        broker = KalshiBroker(cfg.kalshi.base_url, auth, cfg.kalshi.timeout_s, cfg.auto.order_api, cfg.auto.fractional)
+        mode = "live"
+    engine.auto = AutoTrader(cfg, broker, engine.store, engine, mode)
+    logging.getLogger(__name__).info("auto trading: %s (plans=%s quick=%s, max $%.0f/order, $%.0f/window, $%.0f/day, loss stop $%.0f)",
+                                     mode.upper(), cfg.auto.take_plans, cfg.auto.take_quick, cfg.auto.max_order_dollars,
+                                     cfg.auto.max_window_dollars, cfg.auto.max_day_dollars, cfg.auto.max_day_loss)
+    return engine.auto
+
+
+async def run_auth(cfg) -> int:
+    """Prove the API key works without placing anything."""
+    from .broker import BrokerError, KalshiAuth, KalshiBroker
+
+    try:
+        auth = KalshiAuth(cfg.auto.api_key_id, cfg.auto.private_key_path)
+    except BrokerError as exc:
+        print(f"not configured: {exc}")
+        return 1
+    broker = KalshiBroker(cfg.kalshi.base_url, auth, cfg.kalshi.timeout_s, cfg.auto.order_api, cfg.auto.fractional)
+    try:
+        st = await broker.exchange_status()
+        print(f"exchange: {st}")
+        bal = await broker.balance()
+        print(f"balance: ${bal:.2f}")
+        pos = await broker.positions()
+        live = [p for p in pos if p.qty > 0]
+        print(f"open positions: {len(live)}")
+        for p in live[:10]:
+            print(f"  {p.ticker}: {p.qty:.2f} {p.side} (${p.exposure:.2f} in)")
+        print("API key OK. Set [auto] enabled = true and dry_run = true first; the log shows every order it WOULD send.")
+        return 0
+    except BrokerError as exc:
+        print(f"Kalshi refused: {exc}")
+        print("401/403 = key id or private key file wrong (or the clock is off); check [auto] api_key_id / private_key_path.")
+        return 1
+    finally:
+        await broker.aclose()
 
 
 def make_engine(cfg, sim: bool = False, window_s: int = 900, db_path: str | None = None):
@@ -154,8 +218,11 @@ def main(argv=None) -> int:
         except KeyboardInterrupt:
             pass
         return 0
+    if args.cmd == "auth":
+        return asyncio.run(run_auth(cfg))
     if args.cmd == "serve":
         engine = make_engine(cfg)
+        attach_auto(cfg, engine)
         try:
             run_server(cfg, engine, cfg.server.open_browser and not args.no_browser)
         except KeyboardInterrupt:
@@ -170,6 +237,9 @@ def main(argv=None) -> int:
         cfg.notify.desktop = False
         cfg.notify.sound = False
         engine = make_engine(cfg, sim=True, window_s=args.window, db_path=args.db)
+        if args.auto:
+            cfg.auto.enabled = True
+            attach_auto(cfg, engine, sim=True)
         try:
             run_server(cfg, engine, cfg.server.open_browser and not args.no_browser)
         except KeyboardInterrupt:

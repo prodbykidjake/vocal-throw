@@ -49,6 +49,7 @@ class Engine:
         self._quick: dict = {"call": None, "options": [], "since": 0.0}  # the quick-scalps card (held calm for a few seconds)
         self._wait_sig: Signal | None = None  # WAIT text is held for a few seconds so the card reads calmly
         self._wait_since = 0.0
+        self.auto = None  # AutoTrader when [auto] enabled (attached by make_engine); ticks after every step
         for row in store.open_plans():  # plans from a previous run cannot be judged any more
             store.end_plan(row["id"], "expired", "app restarted", time.time(), None, None, None)
         self.events: deque[dict] = deque(maxlen=60)
@@ -245,6 +246,8 @@ class Engine:
         # user position
         if self.position and self.position.ticker == m.ticker:
             self._settle_position(label, now)
+        if self.auto is not None and hasattr(self.auto.broker, "settle"):
+            self.auto.broker.settle(m.ticker, bool(label))  # the simulated account pays out
         outcome = "UP" if label else "DOWN"
         p_model = cap.get("p_model")
         msg = f"{m.ticker} settled {outcome}"
@@ -263,7 +266,7 @@ class Engine:
         if pos is None:
             return
         value = 1.0 if (pos.side == "UP") == bool(label) else 0.0
-        pnl = pos.qty * value - pos.cost
+        pnl = pos.qty * value - pos.cost + pos.realized
         self.store.close_position(pos.id, now, value, pnl)
         text = f"{pos.ticker}: settled {'UP' if label else 'DOWN'} · your {pos.side} {'won' if value else 'lost'} ({'+' if pnl >= 0 else ''}{pnl:.2f})"
         if notify:
@@ -322,9 +325,10 @@ class Engine:
 
     # ------------------------------------------------------------------ user positions
     def open_position(self, side: str, amount: float, price: float | None = None, note: str = "",
-                      target: float | None = None) -> Position:
+                      target: float | None = None, entry_fee: float | None = None) -> Position:
         """Record what you bought in the Kalshi app: side, dollars spent, and the price (defaults to the live ask).
-        `target` (from the quick-scalps card) becomes the low end of the sell zone."""
+        `target` (from the quick-scalps card) becomes the low end of the sell zone. `entry_fee` is the fee Kalshi
+        actually charged (auto trading); otherwise the taker fee is estimated."""
         m = self.tracker.current
         if self.position:
             raise ValueError("a position is already open; sell or remove it first")
@@ -343,7 +347,8 @@ class Engine:
         if not (0 < price < 1):
             raise ValueError("price must be between 0 and 1 dollars (e.g. 0.026 for 2.6¢)")
         qty = amount / price
-        entry_fee = taker_fee(price, qty, self.fees)
+        if entry_fee is None:
+            entry_fee = taker_fee(price, qty, self.fees)
         now = time.time()
         high = quotes.bid(side)
         own_target = target
@@ -371,6 +376,44 @@ class Engine:
                               + (f" · sell zone {cents(target)}–{cents(target_high)}" if target else ""))
         return self.position
 
+    def add_to_position(self, qty: float, price: float, fee: float = 0.0):
+        """A further fill on the open position (auto trading): average the price in, add the fee."""
+        pos = self.position
+        if not pos or qty <= 0:
+            return
+        new_qty = pos.qty + qty
+        pos.amount = (pos.amount if pos.amount is not None else pos.qty * pos.avg_price) + qty * price
+        pos.avg_price = pos.amount / new_qty
+        pos.qty = new_qty
+        pos.entry_fee += fee
+        self.store.update_position_size(pos.id, pos.qty, pos.avg_price, pos.amount, pos.entry_fee, pos.realized)
+
+    def reduce_position(self, qty: float, price: float, fee: float = 0.0) -> dict:
+        """Part (or all) of the position sold at `price` (auto trading). Cost comes off pro rata; the sale's P&L is
+        banked in `realized`; the position closes when nothing is left."""
+        pos = self.position
+        if not pos or qty <= 0:
+            raise ValueError("no open position")
+        qty = min(qty, pos.qty)
+        share = qty / pos.qty if pos.qty > 0 else 1.0
+        cost_part = pos.cost * share
+        proceeds = qty * price - fee
+        pos.realized += proceeds - cost_part
+        left = pos.qty - qty
+        if left <= 0.005:
+            pnl = pos.realized
+            self.store.close_position(pos.id, time.time(), price, pnl)
+            self.log_event("you", f"sold {qty_text(qty)} {pos.side} @ {cents(price)} → ${proceeds:.2f}; position closed "
+                                  f"{'+' if pnl >= 0 else ''}{pnl:.2f}")
+            self.position = None
+            return {"closed": True, "pnl": round(pnl, 2), "qty_left": 0.0}
+        pos.amount = (pos.amount if pos.amount is not None else pos.qty * pos.avg_price) * (1 - share)
+        pos.entry_fee *= (1 - share)
+        pos.qty = left
+        self.store.update_position_size(pos.id, pos.qty, pos.avg_price, pos.amount, pos.entry_fee, pos.realized)
+        self.log_event("you", f"sold {qty_text(qty)} of your {pos.side} @ {cents(price)}; {qty_text(left)} left")
+        return {"closed": False, "pnl": round(pos.realized, 2), "qty_left": round(left, 2)}
+
     def close_position(self, price: float | None = None) -> dict:
         """Record that you sold (cashed out). Price defaults to the live bid for your side."""
         pos = self.position
@@ -386,7 +429,7 @@ class Engine:
         if not (0 <= price <= 1):
             raise ValueError("price must be between 0 and 1 dollars")
         proceeds = cash_out(pos.qty, price, self.fees)
-        pnl = proceeds - pos.cost
+        pnl = proceeds - pos.cost + pos.realized
         self.store.close_position(pos.id, time.time(), price, pnl)
         self.log_event("you", f"you sold {qty_text(pos.qty)} {pos.side} @ {cents(price)} → cash out ${proceeds:.2f}, "
                               f"{'+' if pnl >= 0 else ''}{pnl:.2f}")
@@ -410,6 +453,12 @@ class Engine:
                     self.step()
                 except Exception:
                     log.exception("engine step failed")
+                if self.auto is not None:
+                    try:
+                        await self.auto.tick(time.time())
+                        self.state["auto"] = self.auto.as_dict(time.time())
+                    except Exception:
+                        log.exception("auto trader tick failed")
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=1.0)
                 except asyncio.TimeoutError:
@@ -669,6 +718,7 @@ class Engine:
             "plan_cooldown_s": max(0, round(self.plans.cooldown_until - now)) if self.plans.plan is None else 0,
             "last_plan": self.plans.last.as_dict() if self.plans.last else None,
             "paper": paper,
+            "auto": self.auto.as_dict(now) if self.auto is not None else None,
             "tracker": {"last_error": self.tracker.last_error, "polls": self.tracker.poll_count,
                         "pending_settlements": list(self.tracker.pending.keys()),
                         "quote_source": self.tracker.quote_source, "orderbook_errors": self.tracker.orderbook_errors,
@@ -707,4 +757,4 @@ def _position_from_row(row: dict | None) -> Position | None:
         return None
     return Position(row["ticker"], row["side"], float(row["qty"]), float(row["avg_price"]), float(row["opened_ts"]), row["id"],
                     row.get("amount"), float(row.get("entry_fee") or 0.0), row.get("high_bid"), row.get("target"),
-                    row.get("target_high"), float(row.get("zone_ts") or 0.0))
+                    row.get("target_high"), float(row.get("zone_ts") or 0.0), realized=float(row.get("realized") or 0.0))

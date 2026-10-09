@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS model_state (key TEXT PRIMARY KEY, value TEXT, update
 CREATE TABLE IF NOT EXISTS plans (id INTEGER PRIMARY KEY, ticker TEXT, side TEXT, limit_price REAL, amount REAL, shares REAL,
   target REAL, p_at_plan REAL, tier TEXT, created_ts REAL, ended_ts REAL, status TEXT, status_text TEXT,
   hit_target INTEGER, best_bid REAL, hypo_pnl REAL, expected_profit REAL);
+CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, ts REAL, ticker TEXT, side TEXT, action TEXT, price REAL, count REAL,
+  amount REAL, order_id TEXT, client_order_id TEXT, status TEXT, filled REAL, avg_price REAL, fees REAL, reason TEXT,
+  text TEXT, mode TEXT, updated_ts REAL);
 """
 
 
@@ -62,7 +65,7 @@ class Store:
                 self.conn.execute(f"ALTER TABLE windows ADD COLUMN {col} {typ}")
         have = {row[1] for row in self.conn.execute("PRAGMA table_info(positions)")}
         for col, typ in (("amount", "REAL"), ("entry_fee", "REAL"), ("high_bid", "REAL"), ("target", "REAL"),
-                         ("target_high", "REAL"), ("zone_ts", "REAL")):
+                         ("target_high", "REAL"), ("zone_ts", "REAL"), ("realized", "REAL")):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE positions ADD COLUMN {col} {typ}")
         have = {row[1] for row in self.conn.execute("PRAGMA table_info(plans)")}
@@ -288,6 +291,51 @@ class Store:
 
     def update_position_zone(self, pos_id: int, low: float, high: float, ts: float):
         self.conn.execute("UPDATE positions SET target=?, target_high=?, zone_ts=? WHERE id=?", (low, high, ts, pos_id))
+
+    def update_position_size(self, pos_id: int, qty: float, avg_price: float, amount: float, entry_fee: float, realized: float):
+        """After a partial fill (a buy that added, a sell that took some off)."""
+        self.conn.execute("UPDATE positions SET qty=?, avg_price=?, amount=?, entry_fee=?, realized=? WHERE id=?",
+                          (qty, avg_price, amount, entry_fee, realized, pos_id))
+
+    def closed_pnls_since(self, ts: float) -> list[float]:
+        """Realized P&L of positions closed since `ts`, newest first."""
+        rows = self.conn.execute("SELECT pnl FROM positions WHERE closed_ts IS NOT NULL AND closed_ts>=? ORDER BY closed_ts DESC",
+                                 (ts,)).fetchall()
+        return [float(r[0] or 0.0) for r in rows]
+
+    def last_closed_pnls(self, n: int = 10) -> list[float]:
+        rows = self.conn.execute("SELECT pnl FROM positions WHERE closed_ts IS NOT NULL ORDER BY closed_ts DESC LIMIT ?", (n,)).fetchall()
+        return [float(r[0] or 0.0) for r in rows]
+
+    # ------------------------------------------------------------------ automatic orders
+    def add_order(self, ts: float, ticker: str, side: str, action: str, price: float, count: float, amount: float,
+                  order_id: str, client_order_id: str, status: str, reason: str, text: str, mode: str) -> int:
+        cur = self.conn.execute(
+            """INSERT INTO orders (ts, ticker, side, action, price, count, amount, order_id, client_order_id, status, filled,
+                                   avg_price, fees, reason, text, mode, updated_ts)
+               VALUES (?,?,?,?,?,?,?,?,?,?,0,NULL,0,?,?,?,?)""",
+            (ts, ticker, side, action, price, count, amount, order_id, client_order_id, status, reason, text, mode, ts))
+        return int(cur.lastrowid)
+
+    def update_order(self, row_id: int, status: str, filled: float, avg_price: float | None, fees: float, text: str | None = None):
+        self.conn.execute("UPDATE orders SET status=?, filled=?, avg_price=?, fees=?, text=COALESCE(?, text), updated_ts=? WHERE id=?",
+                          (status, filled, avg_price, fees, text, time.time(), row_id))
+
+    def orders(self, limit: int = 50) -> list[dict]:
+        return [dict(r) for r in self.conn.execute("SELECT * FROM orders ORDER BY id DESC LIMIT ?", (limit,)).fetchall()]
+
+    def bought_since(self, ts: float, ticker: str | None = None, mode: str | None = None) -> float:
+        """Dollars actually filled on buys since `ts` (on one window if `ticker`)."""
+        sql = "SELECT COALESCE(SUM(filled * COALESCE(avg_price, price)), 0) FROM orders WHERE action='buy' AND ts>=?"
+        args: list = [ts]
+        if ticker:
+            sql += " AND ticker=?"
+            args.append(ticker)
+        if mode:
+            sql += " AND mode=?"
+            args.append(mode)
+        row = self.conn.execute(sql, args).fetchone()
+        return float(row[0] or 0.0)
 
     def recent_amounts(self, limit: int = 10) -> list[float]:
         rows = self.conn.execute("SELECT amount FROM positions WHERE amount IS NOT NULL ORDER BY id DESC LIMIT ?", (limit,)).fetchall()

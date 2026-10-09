@@ -32,9 +32,18 @@ main { padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; }
   .grid > .card.prices { grid-column: span 12; }
   .grid > #signal-card { grid-column: span 5; }
   .grid > .chart-card { grid-column: span 7; }
-  .grid > .card:nth-child(4) { grid-column: span 5; }
-  .grid > .card:nth-child(5) { grid-column: span 7; }
+  .grid > #position-card { grid-column: span 5; }
+  .grid > #log-card { grid-column: span 7; }
 }
+#auto-card { border-color: rgba(240,180,41,.35); }
+#auto-card.live { border-color: rgba(242,92,92,.6); }
+#auto-card.paused { border-color: var(--line); opacity: .85; }
+.pill.LIVE { background: rgba(242,92,92,.2); color: var(--down); }
+.pill.DRY { background: rgba(240,180,41,.18); color: var(--warn); }
+.pill.SIM { background: rgba(90,169,255,.18); color: var(--info); }
+.pill.PAUSED { background: var(--card2); color: var(--muted); }
+button.danger { background: rgba(242,92,92,.18); color: var(--down); border-color: rgba(242,92,92,.4); }
+#auto-orders { max-height: 160px; margin-top: 8px; }
 @media (max-width: 999px) { .grid.two > .card { grid-column: span 12; } }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
 .card-title { font-weight: 600; margin-bottom: 8px; }

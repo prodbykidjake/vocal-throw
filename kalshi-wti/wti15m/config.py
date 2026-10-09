@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 import pathlib
 import tomllib
 from dataclasses import dataclass, field
@@ -91,6 +92,27 @@ class TradingCfg:
 
 
 @dataclass
+class AutoCfg:
+    """Automatic order placement on your Kalshi account. Off unless enabled AND an API key is configured."""
+    enabled: bool = False
+    dry_run: bool = True  # log every order it would send, send nothing (flip to false once the log looks right)
+    api_key_id: str = ""  # Kalshi > Settings > API keys (or env KALSHI_API_KEY_ID)
+    private_key_path: str = ""  # the .pem Kalshi gave you with that key (or env KALSHI_PRIVATE_KEY_PATH); never commit it
+    take_plans: bool = True  # buy the signal card's plans at their limit
+    take_quick: bool = True  # buy the quick-scalps card's calls
+    max_order_dollars: float = 20.0  # cap on one buy
+    max_window_dollars: float = 50.0  # bought on one 15-minute window
+    max_day_dollars: float = 300.0  # bought per calendar day
+    max_day_loss: float = 40.0  # realized loss in a day that stops buying until tomorrow
+    max_losses_in_a_row: int = 4  # stop buying after this many losing trades in a row (resume = manual)
+    buy_ttl_s: float = 20.0  # an unfilled buy is cancelled after this (quick scalps: 8 s)
+    sell_slip_cents: float = 3.0  # a sell takes the book down to bid − this many cents
+    sync_s: float = 5.0  # how often to read your Kalshi balance and positions
+    fractional: bool = True  # the market allows fractional contracts (set false if orders are rejected over the count)
+    order_api: str = "v2"  # v2 = /portfolio/events/orders (bid/ask on the Yes price) | legacy = /portfolio/orders
+
+
+@dataclass
 class ServerCfg:
     host: str = "127.0.0.1"
     port: int = 8787
@@ -116,6 +138,7 @@ class Config:
     server: ServerCfg = field(default_factory=ServerCfg)
     notify: NotifyCfg = field(default_factory=NotifyCfg)
     storage: StorageCfg = field(default_factory=StorageCfg)
+    auto: AutoCfg = field(default_factory=AutoCfg)
     path: str | None = None
 
 
@@ -150,6 +173,10 @@ def load(path: str | None = None) -> Config:
         server=_build(ServerCfg, raw.get("server"), "server"),
         notify=_build(NotifyCfg, raw.get("notify"), "notify"),
         storage=_build(StorageCfg, raw.get("storage"), "storage"),
+        auto=_build(AutoCfg, raw.get("auto"), "auto"),
         path=used,
     )
+    # credentials may live in the environment instead of the file
+    cfg.auto.api_key_id = os.environ.get("KALSHI_API_KEY_ID", cfg.auto.api_key_id)
+    cfg.auto.private_key_path = os.environ.get("KALSHI_PRIVATE_KEY_PATH", cfg.auto.private_key_path)
     return cfg
