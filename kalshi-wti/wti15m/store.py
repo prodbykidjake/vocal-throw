@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS windows (
   strike REAL, strike_source TEXT, status TEXT, result TEXT, settled_ts REAL,
   feed_price_at_close REAL, feed_error REAL, p_market_at_close REAL, p_model_at_close REAL,
   rules_primary TEXT, created_ts REAL, updated_ts REAL,
-  settle_price REAL, feed_error_lag0 REAL, feed_error_lag60 REAL
+  settle_price REAL, feed_error_lag0 REAL, feed_error_lag60 REAL, feed_source TEXT
 );
 CREATE TABLE IF NOT EXISTS ticks (ts REAL, source TEXT, price REAL);
 CREATE INDEX IF NOT EXISTS ticks_ts ON ticks(ts);
@@ -53,7 +53,8 @@ class Store:
     def _migrate(self):
         """Add columns introduced after a database was first created."""
         have = {row[1] for row in self.conn.execute("PRAGMA table_info(windows)")}
-        for col, typ in (("settle_price", "REAL"), ("feed_error_lag0", "REAL"), ("feed_error_lag60", "REAL")):
+        for col, typ in (("settle_price", "REAL"), ("feed_error_lag0", "REAL"), ("feed_error_lag60", "REAL"),
+                         ("feed_source", "TEXT")):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE windows ADD COLUMN {col} {typ}")
         have = {row[1] for row in self.conn.execute("PRAGMA table_info(positions)")}
@@ -92,12 +93,32 @@ class Store:
             (result, settled_ts or time.time(), feed_price_at_close, feed_error, settle_price, time.time(), ticker))
 
     def set_settle_price(self, ticker: str, settle_price: float, feed_price_at_close: float | None,
-                         err_lag0: float | None, err_lag60: float | None, err_chosen: float | None):
-        """Record the settlement price learned from the next window's target, plus feed errors (signed, dollars)."""
+                         err_lag0: float | None, err_lag60: float | None, err_chosen: float | None,
+                         feed_source: str | None = None):
+        """Record the settlement price learned from the next window's target, plus feed errors (signed, dollars)
+        and which feed produced them."""
         self.conn.execute(
             """UPDATE windows SET settle_price=?, feed_price_at_close=COALESCE(?, feed_price_at_close),
-                 feed_error_lag0=?, feed_error_lag60=?, feed_error=?, updated_ts=? WHERE ticker=?""",
-            (settle_price, feed_price_at_close, err_lag0, err_lag60, err_chosen, time.time(), ticker))
+                 feed_error_lag0=?, feed_error_lag60=?, feed_error=?, feed_source=COALESCE(?, feed_source), updated_ts=?
+               WHERE ticker=?""",
+            (settle_price, feed_price_at_close, err_lag0, err_lag60, err_chosen, feed_source, time.time(), ticker))
+
+    def feed_errors(self, feed_source: str, limit: int = 200) -> list[float]:
+        """Signed feed − settlement errors (newest first) measured with the given feed."""
+        rows = self.conn.execute(
+            "SELECT feed_error FROM windows WHERE feed_error IS NOT NULL AND feed_source=? ORDER BY close_time DESC LIMIT ?",
+            (feed_source, limit)).fetchall()
+        return [r[0] for r in rows]
+
+    def settled_window_count(self) -> int:
+        row = self.conn.execute("SELECT COUNT(*) FROM windows WHERE result IN ('yes','no')").fetchone()
+        return int(row[0] or 0)
+
+    def prune(self, older_than_s: float = 3 * 86400):
+        """Drop raw ticks/quotes older than a few days; everything the app needs later lives in windows/snapshots."""
+        cutoff = time.time() - older_than_s
+        self.conn.execute("DELETE FROM ticks WHERE ts < ?", (cutoff,))
+        self.conn.execute("DELETE FROM quotes WHERE ts < ?", (cutoff,))
 
     def window(self, ticker: str) -> dict | None:
         row = self.conn.execute("SELECT * FROM windows WHERE ticker=?", (ticker,)).fetchone()

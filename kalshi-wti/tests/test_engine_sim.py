@@ -127,5 +127,44 @@ async def test_recovery_requeues_unsettled_window_and_settles_restored_position(
     assert engine._window_strikes[int(round(close_ts - 900))] == 90.0
     assert engine.position is None  # settled at 1.0: pnl = 10 - 3.0
     pos_rows = store.positions()
-    assert pos_rows and pos_rows[0]["exit_price"] == 1.0 and abs(pos_rows[0]["pnl"] - 7.0) < 1e-9
+    assert pos_rows and pos_rows[0]["exit_price"] == 1.0 and abs(pos_rows[0]["pnl"] - 6.98) < 1e-9  # 10 - 3.00 - 0.02 fee
+    store.close()
+
+
+def test_basis_is_kept_per_feed_source(tmp_path):
+    from wti15m.kalshi import Market
+
+    cfg = Config()
+    store = Store(str(tmp_path / "b.db"))
+    feed = SimFeed(start_price=90.0, warmup_minutes=5, seed=4)
+    engine = Engine(cfg, store, SimKalshi(feed, window_s=120), feed, Notifier(desktop=False, sound=False))
+    # errors measured while on the fallback feed
+    for i in range(4):
+        m = Market.from_api({"ticker": f"H{i}", "status": "finalized", "result": "yes", "floor_strike": 90.0,
+                             "open_time": 1000 + i * 900, "close_time": 1900 + i * 900})
+        store.upsert_window(m)
+        store.set_settle_price(f"H{i}", 90.0, 89.94, -0.06, -0.06, -0.06, "hyperliquid")
+    engine._update_basis_error("hyperliquid")
+    assert engine.model.basis_signed == 0.0  # the active (sim) feed has no measured bias
+    engine._load_basis("hyperliquid")
+    assert engine.model.basis_signed < -0.04
+    engine._load_basis("kalshi-live")
+    assert engine.model.basis_signed == 0.0 and engine.model.basis_error == 0.0
+    assert store.feed_errors("hyperliquid") == [-0.06] * 4 and store.feed_errors("kalshi-live") == []
+    store.close()
+
+
+def test_store_prune_and_settled_count(tmp_path):
+    import time as _time
+
+    from wti15m.kalshi import Market
+
+    store = Store(str(tmp_path / "p.db"))
+    store.add_tick(_time.time() - 10 * 86400, "x", 1.0)
+    store.add_tick(_time.time(), "x", 2.0)
+    store.prune()
+    assert store.ticks_since(0) == [(pytest.approx(_time.time(), abs=5), 2.0)]
+    store.upsert_window(Market.from_api({"ticker": "A", "status": "finalized", "result": "no"}))
+    store.upsert_window(Market.from_api({"ticker": "B", "status": "open"}))
+    assert store.settled_window_count() == 1
     store.close()

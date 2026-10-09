@@ -33,9 +33,9 @@ class Engine:
         self.model = Model(calibrator=Calibrator.from_json(store.get_state("calibrator")), tie_adj=t.tie_adj,
                            min_warmup_s=t.min_warmup_minutes * 60, confident_margin=t.confident_margin,
                            stale_after_s=cfg.feed.stale_after_s)
-        self.model.basis_error = _float(store.get_state("basis_error"), 0.0)
-        self.model.basis_signed = _float(store.get_state("basis_signed"), 0.0)
         self.model.prev_outcome = _float(store.get_state("prev_outcome"), 0.0)
+        self._basis_source: str | None = None  # feed whose measured basis is loaded into the model
+        self._last_prune = time.time()
         self.fees = FeeSchedule()
         self.decider = DecisionEngine(t, self.fees)
         self.tracker = MarketTracker(kalshi_client, cfg.kalshi.series_ticker, cfg.kalshi.poll_interval_s,
@@ -59,7 +59,17 @@ class Engine:
         self._stats_cache: tuple[float, dict] = (0.0, {})
         self.feed.subscribe(self.on_tick)
         self.feed.subscribe_warmup(self.on_warmup)
+        self._load_basis(self.feed.active_name)
         self._recover()
+
+    # ------------------------------------------------------------------ per-feed basis
+    def _load_basis(self, source: str):
+        """The feed's measured bias vs settlement is per source: Hyperliquid's 6¢ must never be applied to Kalshi's."""
+        if source == self._basis_source:
+            return
+        self._basis_source = source
+        self.model.basis_error = _float(self.store.get_state(f"basis_error:{source}"), 0.0)
+        self.model.basis_signed = _float(self.store.get_state(f"basis_signed:{source}"), 0.0)
 
     # ------------------------------------------------------------------ restart recovery
     def _recover(self):
@@ -77,12 +87,13 @@ class Engine:
                        open_time=dt.datetime.fromtimestamp(open_ts, clock.UTC) if open_ts else None,
                        close_time=dt.datetime.fromtimestamp(close_ts, clock.UTC))
             self.tracker.pending[m.ticker] = (m, close_ts)
+            source = row.get("feed_source") or self.feed.active_name
             feed_px = row.get("feed_price_at_close")
             if feed_px is None:
-                feed_px = self.store.last_tick_before(close_ts, self.feed.name)
+                feed_px = self.store.last_tick_before(close_ts, source)
             self._close_capture[m.ticker] = {
                 "feed_price": feed_px, "p_market": row.get("p_market_at_close"), "close_ts": close_ts,
-                "p_model": row.get("p_model_at_close"), "strike": row.get("strike"),
+                "p_model": row.get("p_model_at_close"), "strike": row.get("strike"), "source": source,
                 "settle_price": row.get("settle_price"), "err_lag0": row.get("feed_error_lag0"),
                 "err_lag60": row.get("feed_error_lag60")}
             self.log_event("recover", f"re-queued {m.ticker} for settlement")
@@ -107,10 +118,10 @@ class Engine:
                 for key in sorted(self._window_strikes)[:-200]:
                     del self._window_strikes[key]
 
-    def _feed_price_near(self, ts: float, window_s: float = 5.0) -> float | None:
+    def _feed_price_near(self, ts: float, window_s: float = 5.0, source: str | None = None) -> float | None:
         price = self.feed.buffer.price_near(ts, window_s)
         if price is None:
-            price = self.store.last_tick_before(ts, getattr(self.feed, "active_name", self.feed.name), window_s)
+            price = self.store.last_tick_before(ts, source or self.feed.active_name, window_s)
         return price
 
     async def on_market_event(self, kind: str, m: Market):
@@ -135,6 +146,7 @@ class Engine:
             price = self._feed_price_near(close_ts)
             self._close_capture[m.ticker] = {"feed_price": price, "p_market": m.yes_mid, "close_ts": close_ts,
                                              "p_model": self.pred.p_final if self.pred else None, "strike": m.strike,
+                                             "source": self.feed.active_name,
                                              "settle_price": None, "err_lag0": None, "err_lag60": None}
             self.store.upsert_window(m, self.pred.p_final if self.pred else None)
             self.store.mark_status(m.ticker, "closed")
@@ -166,13 +178,14 @@ class Engine:
             latest = self.feed.latest()
             if latest is None or (latest.ts < close_ts + lag and now < close_ts + lag + 30):
                 continue  # wait until the feed covers the settlement candle (or give up after 30 s grace)
-            p0 = self._feed_price_near(close_ts)
-            p_lag = self._feed_price_near(close_ts + max(lag - 1, 0))
+            source = cap.get("source") or self.feed.active_name
+            p0 = self._feed_price_near(close_ts, source=source)
+            p_lag = self._feed_price_near(close_ts + max(lag - 1, 0), source=source)
             err0 = None if p0 is None else round(p0 - settle, 4)
             err_lag = None if p_lag is None else round(p_lag - settle, 4)
             chosen = err_lag if lag > 0 else err0
             cap.update({"settle_price": settle, "err_lag0": err0, "err_lag60": err_lag})
-            self.store.set_settle_price(ticker, settle, p0, err0, err_lag, chosen)
+            self.store.set_settle_price(ticker, settle, p0, err0, err_lag, chosen, source)
             msg = f"{ticker} settlement price ${settle:.2f} (= next target)"
             if p0 is not None:
                 msg += f"; feed said ${p0:.2f} at the close"
@@ -182,7 +195,7 @@ class Engine:
                 msg += "; no feed data around the close (not counted in the feed error)"
             self.log_event("settle", msg)
             if chosen is not None:
-                self._update_basis_error()
+                self._update_basis_error(source)
 
     def handle_settlement(self, m: Market):
         now = time.time()
@@ -199,10 +212,11 @@ class Engine:
             direction_ok = (feed_px >= strike - self.cfg.trading.tie_adj) == bool(label)
         self.store.label_snapshots(m.ticker, label)
         self.store.settle_window(m.ticker, m.result or "", feed_px, feed_error, now, settle)
-        # learn on a pooled batch of recent windows (both outcomes present) instead of one window at a time
-        X, y, n_windows = self.store.training_rows_recent(50)
+        # learn on a pooled batch of recent windows (both outcomes present) instead of one window at a time;
+        # the learner's weight grows with ALL settled windows, not just the pooled batch
+        X, y, _ = self.store.training_rows_recent(50)
         if len(X) >= 20 and len(set(y.tolist())) == 2:
-            self.model.cal.fit_pooled(X, y, n_windows)
+            self.model.cal.fit_pooled(X, y, self.store.settled_window_count())
             self.store.set_state("calibrator", self.model.cal.to_json())
         self.model.prev_outcome = 1.0 if label else -1.0
         self.store.set_state("prev_outcome", str(self.model.prev_outcome))
@@ -240,12 +254,11 @@ class Engine:
         self.log_event("you", text)
         self.position = None
 
-    def _update_basis_error(self):
-        """From measured feed − settlement errors: the typical size (75th percentile of |err| over the last 200
-        windows; max if < 4) widens the model's uncertainty, and the recent signed bias (EWMA over the last 12
-        windows, needs ≥ 3) shifts the feed price before it is compared with the target."""
-        rows = self.store.recent_windows(200)
-        signed = [r["feed_error"] for r in rows if r.get("feed_error") is not None]  # newest first
+    def _update_basis_error(self, source: str):
+        """From measured feed − settlement errors of ONE feed source: the typical size (75th percentile of |err|
+        over the last 200 windows; max if < 4) widens the model's uncertainty, and the recent signed bias (EWMA
+        over the last 12 windows, shrunk by n/(n+1)) shifts that feed's price before it is compared with the target."""
+        signed = self.store.feed_errors(source, 200)  # newest first
         errs = sorted(abs(e) for e in signed)
         if not errs:
             basis = 0.0
@@ -253,8 +266,6 @@ class Engine:
             basis = errs[-1]
         else:
             basis = errs[int(0.75 * (len(errs) - 1))]
-        self.model.basis_error = basis
-        self.store.set_state("basis_error", str(basis))
         recent = list(reversed(signed[:12]))  # oldest -> newest
         bias = 0.0
         if recent:
@@ -262,8 +273,12 @@ class Engine:
             for e in recent[1:]:
                 bias = 0.7 * bias + 0.3 * e
             bias *= len(recent) / (len(recent) + 1.0)  # one sample counts half, three count 3/4, ...
-        self.model.basis_signed = round(bias, 4)
-        self.store.set_state("basis_signed", str(self.model.basis_signed))
+        bias = round(bias, 4)
+        self.store.set_state(f"basis_error:{source}", str(basis))
+        self.store.set_state(f"basis_signed:{source}", str(bias))
+        if source == self._basis_source:
+            self.model.basis_error = basis
+            self.model.basis_signed = bias
 
     # ------------------------------------------------------------------ user positions
     def open_position(self, side: str, amount: float, price: float | None = None, note: str = "") -> Position:
@@ -346,9 +361,13 @@ class Engine:
         m = self.tracker.current
         tick = self.feed.latest()
         health = self.feed.health()
+        self._load_basis(self.feed.active_name)
         if tick and tick.ts != self._last_stored_tick_ts:
             self._last_stored_tick_ts = tick.ts
-            self.store.add_tick(tick.ts, getattr(self.feed, "active_name", self.feed.name), tick.price)
+            self.store.add_tick(tick.ts, self.feed.active_name, tick.price)
+        if now - self._last_prune > 600:
+            self._last_prune = now
+            self.store.prune()
         pred = sig = None
         tau = elapsed = None
         quotes_fresh = self.tracker.quotes_fresh(QUOTE_MAX_AGE_S, now)
@@ -410,7 +429,7 @@ class Engine:
         if tau is not None and tau <= 0:
             return  # settlement will close it
         pos = Position(m.ticker, paper["side"], float(paper["size"]), paper["entry_price"], paper["entry_ts"], paper["id"],
-                       amount=paper["entry_price"] * paper["size"] + (paper["entry_fee"] or 0.0))
+                       amount=paper["entry_price"] * paper["size"], entry_fee=paper["entry_fee"] or 0.0)
         psig = self.decider.decide(pred, quotes, price, m.strike, tau, elapsed, pos)
         if psig.action == "SELL" and psig.price is not None:
             fee = taker_fee(psig.price, pos.qty, self.fees)
@@ -487,13 +506,11 @@ class Engine:
             since = min(since, m.open_time.timestamp() - 300)
         ticks = [(t.ts, t.price) for t in self.feed.buffer.since(since)]
         if not ticks:
-            ticks = self.store.ticks_since(since, self.feed.name)
-        out = {"ticks": ticks, "strike": m.strike if m else None,
-               "open_time": m.open_time.timestamp() if (m and m.open_time) else None,
-               "close_time": m.close_time.timestamp() if (m and m.close_time) else None}
-        if self.pred and m and m.close_time:
-            out["cone"] = {"sigma": self.pred.sigma_eff or self.pred.sigma, "price": ticks[-1][1] if ticks else None}
-        return out
+            ticks = self.store.ticks_since(since, self.feed.active_name)
+        return {"ticks": ticks, "strike": m.strike if m else None,
+                "open_time": m.open_time.timestamp() if (m and m.open_time) else None,
+                "close_time": m.close_time.timestamp() if (m and m.close_time) else None,
+                "source": self.feed.active_name}
 
 
 def _float(value, default: float) -> float:

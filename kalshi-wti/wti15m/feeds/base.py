@@ -46,21 +46,26 @@ class TickBuffer:
         self._px: deque[float] = deque()
         self.count = 0
 
-    def add(self, ts: float, price: float):
+    def add(self, ts: float, price: float) -> bool:
+        """Accept a tick. Returns False (and ignores it) for bad prices, future timestamps and out-of-order ticks."""
         if price <= 0 or ts > time.time() + 2.0:
-            return  # bad price, or a timestamp in the future (e.g. an in-progress candle's end time)
-        self.count += 1
-        if self._ts and ts - self._ts[-1] < 1.0 and ts >= self._ts[-1]:
-            self._px[-1] = price  # same second: keep the latest print
-            return
+            return False  # bad price, or a timestamp in the future (e.g. an in-progress candle's end time)
         if self._ts and ts < self._ts[-1]:
-            return  # out of order: ignore
+            return False  # out of order (e.g. a backfill older than what we already have)
+        self.count += 1
+        if self._ts and ts - self._ts[-1] < 1.0:
+            self._px[-1] = price  # same second: keep the latest print
+            return True
         self._ts.append(ts)
         self._px.append(price)
         cutoff = ts - self.max_seconds
         while self._ts and self._ts[0] < cutoff:
             self._ts.popleft()
             self._px.popleft()
+        return True
+
+    def items(self) -> list[tuple[float, float]]:
+        return list(zip(self._ts, self._px))
 
     def __len__(self) -> int:
         return len(self._ts)
@@ -132,8 +137,14 @@ class PriceFeed(abc.ABC):
     def subscribe_warmup(self, fn: Callable[[list[tuple[float, float]]], None]):
         self._warmup_subscribers.append(fn)
 
+    @property
+    def active_name(self) -> str:
+        """Name of the source actually producing ticks (a composite feed overrides this)."""
+        return self.name
+
     def _publish(self, ts: float, price: float):
-        self.buffer.add(ts, price)
+        if not self.buffer.add(ts, price):
+            return  # rejected (stale/future/bad): subscribers must not see it either
         tick = Tick(ts, price)
         for fn in self._subscribers:
             try:
@@ -142,15 +153,18 @@ class PriceFeed(abc.ABC):
                 import logging
                 logging.getLogger(__name__).exception("tick subscriber failed")
 
-    def _publish_warmup(self, closes: list[tuple[float, float]]):
-        for ts, px in closes:
-            self.buffer.add(ts, px)
+    def _notify_warmup(self, closes: list[tuple[float, float]]):
         for fn in self._warmup_subscribers:
             try:
                 fn(closes)
             except Exception:
                 import logging
                 logging.getLogger(__name__).exception("warmup subscriber failed")
+
+    def _publish_warmup(self, closes: list[tuple[float, float]]):
+        for ts, px in closes:
+            self.buffer.add(ts, px)
+        self._notify_warmup(closes)
 
     def latest(self) -> Tick | None:
         return self.buffer.latest()

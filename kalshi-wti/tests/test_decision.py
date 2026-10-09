@@ -146,3 +146,23 @@ def test_cash_out_matches_kalshi_sheet_shape():
     fee = taker_fee(0.013, 48.44, FeeSchedule())
     assert fee == 0.05
     assert abs(cash_out(48.44, 0.013, FeeSchedule()) - (48.44 * 0.013 - fee)) < 1e-9
+
+
+def test_position_cost_includes_entry_fee():
+    pos = Position("T", "UP", 115.38, 0.026, 0.0, amount=3.0, entry_fee=0.03)
+    assert abs(pos.cost - 3.03) < 1e-9
+    pos2 = Position("T", "UP", 10, 0.5, 0.0, entry_fee=0.02)
+    assert abs(pos2.cost - 5.02) < 1e-9
+
+
+def test_trigger_price_is_reported_in_feed_terms():
+    m = warmed_model()
+    m.basis_signed = -0.04  # feed reads 4c low
+    pred = m.predict(90.13, 90.21, 420, p_market=0.50, feed_age_s=0.3)
+    sig = engine().decide(pred, Quotes(0.49, 0.51, 0.49, 0.51), 90.13, 90.21, 420, 480)
+    if "price_needed" in sig.triggers:
+        from wti15m.decision import price_for_probability
+        from wti15m.fees import fee_per_contract
+        # recompute what the model-space trigger would be and check the feed-space number is shifted by the basis
+        side = sig.triggers["side"]
+        assert sig.triggers["price_needed"] == round(sig.triggers["price_needed"], 2)

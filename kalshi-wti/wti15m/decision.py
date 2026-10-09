@@ -85,7 +85,8 @@ class Position:
 
     @property
     def cost(self) -> float:
-        return self.amount if self.amount is not None else self.qty * self.avg_price + self.entry_fee
+        """Dollars at risk: what you paid for the shares plus the taker fee Kalshi charged on the buy."""
+        return (self.amount if self.amount is not None else self.qty * self.avg_price) + self.entry_fee
 
     def as_dict(self) -> dict:
         return {"id": self.id, "ticker": self.ticker, "side": self.side, "qty": round(self.qty, 4),
@@ -252,6 +253,7 @@ class DecisionEngine:
         else:
             trig_price = price_for_probability(1 - needed_p, strike, sigma_used, pred.tau_s, cfg.tie_adj)
         if trig_price is not None:
+            trig_price += pred.basis_signed  # the model works in basis-adjusted space; show it in feed terms
             triggers["price_needed"] = round(trig_price, 2)
         details.append(f"Best side: {side} at {cents(ask)} ask → model {pct(p)} − price − ~{cents(fee)} fee = "
                        f"edge {edge * 100:+.1f}¢ per contract (need {cfg.edge_min * 100:+.0f}¢).")

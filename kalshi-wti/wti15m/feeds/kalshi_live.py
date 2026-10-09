@@ -79,6 +79,7 @@ class KalshiLiveFeed(PriceFeed):
         self.errors = 0
         self.last_t = 0.0  # newest point published (epoch s)
         self._warmed_events: set[str] = set()
+        self._warm_attempts: dict[str, int] = {}
         self._last_event: str | None = None
         self._last_event_seen = 0.0
         self._task: asyncio.Task | None = None
@@ -116,25 +117,15 @@ class KalshiLiveFeed(PriceFeed):
         try:
             if ev not in self._warmed_events:
                 pts = await self.fetch_series(ev, self.warmup_range)
-                self._warmed_events.add(ev)
+                self._warm_attempts[ev] = self._warm_attempts.get(ev, 0) + 1
+                if pts or self._warm_attempts[ev] >= 5:
+                    self._warmed_events.add(ev)  # an empty series right after open is retried a few times
                 if pts:
                     history = [p for p in pts if p[0] > self.last_t]
                     for ts, px in history[:-1]:
                         self.buffer.add(ts, px)
                     # seed volatility with 5-second closes (the live path buckets ticks the same way)
-                    closes, bucket = [], None
-                    for ts, px in history:
-                        b = int(ts // 5)
-                        if b != bucket:
-                            closes.append((ts, px))
-                            bucket = b
-                        else:
-                            closes[-1] = (ts, px)
-                    for fn in self._warmup_subscribers:
-                        try:
-                            fn(closes)
-                        except Exception:
-                            log.exception("warmup subscriber failed")
+                    self._notify_warmup(self.buffer.closes(5.0))
                     if history:
                         self.last_t = history[-1][0]
                         self._publish(history[-1][0], history[-1][1])

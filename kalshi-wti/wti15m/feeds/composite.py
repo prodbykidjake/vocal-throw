@@ -5,7 +5,7 @@ import asyncio
 import logging
 import time
 
-from .base import FeedHealth, PriceFeed, Tick
+from .base import FeedHealth, PriceFeed, Tick, TickBuffer
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +36,9 @@ class CompositeFeed(PriceFeed):
         return t is not None and (time.time() - t.ts) <= self.stale_after_s
 
     def _from_primary(self, tick: Tick):
+        latest = self.buffer.latest()
+        if latest is not None and tick.ts < latest.ts:
+            return  # a backfill of points older than what the fallback already supplied: not news
         if self.active != "primary":
             log.info("feed: back to %s", self.primary.name)
         self.active = "primary"
@@ -51,13 +54,19 @@ class CompositeFeed(PriceFeed):
 
     def _warm_primary(self, closes):
         self._primary_warmed = True
-        self._publish_warmup(closes)
+        existing = self.buffer.items()
+        if existing and closes and closes[-1][0] < existing[-1][0]:
+            # the fallback already filled the buffer with newer ticks: rebuild it with the history in front
+            merged = sorted(closes + existing)
+            self.buffer = TickBuffer(self.buffer.max_seconds)
+            for ts, px in merged:
+                self.buffer.add(ts, px)
+            self._notify_warmup(closes)
+        else:
+            self._publish_warmup(closes)
 
     def _warm_fallback(self, closes):
-        self._fallback_warm = closes
-        if self._primary_warmed:
-            return
-        # used only if the primary has not warmed up within the grace period (see _warm_watch)
+        self._fallback_warm = closes  # used only if the primary has not warmed up within the grace period
 
     async def _warm_watch(self):
         await asyncio.sleep(self.warmup_grace_s)
