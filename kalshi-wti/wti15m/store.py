@@ -61,9 +61,14 @@ class Store:
             if col not in have:
                 self.conn.execute(f"ALTER TABLE windows ADD COLUMN {col} {typ}")
         have = {row[1] for row in self.conn.execute("PRAGMA table_info(positions)")}
-        for col, typ in (("amount", "REAL"), ("entry_fee", "REAL"), ("high_bid", "REAL"), ("target", "REAL")):
+        for col, typ in (("amount", "REAL"), ("entry_fee", "REAL"), ("high_bid", "REAL"), ("target", "REAL"),
+                         ("target_high", "REAL"), ("zone_ts", "REAL")):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE positions ADD COLUMN {col} {typ}")
+        have = {row[1] for row in self.conn.execute("PRAGMA table_info(plans)")}
+        for col, typ in (("target_high", "REAL"), ("p_target", "REAL")):
+            if col not in have:
+                self.conn.execute(f"ALTER TABLE plans ADD COLUMN {col} {typ}")
 
     def mark_status(self, ticker: str, status: str):
         self.conn.execute("UPDATE windows SET status=?, updated_ts=? WHERE ticker=? AND result IS NULL",
@@ -112,6 +117,13 @@ class Store:
             "SELECT feed_error FROM windows WHERE feed_error IS NOT NULL AND feed_source=? ORDER BY close_time DESC LIMIT ?",
             (feed_source, limit)).fetchall()
         return [r[0] for r in rows]
+
+    def feed_error_pairs(self, feed_source: str, limit: int = 200) -> list[tuple[float, float]]:
+        """(error at the close, error one candle later), newest first, where both were measured."""
+        rows = self.conn.execute(
+            "SELECT feed_error_lag0, feed_error_lag60 FROM windows WHERE feed_error_lag0 IS NOT NULL AND feed_error_lag60 IS NOT NULL "
+            "AND feed_source=? ORDER BY close_time DESC LIMIT ?", (feed_source, limit)).fetchall()
+        return [(r[0], r[1]) for r in rows]
 
     def settled_window_count(self) -> int:
         row = self.conn.execute("SELECT COUNT(*) FROM windows WHERE result IN ('yes','no')").fetchone()
@@ -274,6 +286,9 @@ class Store:
     def update_position_target(self, pos_id: int, target: float):
         self.conn.execute("UPDATE positions SET target=? WHERE id=?", (target, pos_id))
 
+    def update_position_zone(self, pos_id: int, low: float, high: float, ts: float):
+        self.conn.execute("UPDATE positions SET target=?, target_high=?, zone_ts=? WHERE id=?", (low, high, ts, pos_id))
+
     def recent_amounts(self, limit: int = 10) -> list[float]:
         rows = self.conn.execute("SELECT amount FROM positions WHERE amount IS NOT NULL ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [float(r[0]) for r in rows]
@@ -281,10 +296,11 @@ class Store:
     # ------------------------------------------------------------------ plans
     def add_plan(self, plan) -> int:
         cur = self.conn.execute(
-            """INSERT INTO plans (ticker, side, limit_price, amount, shares, target, p_at_plan, tier, created_ts, status, status_text, expected_profit)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO plans (ticker, side, limit_price, amount, shares, target, p_at_plan, tier, created_ts, status, status_text,
+                                  expected_profit, target_high, p_target)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (plan.ticker, plan.side, plan.limit, plan.amount, plan.shares, plan.target, plan.p_at_plan, plan.tier,
-             plan.created_ts, plan.status, plan.status_text, plan.expected_profit))
+             plan.created_ts, plan.status, plan.status_text, plan.expected_profit, plan.target_high, plan.p_target))
         return int(cur.lastrowid)
 
     def end_plan(self, plan_id: int, status: str, status_text: str, ended_ts: float, hit_target: bool | None,

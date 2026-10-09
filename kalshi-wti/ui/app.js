@@ -129,10 +129,12 @@
     $("pos-cash").textContent = live.cash_out == null ? "--" : "$" + Number(live.cash_out).toFixed(2);
     $("pos-pnl").textContent = live.pnl == null ? "" : fmtUsd(live.pnl);
     $("pos-pnl").className = "sub mono " + (live.pnl == null ? "" : live.pnl >= 0 ? "up" : "down");
-    const box = $("scalp-box");
-    if (live.awaiting_settlement) { box.textContent = "WAITING FOR SETTLEMENT"; box.className = "scalp-box"; }
+    const box = $("scalp-box"), sub = $("scalp-sub");
+    sub.textContent = sc && sc.text ? sc.text : "";
+    if (live.awaiting_settlement) { box.textContent = "WAITING FOR SETTLEMENT"; box.className = "scalp-box"; sub.textContent = ""; }
     else if (!sc) { box.textContent = "…"; box.className = "scalp-box"; }
     else if (sc.action === "SELL NOW") { box.textContent = `SELL NOW · ${fmtC(sc.bid)}`; box.className = "scalp-box sell-now"; }
+    else if (sc.action === "SELL BETWEEN") { box.textContent = `HOLD · SELL BETWEEN ${fmtC(sc.target)} – ${fmtC(sc.target_high)}`; box.className = "scalp-box sell-at"; }
     else if (sc.action === "SELL AT") { box.textContent = `SELL AT ${fmtC(sc.target)}  (now ${fmtC(sc.bid)})`; box.className = "scalp-box sell-at"; }
     else if (sc.reason === "ride_to_settle") { box.textContent = "HOLD TO SETTLEMENT"; box.className = "scalp-box ride"; }
     else { box.textContent = "HOLD"; box.className = "scalp-box"; }
@@ -285,7 +287,7 @@
       : `<div class="sub">No ended plans yet.</div>`;
     const l = d.calibrator || {};
     $("learner").innerHTML = `<div>Trained on ${l.n_windows || 0} settled windows (${l.n_samples || 0} snapshots) · weight in final answer ${Math.round((l.shrink || 0) * 100)}%</div>` +
-      `<div class="sub">Feed basis allowance: $${(d.basis_error || 0).toFixed(2)}</div>` +
+      `<div class="sub">Feed basis allowance: $${(d.basis_error || 0).toFixed(2)}` + (d.basis ? ` · ${d.basis.source}: measured bias ${(d.basis.raw * 100).toFixed(1)}¢ over ${d.basis.n} windows, ${Math.abs(d.basis.applied) >= 0.005 ? "applied as " + (-d.basis.applied * 100).toFixed(1) + "¢" : "not applied (needs 6+ consistent windows)"}` : "") + `</div>` +
       `<pre class="pre">${esc(JSON.stringify(l.weights || {}, null, 1))}</pre>`;
   }
   async function loadRules() {

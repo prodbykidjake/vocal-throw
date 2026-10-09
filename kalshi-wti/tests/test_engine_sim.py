@@ -38,8 +38,11 @@ async def test_engine_builds_live_state_on_simulated_market(tmp_path):
         engine.step()
         ps = engine.state["position"]
         assert abs(ps["qty"] - pos.qty) < 1e-3 and ps["live"]["cash_out"] is not None and ps["live"]["pnl"] is not None
-        assert ps["scalp"]["action"] in ("SELL NOW", "SELL AT", "HOLD")
+        assert ps["scalp"]["action"] in ("SELL NOW", "SELL BETWEEN", "SELL AT", "HOLD")
         assert engine.state["signal"]["action"] in ("HOLD", "SELL")
+        if ps["scalp"]["action"] == "SELL BETWEEN":  # the zone was planned once and persisted on the position
+            assert ps["target"] == ps["scalp"]["target"] and ps["target_high"] == ps["scalp"]["target_high"] and ps["zone_ts"] > 0
+            assert store.get_open_position()["target"] == ps["target"]
         res = engine.close_position()  # at the live bid
         assert "pnl" in res and "cash_out" in res and engine.position is None
         with pytest.raises(ValueError):
@@ -138,19 +141,42 @@ def test_basis_is_kept_per_feed_source(tmp_path):
     store = Store(str(tmp_path / "b.db"))
     feed = SimFeed(start_price=90.0, warmup_minutes=5, seed=4)
     engine = Engine(cfg, store, SimKalshi(feed, window_s=120), feed, Notifier(desktop=False, sound=False))
-    # errors measured while on the fallback feed
-    for i in range(4):
+    # errors measured while on the fallback feed: a consistent -6c (with a little noise) over 7 windows
+    errs = [-0.06, -0.055, -0.065, -0.06, -0.058, -0.062, -0.06]
+    for i, e in enumerate(errs):
         m = Market.from_api({"ticker": f"H{i}", "status": "finalized", "result": "yes", "floor_strike": 90.0,
                              "open_time": 1000 + i * 900, "close_time": 1900 + i * 900})
         store.upsert_window(m)
-        store.set_settle_price(f"H{i}", 90.0, 89.94, -0.06, -0.06, -0.06, "hyperliquid")
-    engine._update_basis_error("hyperliquid")
+        store.set_settle_price(f"H{i}", 90.0, 90.0 + e, e, e, e, "hyperliquid")
+        engine._update_basis_error("hyperliquid")
+        if i < 5:  # fewer than basis_min_windows: measured but NOT applied
+            assert float(store.get_state("basis_signed:hyperliquid")) == 0.0
+            assert abs(float(store.get_state("basis_raw:hyperliquid"))) > 0.02
     assert engine.model.basis_signed == 0.0  # the active (sim) feed has no measured bias
     engine._load_basis("hyperliquid")
-    assert engine.model.basis_signed < -0.04
+    assert engine.model.basis_signed < -0.04 and engine.model.basis_error >= 0.05
     engine._load_basis("kalshi-live")
     assert engine.model.basis_signed == 0.0 and engine.model.basis_error == 0.0
-    assert store.feed_errors("hyperliquid") == [-0.06] * 4 and store.feed_errors("kalshi-live") == []
+    assert store.feed_errors("hyperliquid")[0] == -0.06 and store.feed_errors("kalshi-live") == []
+    assert any("not applied" in ev["text"] for ev in engine.events) and any("applied" in ev["text"] for ev in engine.events)
+    store.close()
+
+
+def test_basis_is_not_applied_when_the_sign_keeps_flipping(tmp_path):
+    from wti15m.kalshi import Market
+
+    cfg = Config()
+    store = Store(str(tmp_path / "c.db"))
+    feed = SimFeed(start_price=90.0, warmup_minutes=5, seed=4)
+    engine = Engine(cfg, store, SimKalshi(feed, window_s=120), feed, Notifier(desktop=False, sound=False))
+    for i, e in enumerate([0.02, -0.03, 0.025, -0.02, 0.03, -0.025, 0.022, -0.028]):
+        m = Market.from_api({"ticker": f"K{i}", "status": "finalized", "result": "yes", "floor_strike": 90.0,
+                             "open_time": 1000 + i * 900, "close_time": 1900 + i * 900})
+        store.upsert_window(m)
+        store.set_settle_price(f"K{i}", 90.0, 90.0 + e, e, e, e, "kalshi-live")
+    engine._update_basis_error("kalshi-live")
+    assert float(store.get_state("basis_signed:kalshi-live")) == 0.0  # noise, not a bias: nothing is shifted
+    assert float(store.get_state("basis_error:kalshi-live")) > 0.02  # ... but the uncertainty allowance is kept
     store.close()
 
 

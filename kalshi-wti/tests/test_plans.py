@@ -3,13 +3,27 @@ import time
 from wti15m.config import TradingCfg
 from wti15m.decision import Quotes, Signal
 from wti15m.model import Prediction
-from wti15m.plans import PlanTracker, scalp_target
+from wti15m.plans import PlanTracker, hard_stop, scalp_target
 from wti15m.sizing import dollars_for, tier_for, unit_dollars
 
 
 def pred(p_up: float, disagree: bool = False) -> Prediction:
     return Prediction(p_up, p_up, p_up, None, 0.0, 0.005, 0.005, 0.005, 480, 0.0, 0.1, "confident", 0.0, [], [], 0.005,
                       None, 0.0, None, disagree)
+
+
+def live_pred(price: float, strike: float, seconds_left: float, p_market: float) -> Prediction:
+    """A prediction with the fields the path simulation needs (price_adj, implied price, sigma)."""
+    from wti15m.model import Model
+    import random
+    m = Model(min_warmup_s=0)
+    rng = random.Random(3)
+    px, t = strike, 0.0
+    while t < 2400:
+        px += rng.gauss(0, 0.005)
+        t += 1
+        m.vol.update(t, px)
+    return m.predict(price, strike, seconds_left + 60, p_market, 0.3)
 
 
 def buy(side: str, ask: float) -> Signal:
@@ -22,6 +36,13 @@ def test_tiers_and_dollars():
     assert dollars_for(0.95, cfg) == (30.0, "near-certain")
     assert dollars_for(0.85, cfg) == (20.0, "strong")
     assert dollars_for(0.6, cfg) == (5.0, "lean")
+    # below the lowest tier a cheap contract with edge is a longshot: half a unit, a full unit when the model's
+    # chance is at least double the cost
+    assert dollars_for(0.32, cfg) is None and tier_for(0.32) is None
+    assert tier_for(0.32, ask=0.14, fee=0.01) == ("longshot", 1.0)
+    assert tier_for(0.25, ask=0.14, fee=0.01) == ("longshot", 0.5)
+    assert tier_for(0.18, ask=0.14, fee=0.01) is None  # edge 3c < edge_min
+    assert dollars_for(0.32, cfg, ask=0.14, fee=0.01) == (10.0, "longshot")
     cfg.max_trade_dollars = 25
     assert dollars_for(0.95, cfg) == (25.0, "near-certain")
     cfg.learn_unit = True
@@ -111,3 +132,44 @@ def test_no_plan_without_scalp_room():
     tr.update(t0, "W1", pred(0.95), q, 90.0, 90.0, 480, buy("UP", 0.91), False)
     assert tr.update(t0 + 0.5, "W1", pred(0.95), q, 90.0, 90.0, 480, buy("UP", 0.91), False) is None
     assert tr.plan is None
+
+
+def test_hard_stop_scales_with_the_plan_probability():
+    cfg = TradingCfg(stop_prob=0.35)
+    assert hard_stop(0.85, cfg) == 0.35
+    assert abs(hard_stop(0.32, cfg) - 0.192) < 1e-9
+
+
+def test_longshot_plan_forms_with_a_reachable_target_and_chance():
+    """Screenshot: Up 32% by the model, 14c ask, ten minutes left. v7 showed 'setup forming 3/3 s' forever."""
+    cfg = TradingCfg(unit_dollars=10, max_trade_dollars=50, confirm_s=0)
+    tr = PlanTracker(cfg)
+    t0 = time.time()
+    p = live_pred(90.16, 90.21, 600, p_market=0.15)
+    p.p_final = 0.32  # the model's view (learner included); p_down follows
+    q = Quotes(0.13, 0.14, 0.86, 0.87)
+    sig = buy("UP", 0.14)
+    tr.update(t0, "W1", p, q, 90.16, 90.21, 600, sig, False)
+    ev = tr.update(t0 + 0.5, "W1", p, q, 90.16, 90.21, 600, sig, False)
+    assert ev and ev.kind == "created", tr.no_plan_reason
+    plan = tr.plan
+    assert plan.tier == "longshot" and plan.amount == 10.0 and plan.limit == 0.145
+    assert plan.target >= plan.limit + 0.08 and plan.target_high > plan.target
+    assert plan.p_target is not None and plan.p_target >= cfg.plan_min_chance
+    assert "chance" in tr.headline(plan) and "sell at" in tr.headline(plan)
+    # a 34% model reading does not kill a 32% plan; 15% does
+    assert tr.update(t0 + 1, "W1", pred(0.34), q, 90.16, 90.21, 599, None, False) is None
+    ev = tr.update(t0 + 2, "W1", pred(0.15), q, 90.16, 90.21, 598, None, False)
+    assert ev and ev.kind == "cancelled"
+
+
+def test_card_says_why_a_confirmed_setup_is_not_a_plan():
+    cfg = TradingCfg(confirm_s=0, min_scalp_cents=8)
+    tr = PlanTracker(cfg)
+    t0 = time.time()
+    q = Quotes(0.90, 0.91, 0.09, 0.10)  # Up already at 91c: nowhere to scalp to
+    tr.update(t0, "W1", pred(0.95), q, 90.0, 90.0, 480, buy("UP", 0.91), False)
+    assert tr.update(t0 + 0.5, "W1", pred(0.95), q, 90.0, 90.0, 480, buy("UP", 0.91), False) is None
+    assert tr.plan is None and tr.no_plan_reason and "room" in tr.no_plan_reason
+    disp = tr.display(buy("UP", 0.91), pred(0.95), t0 + 1)
+    assert disp.action == "WAIT" and disp.reasons == ["no_plan"] and "room" in disp.headline

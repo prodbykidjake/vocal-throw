@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import math
+import statistics
 import time
 from collections import deque
 
@@ -42,7 +44,7 @@ class Engine:
         self.tracker = MarketTracker(kalshi_client, cfg.kalshi.series_ticker, cfg.kalshi.poll_interval_s,
                                      on_event=self.on_market_event)
         self.position: Position | None = _position_from_row(store.get_open_position())
-        self.plans = PlanTracker(t, self.fees, recent_amounts_fn=lambda: store.recent_amounts(10))
+        self.plans = PlanTracker(t, self.fees, recent_amounts_fn=lambda: store.recent_amounts(10), decider=self.decider)
         self._sell_streak = 0
         self._last_hold_sig: Signal | None = None
         self._wait_sig: Signal | None = None  # WAIT text is held for a few seconds so the card reads calmly
@@ -266,7 +268,10 @@ class Engine:
     def _update_basis_error(self, source: str):
         """From measured feed − settlement errors of ONE feed source: the typical size (75th percentile of |err|
         over the last 200 windows; max if < 4) widens the model's uncertainty, and the recent signed bias (EWMA
-        over the last 12 windows, shrunk by n/(n+1)) shifts that feed's price before it is compared with the target."""
+        over the last 12 windows, shrunk by n/(n+1)) shifts that feed's price before it is compared with the target.
+        The shift is only APPLIED once it is consistent: at least basis_min_windows windows and |bias| at least
+        basis_min_t standard errors from zero; a 2¢ wobble after three windows must not move every call by 2¢."""
+        t = self.cfg.trading
         signed = self.store.feed_errors(source, 200)  # newest first
         errs = sorted(abs(e) for e in signed)
         if not errs:
@@ -283,11 +288,26 @@ class Engine:
                 bias = 0.7 * bias + 0.3 * e
             bias *= len(recent) / (len(recent) + 1.0)  # one sample counts half, three count 3/4, ...
         bias = round(bias, 4)
+        n = len(recent)
+        se = statistics.pstdev(recent) / math.sqrt(n) if n >= 2 else float("inf")
+        consistent = n >= t.basis_min_windows and abs(bias) >= t.basis_min_t * se
+        applied = bias if consistent else 0.0
         self.store.set_state(f"basis_error:{source}", str(basis))
-        self.store.set_state(f"basis_signed:{source}", str(bias))
+        self.store.set_state(f"basis_signed:{source}", str(applied))
+        self.store.set_state(f"basis_raw:{source}", str(bias))
+        self.store.set_state(f"basis_n:{source}", str(n))
         if source == self._basis_source:
             self.model.basis_error = basis
-            self.model.basis_signed = bias
+            self.model.basis_signed = applied
+        pairs = self.store.feed_error_pairs(source, 50)
+        lag_txt = ""
+        if len(pairs) >= 3:
+            med0 = statistics.median(abs(a) for a, _ in pairs)
+            med60 = statistics.median(abs(b) for _, b in pairs)
+            lag_txt = f" · |error| median at the close {med0 * 100:.1f}¢ vs one candle later {med60 * 100:.1f}¢ ({len(pairs)} windows)"
+        self.log_event("feed", f"{source} vs settlement: bias {bias * 100:+.1f}¢ over {n} windows "
+                               f"({'applied' if consistent else 'not applied yet: ' + ('too few windows' if n < t.basis_min_windows else 'not consistent')})"
+                               + lag_txt)
 
     # ------------------------------------------------------------------ user positions
     def open_position(self, side: str, amount: float, price: float | None = None, note: str = "") -> Position:
@@ -313,21 +333,23 @@ class Engine:
         entry_fee = taker_fee(price, qty, self.fees)
         now = time.time()
         high = quotes.bid(side)
-        target = None
+        target = target_high = None
         plan = self.plans.plan
         if plan is not None and plan.side == side and plan.ticker == m.ticker:
-            target = plan.target
+            target, target_high = plan.target, plan.target_high
             event = self.plans.mark_filled(now)
             if event and plan.id:
                 self.store.end_plan(plan.id, "filled", "you bought it", now, plan.hit_target, plan.best_bid, None)
         pid = self.store.open_position(m.ticker, side, qty, price, now, note, amount, entry_fee, high)
+        zone_ts = 0.0
         if target is not None:
-            self.store.update_position_target(pid, target)
-        self.position = Position(m.ticker, side, qty, price, now, pid, amount, entry_fee, high, target)
+            zone_ts = now
+            self.store.update_position_zone(pid, target, target_high if target_high else min(0.95, target + 0.10), zone_ts)
+        self.position = Position(m.ticker, side, qty, price, now, pid, amount, entry_fee, high, target, target_high, zone_ts)
         self._sell_streak = 0
         self._last_hold_sig = None
         self.log_event("you", f"you bought ${amount:.2f} of {side} @ {cents(price)} = {qty_text(qty)} shares on {m.ticker}"
-                              + (f" · sell target {cents(target)}" if target else ""))
+                              + (f" · sell zone {cents(target)}–{cents(target_high)}" if target else ""))
         return self.position
 
     def close_position(self, price: float | None = None) -> dict:
@@ -409,7 +431,7 @@ class Engine:
                 if bid is not None and (pos.high_bid is None or bid > pos.high_bid):
                     pos.high_bid = bid
                     self.store.update_position_high(pos.id, bid)
-            raw = self.decider.decide(pred, quotes, tick.price, m.strike, tau, elapsed, pos)
+            raw = self.decider.decide(pred, quotes, tick.price, m.strike, tau, elapsed, pos, now)
             if tau is not None and tau > 0 and now - self._last_snapshot >= 15:
                 self._last_snapshot = now
                 self.store.add_snapshot(now, m.ticker, tau, tick.price, m.strike, pred)
@@ -420,7 +442,7 @@ class Engine:
                 sig = self._calm_wait(self.plans.display(raw, pred, now) or raw, now)
             else:
                 self.plans.update(now, m.ticker, pred, quotes, tick.price, m.strike, tau, None, True)
-                sig = self._stable_position_signal(raw, pos)
+                sig = self._stable_position_signal(raw, pos, now)
             if sig.key != self._last_signal_key:
                 self.store.add_signal(now, m.ticker, sig, pred, tau)
                 self.log_event("signal", sig.headline)
@@ -448,13 +470,15 @@ class Engine:
         self._wait_sig = sig
         return sig
 
-    def _stable_position_signal(self, raw: Signal, pos: Position) -> Signal:
-        """Commit the sell target (ratchet up only) and require SELL NOW to hold for 2 consecutive seconds."""
+    def _stable_position_signal(self, raw: Signal, pos: Position, now: float) -> Signal:
+        """Persist the sell zone the decider committed (set once, then re-planned at most every zone_refresh_s)
+        and require SELL NOW to hold for 2 consecutive seconds."""
         sc = raw.scalp or {}
-        commit = sc.get("commit_target")
-        if commit is not None and (pos.target is None or commit > pos.target):
-            pos.target = commit
-            self.store.update_position_target(pos.id, commit)
+        zone = sc.get("commit_zone")
+        if zone and len(zone) == 2:
+            pos.target, pos.target_high, pos.zone_ts = float(zone[0]), float(zone[1]), now
+            self.store.update_position_zone(pos.id, pos.target, pos.target_high, now)
+            self.log_event("zone", f"sell zone for your {pos.side}: {cents(pos.target)}–{cents(pos.target_high)}")
         if raw.action == "SELL":
             self._sell_streak += 1
             if self._sell_streak < 2 and self._last_hold_sig is not None:
@@ -476,7 +500,8 @@ class Engine:
             fee = taker_fee(plan.limit, plan.shares, self.fees)
             if self.store.open_paper_trade_for(plan.ticker) is None:
                 self.store.open_paper_trade(plan.ticker, plan.side, now, plan.limit, plan.shares, fee, plan.tier, plan.p_at_plan)
-                self.store.set_state(f"paper_target:{plan.ticker}", str(plan.target))
+                self.store.set_state(f"paper_zone:{plan.ticker}",
+                                     f"{plan.target},{plan.target_high or min(0.95, plan.target + 0.10)},{now}")
             return
         hypo = None
         if event.kind in ("cancelled", "expired"):
@@ -512,10 +537,20 @@ class Engine:
             return
         if tau is not None and tau <= 0:
             return  # settlement will close it
-        target = _float(self.store.get_state(f"paper_target:{m.ticker}"), 0.0) or None
+        low = high = None
+        zone_ts = 0.0
+        raw_zone = self.store.get_state(f"paper_zone:{m.ticker}")
+        if raw_zone:
+            parts = raw_zone.split(",")
+            if len(parts) == 3:
+                low, high, zone_ts = _float(parts[0], 0.0) or None, _float(parts[1], 0.0) or None, _float(parts[2], 0.0)
         pos = Position(m.ticker, paper["side"], float(paper["size"]), paper["entry_price"], paper["entry_ts"], paper["id"],
-                       amount=paper["entry_price"] * paper["size"], entry_fee=paper["entry_fee"] or 0.0, target=target)
-        psig = self.decider.decide(pred, quotes, price, m.strike, tau, elapsed, pos)
+                       amount=paper["entry_price"] * paper["size"], entry_fee=paper["entry_fee"] or 0.0, target=low,
+                       target_high=high, zone_ts=zone_ts)
+        psig = self.decider.decide(pred, quotes, price, m.strike, tau, elapsed, pos, now)
+        zone = (psig.scalp or {}).get("commit_zone")
+        if zone and len(zone) == 2:
+            self.store.set_state(f"paper_zone:{m.ticker}", f"{zone[0]},{zone[1]},{now}")
         if psig.action == "SELL" and psig.price is not None:
             fee = taker_fee(psig.price, pos.qty, self.fees)
             self.store.close_paper_trade(paper["id"], now, psig.price, fee, psig.reasons[0] if psig.reasons else "sell")
@@ -533,6 +568,10 @@ class Engine:
             data["calibrator"] = {"n_windows": self.model.cal.n_windows, "n_samples": self.model.cal.n_samples,
                                   "shrink": round(self.model.cal.shrink, 3), "weights": self.model.cal.weights()}
             data["basis_error"] = self.model.basis_error
+            src = self._basis_source or ""
+            data["basis"] = {"source": src, "applied": self.model.basis_signed,
+                             "raw": _float(self.store.get_state(f"basis_raw:{src}"), 0.0),
+                             "n": int(_float(self.store.get_state(f"basis_n:{src}"), 0.0))}
             data["plans"] = self.store.plan_stats()
             self._stats_cache = (time.time(), data)
             return data
@@ -614,4 +653,5 @@ def _position_from_row(row: dict | None) -> Position | None:
     if not row:
         return None
     return Position(row["ticker"], row["side"], float(row["qty"]), float(row["avg_price"]), float(row["opened_ts"]), row["id"],
-                    row.get("amount"), float(row.get("entry_fee") or 0.0), row.get("high_bid"), row.get("target"))
+                    row.get("amount"), float(row.get("entry_fee") or 0.0), row.get("high_bid"), row.get("target"),
+                    row.get("target_high"), float(row.get("zone_ts") or 0.0))

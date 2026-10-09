@@ -62,6 +62,19 @@ class TradingCfg:
     miss_seconds: float = 10.0  # ... for this long = missed
     cooldown_s: float = 30.0  # after a missed/cancelled plan, before the next one
     settle_advice: str = "when_clearly_worse"  # when_clearly_worse | never
+    # --- forward-looking exits: "SELL BETWEEN low–high" from simulated price paths ---
+    zone_low_prob: float = 0.50  # low end of the sell zone = price reached with this probability before the close
+    zone_high_prob: float = 0.20  # high end = price reached with this probability
+    zone_refresh_s: float = 30.0  # re-plan the zone at most this often (it ratchets up freely, down only when unlikely)
+    zone_drop_prob: float = 0.25  # lower the zone only when the old low has under this chance of being reached
+    zone_exclude_last_s: float = 30.0  # the zone looks at prices reachable before the last N s of trading (thin, binary)
+    give_up_prob: float = 0.10  # sell at a loss only when the chance of getting back to breakeven is at or under this
+    give_up_min_cash: float = 1.0  # ... and the sale still returns at least this many dollars
+    plan_min_chance: float = 0.30  # a plan's sell target must have at least this chance of being reached
+    mc_paths: int = 2000  # simulated price paths per evaluation
+    # --- feed basis correction ---
+    basis_min_windows: int = 6  # apply a signed feed shift only after this many measured windows ...
+    basis_min_t: float = 1.5  # ... and only when |bias| is at least this many standard errors from zero
 
 
 @dataclass

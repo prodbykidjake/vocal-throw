@@ -76,7 +76,8 @@ button:hover { filter: brightness(1.15); }
 .inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
 input.short { width: 90px; }
 input.amount { width: 180px; }
-.scalp-box { font-size: 22px; font-weight: 800; text-align: center; padding: 14px; border-radius: 10px; margin: 6px 0 12px; background: var(--card2); color: var(--muted); letter-spacing: .03em; }
+.scalp-box { font-size: 22px; font-weight: 800; text-align: center; padding: 14px; border-radius: 10px; margin: 6px 0 4px; background: var(--card2); color: var(--muted); letter-spacing: .03em; }
+.sub.center { text-align: center; margin-bottom: 12px; min-height: 1.2em; }
 .scalp-box.sell-now { background: rgba(240,180,41,.22); color: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
 .scalp-box.sell-at { background: rgba(90,169,255,.16); color: var(--info); }
 .scalp-box.ride { background: rgba(46,204,143,.14); color: var(--up); }

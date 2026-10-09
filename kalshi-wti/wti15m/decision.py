@@ -8,12 +8,14 @@ All contract prices are dollars (0..1); Kalshi quotes sub-cent prices (0.013), s
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field
 from statistics import NormalDist
 
 from .config import TradingCfg
 from .fees import FeeSchedule, fee_per_contract, taker_fee
 from .model import Prediction, clamp
+from .paths import TouchCurve, simulate
 from .sizing import dollars_for
 
 _ND = NormalDist()
@@ -28,6 +30,11 @@ def cents(x: float | None) -> str:
 
 def pct(p: float | None) -> str:
     return "--" if p is None else f"{round(p * 100):d}%"
+
+
+def pct5(p: float | None) -> str:
+    """Probability rounded to 5% so the number on screen does not twitch every second."""
+    return "--" if p is None else f"{5 * round(p * 20):d}%"
 
 
 def money(x: float | None) -> str:
@@ -83,7 +90,9 @@ class Position:
     amount: float | None = None  # dollars paid (what you typed into Kalshi)
     entry_fee: float = 0.0
     high_bid: float | None = None  # best bid for this side since entry
-    target: float | None = None  # committed sell target (from the plan, or set once at entry); ratchets up only
+    target: float | None = None  # low end of the committed sell zone (from the plan, or set at entry)
+    target_high: float | None = None  # high end of the sell zone
+    zone_ts: float = 0.0  # when the zone was last (re)planned
 
     @property
     def cost(self) -> float:
@@ -93,7 +102,8 @@ class Position:
     def as_dict(self) -> dict:
         return {"id": self.id, "ticker": self.ticker, "side": self.side, "qty": round(self.qty, 4),
                 "avg_price": self.avg_price, "opened_ts": self.opened_ts, "amount": self.amount,
-                "entry_fee": self.entry_fee, "cost": round(self.cost, 2), "high_bid": self.high_bid, "target": self.target}
+                "entry_fee": self.entry_fee, "cost": round(self.cost, 2), "high_bid": self.high_bid, "target": self.target,
+                "target_high": self.target_high, "zone_ts": self.zone_ts}
 
 
 @dataclass
@@ -165,13 +175,11 @@ class DecisionEngine:
         fee = fee_per_contract(ask, size, self.fees)
         return p - ask - fee, fee
 
-    def _take_profit(self, entry: float) -> float:
-        return round(min(entry + self.cfg.profit_target, 0.99), 3)
-
     def _exit_plan(self, side: str, entry: float) -> str:
-        return (f"Exit plan: sell {side} around {cents(self._take_profit(entry))} if the edge is gone; "
-                f"cut if the model's {side} chance drops under {pct(self.cfg.stop_prob)} and the bid is still worth it; "
-                f"hold to settlement if it is ≥ {pct(self.cfg.hold_to_settle_prob)} with under 2 min left.")
+        return (f"Exit plan: once you report the buy the card shows SELL BETWEEN low–high (prices the simulated paths reach "
+                f"before the close, with the chance of each); SELL NOW when the bid gets there. It only says SELL at a loss "
+                f"when the chance of getting back to breakeven is ≤ {pct(self.cfg.give_up_prob)}; "
+                f"hold to settlement only if {side} is ≥ {pct(self.cfg.hold_to_settle_prob)} with under 2 min left and selling is clearly worse.")
 
     def _situation(self, pred: Prediction, price: float, strike: float | None, seconds_left: float | None) -> str:
         if strike is None:
@@ -184,9 +192,9 @@ class DecisionEngine:
 
     # ------------------------------------------------------------------ main entry
     def decide(self, pred: Prediction, quotes: Quotes, price: float, strike: float | None, seconds_left: float | None,
-               seconds_elapsed: float | None, position: Position | None = None) -> Signal:
+               seconds_elapsed: float | None, position: Position | None = None, now: float | None = None) -> Signal:
         if position is not None:
-            return self._manage_position(pred, quotes, price, strike, seconds_left, position)
+            return self._manage_position(pred, quotes, price, strike, seconds_left, position, now)
         return self._entry(pred, quotes, price, strike, seconds_left, seconds_elapsed)
 
     # ------------------------------------------------------------------ entries
@@ -283,7 +291,7 @@ class DecisionEngine:
         if pred.confidence == "coinflip":
             return wait("not_confident", "WAIT · edge exists on paper but the model is not confident", extra, triggers)
 
-        sized = dollars_for(p, cfg)
+        sized = dollars_for(p, cfg, ask=ask, fee=fee)
         amount, tier = sized if sized else (round(size * ask, 2), "lean")
         shares = amount / ask
         headline = f"BUY {side} · limit {cents(ask)} · ${amount:.0f} (≈ {shares:.0f} shares) · {tier}"
@@ -294,10 +302,47 @@ class DecisionEngine:
             details.append("Fee is an estimate: this series uses a fee table the app cannot read.")
         return Signal("BUY", side, ask, size, edge, p, headline, details, ["edge"], pred.confidence, triggers)
 
-    # ------------------------------------------------------------------ open position (scalp-first)
-    def _manage_position(self, pred: Prediction, quotes: Quotes, price: float, strike: float | None,
-                         seconds_left: float | None, pos: Position) -> Signal:
+    # ------------------------------------------------------------------ open position (scalp-first, forward-looking)
+    def breakeven(self, pos: Position) -> float:
+        """The bid at which cashing out returns exactly what you put in (entry fee and exit fee included)."""
+        if pos.qty <= 0:
+            return pos.avg_price
+        b = pos.cost / pos.qty
+        for _ in range(3):
+            b = (pos.cost + taker_fee(b, pos.qty, self.fees)) / pos.qty
+        return min(b, 0.99)
+
+    def curve_for(self, pred: Prediction, side: str, price: float, strike: float | None, seconds_left: float | None,
+                  quotes: Quotes | None = None, exclude_last_s: float | None = None) -> TouchCurve | None:
+        """Simulated paths of the BID for `side` from here to the close. They start from where Kalshi's own odds
+        put the price (the model's price only when there are no odds), minus half the spread, so "chance of
+        reaching 35¢" is about the price you can actually sell at, not about the model's opinion of it."""
         cfg = self.cfg
+        if strike is None or seconds_left is None or seconds_left <= 0 or pred.confidence in ("stale", "warming_up", "no_target"):
+            return None
+        s0 = pred.price_adj if pred.price_adj is not None else price
+        if pred.implied_price is not None and pred.implied_price > 0:
+            s0 = pred.implied_price
+        offset = 0.01
+        if quotes is not None and quotes.ask(side) is not None and quotes.bid(side) is not None:
+            offset = clamp((quotes.ask(side) - quotes.bid(side)) / 2.0, 0.0, 0.05)
+        sigma = pred.sigma_eff or pred.sigma
+        return simulate(side, s0, strike, sigma, seconds_left, cfg.settle_lag_s, cfg.tie_adj, cfg.mc_paths,
+                        exclude_last_s=cfg.zone_exclude_last_s if exclude_last_s is None else exclude_last_s, offset=offset)
+
+    def zone_from(self, curve: TouchCurve, breakeven: float) -> tuple[float, float]:
+        """SELL BETWEEN low–high: low = the price reached with `zone_low_prob` (never a loss), high = with `zone_high_prob`."""
+        cfg = self.cfg
+        low = max(curve.level(cfg.zone_low_prob), breakeven + 0.02)
+        low = min(round(low, 2), 0.93)
+        high = max(curve.level(cfg.zone_high_prob), low + 0.05)
+        high = min(round(high, 2), 0.95)
+        return low, high
+
+    def _manage_position(self, pred: Prediction, quotes: Quotes, price: float, strike: float | None,
+                         seconds_left: float | None, pos: Position, now: float | None = None) -> Signal:
+        cfg = self.cfg
+        now = time.time() if now is None else now
         side = pos.side
         p = p_for_side(pred, side)
         bid = quotes.bid(side)
@@ -308,89 +353,117 @@ class DecisionEngine:
         for note in pred.notes:
             if not note.startswith("warming up"):
                 details.append(note)
-        tp = pos.target if pos.target else self._take_profit(pos.avg_price)
-        triggers = {"stop_prob": cfg.stop_prob, "take_profit_bid": tp}
+        triggers: dict = {"zone": [pos.target, pos.target_high], "give_up_prob": cfg.give_up_prob}
 
-        def hold(code: str, headline: str, scalp: dict | None, edge: float | None = None) -> Signal:
-            return Signal("HOLD", side, None, 0, edge, p, headline, details, [code], pred.confidence, triggers, scalp)
+        def scalp(action: str, reason: str, text: str, cash: float | None = None, pnl: float | None = None, **extra) -> dict:
+            d = {"action": action, "reason": reason, "text": text, "target": pos.target, "target_high": pos.target_high,
+                 "bid": bid, "cash_out": None if cash is None else round(cash, 2), "pnl": None if pnl is None else round(pnl, 2),
+                 "p_side": round(p, 4)}
+            d.update(extra)
+            return d
+
+        def hold(code: str, headline: str, sc: dict, edge: float | None = None) -> Signal:
+            return Signal("HOLD", side, None, 0, edge, p, headline, details, [code], pred.confidence, triggers, sc)
+
+        def sell(code: str, headline: str, sc: dict, edge: float | None = None) -> Signal:
+            return Signal("SELL", side, bid, 0, edge, p, headline, details, [code], pred.confidence, triggers, sc)
 
         if seconds_left is not None and seconds_left <= 0:
             return hold("window_closed", "HOLD · window closed, waiting for settlement",
-                        {"action": "HOLD", "target": None, "bid": bid, "cash_out": None, "pnl": None, "reason": "window_closed"})
+                        scalp("HOLD", "window_closed", "window closed; settlement decides"))
         if bid is None:
-            return hold("no_quotes", "HOLD · no bid to sell into right now",
-                        {"action": "HOLD", "target": None, "bid": None, "cash_out": None, "pnl": None, "reason": "no_quotes"})
+            return hold("no_quotes", "HOLD · no bid to sell into right now", scalp("HOLD", "no_quotes", "no fresh Kalshi bid"))
 
         cash = cash_out(qty, bid, self.fees)
         pnl = cash - pos.cost
-        hold_val = p  # per share, expected settlement value
-        sell_val = cash / qty if qty > 0 else bid  # per share, after fee
-        fee_pc = bid - sell_val
-        ev_hold_total = p * qty
-        details.append(f"Cash out now ≈ ${cash:.2f} ({money(pnl)}); by the model, holding is worth ≈ ${ev_hold_total:.2f} "
-                       f"({cents(hold_val)} vs {cents(sell_val)} per share after fee).")
-        if pos.avg_price <= 0.10:
-            details.append(f"Longshot: bought at {cents(pos.avg_price)}. It only pays if WTI crosses the target; "
-                           f"otherwise it decays toward 0 as the clock runs. Set a hard sell target and respect it.")
-
-        def scalp(action: str, target: float | None, reason: str) -> dict:
-            return {"action": action, "target": None if target is None else round(target, 3), "bid": bid,
-                    "cash_out": round(cash, 2), "pnl": round(pnl, 2), "reason": reason, "p_side": round(p, 4)}
-
-        def sell(code: str, headline: str) -> Signal:
-            return Signal("SELL", side, bid, 0, sell_val - hold_val, p, headline, details, [code], pred.confidence,
-                          triggers, scalp("SELL NOW", bid, code))
+        hold_val = p  # per share, expected settlement value by the model
+        sell_val = cash / qty if qty > 0 else bid  # per share, after the sell fee
+        breakeven = self.breakeven(pos)
+        losing = bid < breakeven
+        details.append(f"Cash out now ≈ ${cash:.2f} ({money(pnl)}); breakeven bid {cents(breakeven)}; by the model holding is worth "
+                       f"≈ ${hold_val * qty:.2f} ({cents(hold_val)} vs {cents(sell_val)} per share after fee).")
 
         if pred.confidence in ("stale", "warming_up"):
-            # no model to judge by: give a price-action target only
-            target = max(tp, bid + 0.005)
+            target = pos.target if pos.target else round(max(breakeven + 0.05, bid + 0.01), 2)
             details.append("Model can't judge right now (" + pred.confidence + "); target is price-based only.")
-            return hold(pred.confidence, f"HOLD {side} · set a sell at {cents(target)} (model unavailable)",
-                        scalp("SELL AT", target, pred.confidence))
+            return hold(pred.confidence, f"HOLD {side} · sell at {cents(target)} (model unavailable)",
+                        scalp("SELL AT", pred.confidence, "model can't judge right now; price-based target only", cash, pnl, target=target))
 
-        # 1. market pays more than the model thinks it is worth
-        if sell_val >= hold_val + 0.03:
-            return sell("overpriced", f"SELL NOW {side} at {cents(bid)} · market pays {cents(bid)} for something worth ≈ {cents(hold_val)}")
-        # 2. nearly settled and strongly in your favour: don't pay to exit (only if selling is clearly worse)
+        # --- the sell zone: committed on the position, re-planned at most every zone_refresh_s ---
+        curve = self.curve_for(pred, side, price, strike, seconds_left, quotes)
+        commit: tuple[float, float] | None = None
+        p_low = p_high = p_recover = None
+        low, high = pos.target, pos.target_high
+        if curve is not None:
+            fresh_low, fresh_high = self.zone_from(curve, breakeven)
+            if low is None or high is None:
+                low = low if low else fresh_low  # a plan's target is kept; otherwise plan the zone now
+                high = min(max(high if high else 0.0, fresh_high, low + 0.05), 0.95)
+                commit = (low, high)
+            elif now - pos.zone_ts >= cfg.zone_refresh_s:
+                # The low end never chases the price upward (that would move the goalposts every time the bid
+                # climbed); it comes down only when the old low has become unlikely. The stretch end may rise.
+                new_low, new_high = low, high
+                if curve.touch(low) < cfg.zone_drop_prob and fresh_low <= low - 0.02:
+                    new_low, new_high = fresh_low, max(fresh_high, fresh_low + 0.05)
+                elif fresh_high >= high + 0.03:
+                    new_high = fresh_high
+                if (new_low, new_high) != (low, high):
+                    commit = (new_low, new_high)
+                    low, high = commit
+            p_low, p_high = curve.touch(low), curve.touch(high)
+            if losing:
+                p_recover = curve.touch(breakeven)
+        if low is None or high is None:
+            low = round(max(breakeven + 0.05, bid + 0.01), 2)
+            high = min(0.95, round(low + 0.10, 2))
+        zone_txt = f"{cents(low)}–{cents(high)}"
+        triggers["zone"] = [low, high]
+        if curve is not None:
+            details.append(f"Simulated {curve.horizon_s / 60:.0f} min of price paths: ~{pct5(p_low)} chance the {side} price reaches "
+                           f"{cents(low)} before the close, ~{pct5(p_high)} chance of {cents(high)}"
+                           + (f", ~{pct5(p_recover)} chance of getting back to breakeven ({cents(breakeven)})." if losing else "."))
+
+        # 1. nearly settled and strongly in your favour: don't pay to exit (only if selling is clearly worse)
         if (cfg.settle_advice != "never" and seconds_left is not None and seconds_left <= 120
                 and p >= cfg.hold_to_settle_prob and hold_val >= sell_val + 0.01):
             return hold("ride_to_settle", f"HOLD to settlement · {side} {pct(p)} with {mmss(seconds_left)} left; selling would give up "
-                        f"{cents(hold_val - sell_val)} per share", scalp("HOLD", None, "ride_to_settle"), hold_val - sell_val)
-        # 3. in profit and the bid rolled over hard from its high since entry
-        if pos.high_bid and pnl > 0 and bid > pos.avg_price and bid <= pos.high_bid * 0.75:
-            return sell("rollover", f"SELL NOW {side} at {cents(bid)} · lock in {money(pnl)}; bid rolled over from {cents(pos.high_bid)}")
-        # 4. the committed sell target is reached
-        if bid >= tp - 0.002:
-            return sell("take_profit", f"SELL NOW {side} at {cents(bid)} · target {cents(tp)} reached, {money(pnl)}")
-        # 5. model flipped against you (only if selling still gets you something close to its value)
-        if p <= cfg.stop_prob:
-            if sell_val >= hold_val - cfg.edge_min or pred.disagree:
-                return sell("stop", f"SELL NOW {side} at {cents(bid)} · model flipped against you ({side} {pct(p)} ≤ {pct(cfg.stop_prob)})"
-                            + (" and the market agrees it's gone" if pred.disagree else ""))
-            details.append(f"Model has flipped ({side} {pct(p)}), but the bid ({cents(bid)}) is far below even that value; "
-                           f"selling would lock in more loss than holding is worth.")
-            return hold("too_late_to_cut", f"HOLD {side} · too late to cut; ride it as a {pct(p)} lottery ticket",
-                        scalp("HOLD", None, "too_late_to_cut"), hold_val - sell_val)
-        # 6. otherwise: hold for the committed sell target. It only moves UP, and only when the model's fair exit
-        #    has clearly risen, so the number on screen stays put instead of re-deciding every second.
-        computed = min(self._take_profit(pos.avg_price), hold_val - fee_pc - cfg.edge_min / 2)
-        if pred.disagree:
-            computed = min(computed, bid + max(0.02, bid * 0.5))
-            details.append("Target capped near the current bid because the model and the market disagree a lot right now.")
-        computed = clamp(computed, bid + 0.005, 0.99)
-        if pos.target is None:
-            target = computed
-        elif computed >= pos.target + 0.03:
-            target = computed  # ratchet up
-        else:
-            target = pos.target
-        if target <= bid + 0.006:
-            return sell("fair_exit", f"SELL NOW {side} at {cents(bid)} · bid is already at the fair exit ({money(pnl)})")
-        gap_txt = "the market agrees with the model" if abs(sell_val - hold_val) <= 0.03 else \
-            f"the bid ({cents(bid)}) is below the model's value ({cents(hold_val)})"
-        details.append(f"Will say SELL NOW at ≈ {cents(target)}, if the bid rolls over hard while you're in profit, "
-                       f"or if {side} drops under {pct(cfg.stop_prob)} with a bid still worth taking.")
-        sc = scalp("SELL AT", target, "hold")
-        sc["commit_target"] = round(target, 3)  # the engine persists this on the position
-        return hold("hold", f"HOLD {side} · sell at {cents(target)} · now {cents(bid)}, cash out {money(pnl)} · {gap_txt}",
-                    sc, hold_val - sell_val)
+                        f"{cents(hold_val - sell_val)} per share",
+                        scalp("HOLD", "ride_to_settle", f"{side} {pct(p)} with {mmss(seconds_left)} left · selling gives up {cents(hold_val - sell_val)} a share", cash, pnl),
+                        hold_val - sell_val)
+        # 2. the bid is inside the zone: take it
+        if bid >= low - 0.002:
+            where = "top of" if bid >= high - 0.002 else "in"
+            return sell("zone", f"SELL NOW {side} at {cents(bid)} · {where} your sell zone {zone_txt} · {money(pnl)}",
+                        scalp("SELL NOW", "zone", f"{where} your sell zone {zone_txt} · {money(pnl)}", cash, pnl), sell_val - hold_val)
+        # 3. in profit, a real run happened, and the bid rolled over hard from its high: lock it in
+        ran = pos.high_bid is not None and pos.high_bid >= pos.avg_price + 0.5 * (low - pos.avg_price)
+        if ran and pnl > 0 and bid > pos.avg_price and bid <= pos.high_bid * 0.75:
+            return sell("rollover", f"SELL NOW {side} at {cents(bid)} · lock in {money(pnl)}; bid rolled over from {cents(pos.high_bid)}",
+                        scalp("SELL NOW", "rollover", f"bid rolled over from {cents(pos.high_bid)} · lock in {money(pnl)}", cash, pnl), sell_val - hold_val)
+        # 4. under water and the loss is nearly certain: salvage what is left (the ONLY loss-taking sell)
+        if losing and p_recover is not None and p_recover <= cfg.give_up_prob:
+            worth_it = cash >= min(cfg.give_up_min_cash, 0.2 * pos.cost)
+            if worth_it and sell_val >= hold_val - cfg.edge_min:
+                return sell("give_up", f"SELL NOW {side} at {cents(bid)} · only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)}; "
+                            f"salvage ${cash:.2f} ({money(pnl)})",
+                            scalp("SELL NOW", "give_up", f"only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)} · salvage ${cash:.2f}", cash, pnl,
+                                  p_recover=round(p_recover, 3), breakeven=round(breakeven, 3)), sell_val - hold_val)
+            details.append("Selling would return almost nothing; a lottery ticket is worth more than that.")
+            return hold("lottery", f"HOLD {side} · ride it as a {pct(p)} lottery ticket (cash out is only ${cash:.2f})",
+                        scalp("HOLD", "lottery", f"{pct(p)} lottery ticket · cash out is only ${cash:.2f}", cash, pnl), hold_val - sell_val)
+        # 5. otherwise hold for the zone, and say how likely it is
+        text = f"now {cents(bid)}"
+        if p_low is not None:
+            text += f" · ~{pct5(p_low)} chance of {cents(low)} · ~{pct5(p_high)} chance of {cents(high)}"
+        if losing and p_recover is not None:
+            text += f" · ~{pct5(p_recover)} chance of getting back to {cents(breakeven)}"
+        details.append(f"Will say SELL NOW when the bid enters the zone, if a profitable run rolls over hard, or if the chance of "
+                       f"getting back to breakeven drops to {pct(cfg.give_up_prob)}.")
+        sc = scalp("SELL BETWEEN", "hold", text, cash, pnl, target=low, target_high=high,
+                   p_low=None if p_low is None else round(p_low, 3), p_high=None if p_high is None else round(p_high, 3),
+                   p_recover=None if p_recover is None else round(p_recover, 3), breakeven=round(breakeven, 3))
+        if commit:
+            sc["commit_zone"] = [low, high]  # the engine persists this on the position
+        chance = f" · ~{pct5(p_low)} chance of {cents(low)}" if p_low is not None else ""
+        return hold("hold", f"HOLD {side} · sell between {zone_txt}{chance}", sc, hold_val - sell_val)

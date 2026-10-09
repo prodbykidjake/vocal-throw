@@ -94,33 +94,95 @@ def test_position_management_rules():
     m = warmed_model()
     eng = engine()
     pos = Position("T", "DOWN", 6, 0.61, 0.0, amount=3.66)
-    # model flipped: price now well above target -> Down prob small; bid 0.14 is far above the model's value -> SELL (overpriced)
-    pred = m.predict(90.35, 90.21, 300, p_market=0.85, feed_age_s=0.3)
-    sig = eng.decide(pred, Quotes(0.84, 0.86, 0.14, 0.16), 90.35, 90.21, 300, 600, pos)
-    assert sig.action == "SELL" and sig.reasons[0] in ("overpriced", "stop")
-    assert sig.scalp["action"] == "SELL NOW" and sig.scalp["pnl"] < 0
+    # price now well above target with 5 min left: Down is nearly gone, but the loss is not yet certain enough
+    # to pay for an exit; the card says HOLD with the chance of getting back to breakeven, never a stop-loss
+    pred = m.predict(90.35, 90.21, 360, p_market=0.85, feed_age_s=0.3)
+    sig = eng.decide(pred, Quotes(0.84, 0.86, 0.14, 0.16), 90.35, 90.21, 300, 600, pos, now=1000.0)
+    assert sig.action == "HOLD" and sig.reasons[0] in ("hold", "lottery")
+    assert sig.scalp["action"] in ("SELL BETWEEN", "HOLD") and sig.scalp["pnl"] < 0
+    if sig.reasons[0] == "hold":
+        assert sig.scalp["target"] >= sig.scalp["breakeven"]  # the zone never asks for a loss
+        assert 0 <= sig.scalp["p_recover"] <= 1 and "chance" in sig.scalp["text"]
     # ride to settlement: 90 s left, far below target
-    pred = m.predict(90.00, 90.21, 90, p_market=0.02, feed_age_s=0.3)
-    sig = eng.decide(pred, Quotes(0.01, 0.03, 0.97, 0.99), 90.00, 90.21, 90, 810, pos)
+    pred = m.predict(90.00, 90.21, 150, p_market=0.02, feed_age_s=0.3)
+    sig = eng.decide(pred, Quotes(0.01, 0.03, 0.97, 0.99), 90.00, 90.21, 90, 810, pos, now=1000.0)
     assert sig.action == "HOLD" and sig.reasons == ["ride_to_settle"]
-    # in profit with the market behind the model: HOLD with a concrete SELL AT target above the bid
-    pred = m.predict(90.12, 90.21, 500, p_market=0.30, feed_age_s=0.3)
-    sig = eng.decide(pred, Quotes(0.29, 0.31, 0.69, 0.71), 90.12, 90.21, 500, 400, pos)
+    # in profit below the zone: HOLD with a concrete SELL BETWEEN zone above the bid and its chance
+    pred = m.predict(90.12, 90.21, 560, p_market=0.30, feed_age_s=0.3)
+    sig = eng.decide(pred, Quotes(0.29, 0.31, 0.69, 0.71), 90.12, 90.21, 500, 400, pos, now=1000.0)
     assert sig.action in ("HOLD", "SELL")
     if sig.action == "HOLD":
-        assert sig.scalp["action"] == "SELL AT" and sig.scalp["target"] > 0.69
+        assert sig.scalp["action"] == "SELL BETWEEN" and sig.scalp["target"] > 0.69 < sig.scalp["target_high"]
+        assert sig.scalp["commit_zone"] == [sig.scalp["target"], sig.scalp["target_high"]]
+        assert 0 < sig.scalp["p_low"] <= 1 and sig.scalp["p_high"] <= sig.scalp["p_low"]
 
 
-def test_stop_does_not_sell_into_a_worthless_bid():
+def test_screenshot_premature_stop_is_now_a_hold_with_recovery_chance():
+    """$30 of DOWN at 24c; the bid slipped to 22c and the model gives DOWN ~30% with 8 min left. v7 said
+    SELL NOW 22c (-$4); the user held and sold at 42c later. Now: HOLD - SELL BETWEEN, with the chances."""
+    m = warmed_model()
+    eng = engine()
+    pos = Position("T", "DOWN", 125.0, 0.24, 0.0, amount=30.0, entry_fee=0.32)
+    pred = m.predict(90.26, 90.21, 540, p_market=0.77, feed_age_s=0.3)
+    assert pred.p_down <= eng.cfg.stop_prob  # the old stop rule would have fired
+    sig = eng.decide(pred, Quotes(0.76, 0.78, 0.22, 0.24), 90.26, 90.21, 480, 420, pos, now=1000.0)
+    assert sig.action == "HOLD" and sig.reasons == ["hold"]
+    sc = sig.scalp
+    assert sc["action"] == "SELL BETWEEN" and sc["pnl"] < 0
+    assert sc["breakeven"] > 0.24 and sc["target"] >= sc["breakeven"] + 0.02 - 1e-9 and sc["target_high"] > sc["target"]
+    assert sc["p_recover"] > 0.5 and 0.3 <= sc["p_low"] <= 0.7 and sc["p_high"] < sc["p_low"]
+    assert "chance of getting back to" in sc["text"] and "sell between" in sig.headline
+    # the bid reaches the committed zone later: SELL NOW, in the zone
+    pos.target, pos.target_high, pos.zone_ts = sc["target"], sc["target_high"], 1000.0
+    pred = m.predict(90.19, 90.21, 360, p_market=0.60, feed_age_s=0.3)
+    sig = eng.decide(pred, Quotes(0.59, 0.61, pos.target + 0.01, pos.target + 0.03), 90.19, 90.21, 300, 600, pos, now=1200.0)
+    assert sig.action == "SELL" and sig.reasons == ["zone"] and sig.scalp["action"] == "SELL NOW" and sig.scalp["pnl"] > 0
+
+
+def test_zone_low_never_chases_the_price_up_but_comes_down_when_unlikely():
+    m = warmed_model()
+    eng = engine()
+    pos = Position("T", "DOWN", 125.0, 0.24, 0.0, amount=30.0, entry_fee=0.32, target=0.35, target_high=0.64, zone_ts=990.0, high_bid=0.31)
+    pred = m.predict(90.225, 90.21, 420, p_market=0.70, feed_age_s=0.3)
+    q = Quotes(0.69, 0.71, 0.29, 0.31)
+    sig = eng.decide(pred, q, 90.225, 90.21, 360, 540, pos, now=1000.0)
+    assert sig.action == "HOLD" and sig.scalp["target"] == 0.35 and "commit_zone" not in sig.scalp  # within zone_refresh_s
+    sig = eng.decide(pred, q, 90.225, 90.21, 360, 540, pos, now=1040.0)
+    assert sig.scalp["target"] == 0.35  # the low end stays put even though the price climbed toward it
+    # 45 s before the close with the bid at 28c a 50c low is out of reach: the zone comes down (but stays a profit)
+    pos.target, pos.target_high, pos.zone_ts = 0.50, 0.70, 990.0
+    pred = m.predict(90.215, 90.21, 105, p_market=0.70, feed_age_s=0.3)
+    sig = eng.decide(pred, Quotes(0.70, 0.72, 0.28, 0.30), 90.215, 90.21, 45, 855, pos, now=1100.0)
+    assert sig.action in ("HOLD", "SELL")
+    zone = sig.scalp.get("commit_zone")
+    assert zone and zone[0] < 0.50 and zone[0] >= sig.scalp.get("breakeven", 0.25) and zone[1] >= zone[0] + 0.05 - 1e-9
+
+
+def test_give_up_only_when_recovery_is_nearly_hopeless_and_worth_the_click():
+    m = warmed_model()
+    eng = engine()
+    # $30 of UP at 55c; with 100 s left the price is 12c under the target and the bid is 8c:
+    # getting back to ~57c is nearly impossible -> salvage what is left (the only loss-taking sell)
+    pos = Position("T", "UP", 54.5, 0.55, 0.0, amount=30.0, entry_fee=0.5)
+    pred = m.predict(90.09, 90.21, 160, p_market=0.09, feed_age_s=0.3)
+    sig = eng.decide(pred, Quotes(0.08, 0.10, 0.90, 0.92), 90.09, 90.21, 100, 800, pos, now=1000.0)
+    assert sig.action == "SELL" and sig.reasons == ["give_up"]
+    assert sig.scalp["action"] == "SELL NOW" and sig.scalp["p_recover"] <= eng.cfg.give_up_prob and "salvage" in sig.scalp["text"]
+    # same picture but the bid is 1c: selling returns pennies -> lottery ticket, not a sell
+    pred = m.predict(90.05, 90.21, 160, p_market=0.02, feed_age_s=0.3)
+    sig = eng.decide(pred, Quotes(0.01, 0.03, 0.97, 0.99), 90.05, 90.21, 100, 800, pos, now=1000.0)
+    assert sig.action == "HOLD" and sig.reasons == ["lottery"]
+
+
+def test_model_flip_alone_never_sells_at_a_loss():
     m = warmed_model()
     eng = engine()
     pos = Position("T", "UP", 20, 0.55, 0.0)
-    # UP now ~35% by the model but the bid is 5c: selling locks in far more loss than the position is worth
-    pred = m.predict(90.17, 90.21, 300, p_market=0.06, feed_age_s=0.3)
+    # UP now ~35% by the model with the bid at 5c and 5 min left: no stop-loss, whatever the model thinks
+    pred = m.predict(90.17, 90.21, 360, p_market=0.06, feed_age_s=0.3)
     assert pred.p_final < 0.5
-    sig = eng.decide(pred, Quotes(0.05, 0.07, 0.93, 0.95), 90.17, 90.21, 300, 600, pos)
-    if pred.p_final <= eng.cfg.stop_prob:
-        assert sig.action == "HOLD" and sig.reasons == ["too_late_to_cut"]
+    sig = eng.decide(pred, Quotes(0.05, 0.07, 0.93, 0.95), 90.17, 90.21, 300, 600, pos, now=1000.0)
+    assert sig.action == "HOLD" and sig.reasons[0] in ("hold", "lottery")
 
 
 def test_rollover_lock_in():

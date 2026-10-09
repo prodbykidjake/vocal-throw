@@ -24,8 +24,8 @@ no_entry_first_s = 60           # no entries in the first minute of a window (ta
 late_entry_s = 60               # in the last N seconds only very lopsided entries are allowed
 late_entry_min_z = 2.0
 hold_to_settle_prob = 0.90      # with <= 2 min left and p >= this: hold, don't pay to exit
-stop_prob = 0.35                # if p for your side drops below this: sell
-profit_target = 0.20            # sell when the bid is this far above your entry and the edge is gone
+stop_prob = 0.35                # a plan is cancelled when the model's chance for its side drops to this (or 60% of what it was)
+profit_target = 0.20            # (legacy) fallback sell distance when no price paths can be simulated
 max_spread = 0.10               # yes_ask - yes_bid wider than this = don't trade
 settle_lag_s = 60               # settlement = close of the 1-min Pyth candle AT the close time (~60 s after trading stops)
 
@@ -40,6 +40,20 @@ miss_margin_cents = 4           # ask this far past the limit ...
 miss_seconds = 10               # ... for this long = missed
 cooldown_s = 30                 # after a missed/cancelled plan, before the next one
 settle_advice = "when_clearly_worse"   # or "never": always give a sell price
+
+# forward-looking exits: the position card says "HOLD · SELL BETWEEN low–high" with the chance of each,
+# from simulated price paths to the close. It only says SELL at a loss when the loss is nearly certain.
+zone_low_prob = 0.50            # low end of the sell zone = price reached with this probability before the close
+zone_high_prob = 0.20           # high end = price reached with this probability
+zone_refresh_s = 30             # re-plan the zone at most this often (up freely; down only when the old low is unlikely)
+zone_drop_prob = 0.25           # ... "unlikely" = under this chance of being reached
+zone_exclude_last_s = 30        # the zone ignores the last N s of trading (thin, binary)
+give_up_prob = 0.10             # sell at a loss only when the chance of getting back to breakeven is at or under this
+give_up_min_cash = 1.0          # ... and selling still returns at least this many dollars (else: lottery ticket)
+plan_min_chance = 0.30          # a plan's sell target must have at least this chance of being reached
+mc_paths = 2000                 # simulated price paths per evaluation
+basis_min_windows = 6           # apply a signed feed correction only after this many measured windows ...
+basis_min_t = 1.5               # ... and only when the bias is this many standard errors from zero
 
 [server]
 host = "127.0.0.1"
