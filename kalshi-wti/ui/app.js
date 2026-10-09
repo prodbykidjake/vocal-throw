@@ -110,10 +110,10 @@
   // ---------------------------------------------------------------- quick scalps card
   function renderQuick(s) {
     const q = s.quick || {}, call = q.call, box = $("quick-box");
-    const mins = (o) => Math.max(1, Math.round((o.horizon_s || 180) / 60));
+    const mins = (o) => (o.horizon_s || 180) >= 90 ? `${Math.round((o.horizon_s || 180) / 60)} min` : `${Math.round(o.horizon_s || 0)} s`;
     if (s.position) { box.textContent = "position open · quick scalps paused"; box.className = "quick-box"; $("quick-sub").textContent = ""; $("quick-actions").classList.add("hidden"); $("quick-options").textContent = ""; return; }
     if (call) {
-      box.textContent = `BUY ${call.side} @ ${fmtC(call.ask)} · sell at ${fmtC(call.target)}+ · ~${Math.round(call.p_pop * 20) * 5}% chance within ${mins(call)} min`;
+      box.textContent = `BUY ${call.side} @ ${fmtC(call.ask)} · sell at ${fmtC(call.target)}+ · ~${Math.round(call.p_pop * 20) * 5}% chance within ${mins(call)}`;
       box.className = "quick-box call " + call.side.toLowerCase();
       $("quick-sub").textContent = `$${Number(call.amount).toFixed(0)} ≈ ${call.shares} shares · ≈ ${fmtUsd(call.profit)} at the target after fees · model ${fmtP(call.p_side)} vs market ${fmtP(call.p_market)}`;
       $("quick-actions").classList.remove("hidden");
@@ -121,7 +121,7 @@
       box.textContent = "no quick scalp right now"; box.className = "quick-box"; $("quick-sub").textContent = "";
       $("quick-actions").classList.add("hidden");
     }
-    $("quick-options").textContent = (q.options || []).map((o) => `${o.side} @ ${fmtC(o.ask)}: ~${Math.round(o.p_pop * 20) * 5}% chance of ${fmtC(o.target)} within ${mins(o)} min`).join("   ·   ");
+    $("quick-options").textContent = (q.options || []).map((o) => `${o.side} @ ${fmtC(o.ask)}: ~${Math.round(o.p_pop * 20) * 5}% chance of ${fmtC(o.target)} within ${mins(o)}`).join("   ·   ");
   }
   $("quick-buy").addEventListener("click", () => {
     const call = state && state.quick && state.quick.call; if (!call) return;

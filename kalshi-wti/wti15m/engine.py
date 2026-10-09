@@ -491,9 +491,11 @@ class Engine:
             if live is not None and live["p_pop"] >= self.cfg.trading.quick_min_chance - 0.05 and abs(live["ask"] - cur["ask"]) <= 0.02:
                 self._quick = {"call": live, "options": options, "since": self._quick["since"]}
                 return
-        if best is not None and (cur is None or best["side"] != cur["side"] or abs(best["ask"] - cur["ask"]) > 0.02):
+        if best is not None and (cur is None or best["side"] != cur["side"]) and now - self._last_notified.get("QUICK", 0.0) >= 20:
+            self._last_notified["QUICK"] = now
+            within = f"{best['horizon_s'] / 60:.0f} min" if best["horizon_s"] >= 90 else f"{best['horizon_s']:.0f} s"
             self.log_event("quick", f"quick scalp: BUY {best['side']} @ {cents(best['ask'])} · sell at {cents(best['target'])}+ · "
-                                    f"~{pct5(best['p_pop'])} chance within {best['horizon_s'] // 60:.0f} min")
+                                    f"~{pct5(best['p_pop'])} chance within {within}")
         self._quick = {"call": best, "options": options, "since": now if (best is None or cur is None or best["side"] != cur["side"]) else self._quick["since"]}
 
     def _calm_wait(self, sig: Signal, now: float, hold_s: float = 4.0) -> Signal:
