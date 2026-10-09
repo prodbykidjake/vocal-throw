@@ -203,8 +203,8 @@ class AutoTrader:
             return f"daily buy limit (${a.max_day_dollars:.0f}) reached"
         if self.window_bought + amount > a.max_window_dollars + 1e-9:
             return f"window buy limit (${a.max_window_dollars:.0f}) reached"
-        if self.balance is not None and self.balance < amount + 0.5:
-            return f"balance ${self.balance:.2f} is under the order size"
+        if self.balance is not None and self.balance < 1.5:
+            return f"balance ${self.balance:.2f} is too small to trade"
         return None
 
     async def _maybe_buy(self, now: float, m, quotes: Quotes):
@@ -231,6 +231,8 @@ class AutoTrader:
             self.blocked = ""
             return
         amount = min(cand["amount"], self.a.max_order_dollars, self.cfg.trading.max_trade_dollars)
+        if self.balance is not None:
+            amount = min(amount, round(self.balance - 0.5, 2))  # a plan bigger than the account is cut to what is there
         why = self._gate(now, amount, tau)
         if why:
             self.blocked = why

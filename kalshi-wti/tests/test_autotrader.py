@@ -119,8 +119,20 @@ async def test_limits_and_pause_block_buys(tmp_path):
         assert engine.position is None and trader.blocked.startswith("paused")
         trader.resume()
         assert not trader.paused
+        # a plan bigger than the account is cut to the balance, not skipped
+        cfg.auto.max_order_dollars = 50.0
+        broker.cash = 6.0
+        trader.synced_ts = 0
+        trader.attempted.clear()
+        await engine.tracker.poll_once()
+        engine.step()
+        _plan(engine).id = 4
+        await trader.tick(now + 3)
+        assert engine.position is not None and store.orders(1)[0]["amount"] == pytest.approx(5.5)
+        engine.cancel_position()
+        broker.pos.clear()
         st = trader.as_dict(now + 2)
-        assert st["mode"] == "sim" and st["limits"]["order"] == 4.0 and isinstance(st["orders"], list)
+        assert st["mode"] == "sim" and st["limits"]["order"] == 50.0 and isinstance(st["orders"], list)
     finally:
         await feed.stop()
         store.close()
