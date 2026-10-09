@@ -78,7 +78,7 @@ class TradingCfg:
     scalp_min_chance: float = 0.40  # the sell level must have at least this simulated chance of being reached
     scalp_min_score: float = 0.50  # chance + tilt (model vs market, momentum) must reach this
     # --- quick scalps card: cheap contracts, a few cents of profit, within a few minutes (riskier, less confident) ---
-    quick_scalps: bool = True
+    quick_scalps: bool = False  # retired: the quick-scalps card lost money; plans only
     quick_max_ask: float = 0.35  # only contracts at or under this price
     quick_target_cents: float = 3.0  # sell at least this much above the limit ...
     quick_target_pct: float = 0.15  # ... or this fraction of the price, whichever is more
@@ -99,13 +99,13 @@ class AutoCfg:
     api_key_id: str = ""  # Kalshi > Settings > API keys (or env KALSHI_API_KEY_ID)
     private_key_path: str = ""  # the .pem Kalshi gave you with that key (or env KALSHI_PRIVATE_KEY_PATH); never commit it
     take_plans: bool = True  # buy the signal card's plans at their limit
-    take_quick: bool = True  # buy the quick-scalps card's calls
+    take_quick: bool = False  # retired with the quick-scalps card
     max_order_dollars: float = 20.0  # cap on one buy
     max_window_dollars: float = 50.0  # bought on one 15-minute window
     max_day_dollars: float = 300.0  # bought per calendar day
     max_day_loss: float = 40.0  # realized loss in a day that stops buying until tomorrow
     max_losses_in_a_row: int = 4  # stop buying after this many losing trades in a row (resume = manual)
-    buy_ttl_s: float = 20.0  # an unfilled buy is cancelled after this (quick scalps: 8 s)
+    buy_ttl_s: float = 20.0  # an unfilled buy is cancelled after this
     sell_slip_cents: float = 3.0  # a sell takes the book down to bid − this many cents
     sync_s: float = 5.0  # how often to read your Kalshi balance and positions
     fractional: bool = True  # the market allows fractional contracts (set false if orders are rejected over the count)

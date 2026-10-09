@@ -90,8 +90,6 @@
     }
     // auto trading
     renderAuto(s);
-    // quick scalps
-    renderQuick(s);
     // position
     renderPosition(s);
     const paper = s.paper;
@@ -124,14 +122,14 @@
     $("auto-note").textContent = a.mode === "live" ? "(real orders on your Kalshi account)" : a.mode === "sim" ? "(simulated account on the demo market)" : "(dry run: real quotes, simulated fills · nothing is sent to Kalshi)";
     $("auto-text").textContent = a.last_text || "";
     const d = a.day || {}, lim = a.limits || {};
-    $("auto-line").textContent = `balance ${a.balance == null ? "--" : "$" + Number(a.balance).toFixed(2)} · today bought $${Number(d.bought || 0).toFixed(2)} of $${lim.day} · today P&L ${fmtUsd(d.pnl || 0)} (stop at -$${lim.day_loss}) · this window $${Number(a.window_bought || 0).toFixed(2)} of $${lim.window} · max $${lim.order}/order · ${lim.take_plans ? "plans" : ""}${lim.take_plans && lim.take_quick ? " + " : ""}${lim.take_quick ? "quick scalps" : ""}` +
+    $("auto-line").textContent = `balance ${a.balance == null ? "--" : "$" + Number(a.balance).toFixed(2)} · today bought $${Number(d.bought || 0).toFixed(2)} of $${lim.day} · today P&L ${fmtUsd(d.pnl || 0)} (stop at -$${lim.day_loss}) · this window $${Number(a.window_bought || 0).toFixed(2)} of $${lim.window} · max $${lim.order}/order · ${lim.take_plans ? "buys the signal card's plans" : "buying off"}` +
       (d.losses_row ? ` · ${d.losses_row} loss${d.losses_row > 1 ? "es" : ""} in a row` : "") + (a.sync_age_s != null ? ` · account synced ${a.sync_age_s.toFixed(0)}s ago` : "") + (a.api ? ` · ${a.api}` : "");
     const o = a.order, kp = a.kalshi_position;
     let line = "";
     if (o) line = `open order: ${o.action.toUpperCase()} ${o.side} ${o.count} shares at ${fmtC(o.price)} ($${o.amount}) · filled ${o.filled} · ${o.age_s}s · ${o.reason}`;
     else if (a.paused) line = `paused: ${a.pause_reason}`;
     else if (a.blocked) line = `not buying: ${a.blocked}`;
-    else line = s.position ? "position open · will sell when the card says SELL NOW" : "watching for a plan or a quick scalp";
+    else line = s.position ? "position open · will sell when the card says SELL NOW" : "watching for a plan on the signal card";
     if (kp) line += ` · Kalshi shows ${kp.qty} ${kp.side} ($${kp.exposure} in)`;
     if (a.sync_error) line += ` · sync error: ${a.sync_error}`;
     $("auto-order").textContent = line;
@@ -144,32 +142,6 @@
   $("auto-pause").addEventListener("click", () => post("/api/auto/pause", {}));
   $("auto-resume").addEventListener("click", () => post("/api/auto/resume", {}));
   $("auto-stop").addEventListener("click", () => { if (confirm("Cancel the open order and pause auto trading?")) post("/api/auto/stop", {}); });
-
-  // ---------------------------------------------------------------- quick scalps card
-  function renderQuick(s) {
-    const q = s.quick || {}, call = q.call, box = $("quick-box");
-    const mins = (o) => (o.horizon_s || 180) >= 90 ? `${Math.round((o.horizon_s || 180) / 60)} min` : `${Math.round(o.horizon_s || 0)} s`;
-    if (s.position) { box.textContent = "position open · quick scalps paused"; box.className = "quick-box"; $("quick-sub").textContent = ""; $("quick-actions").classList.add("hidden"); $("quick-options").textContent = ""; return; }
-    if (call) {
-      box.textContent = `BUY ${call.side} @ ${fmtC(call.ask)} · sell at ${fmtC(call.target)}+ · ~${Math.round(call.p_pop * 20) * 5}% chance within ${mins(call)}`;
-      box.className = "quick-box call " + call.side.toLowerCase();
-      $("quick-sub").textContent = `$${Number(call.amount).toFixed(0)} ≈ ${call.shares} shares · ≈ ${fmtUsd(call.profit)} at the target after fees · ~${Math.round(call.p_big * 20) * 5}% chance of ${fmtC(call.big)} before the close · model ${fmtP(call.p_side)} vs market ${fmtP(call.p_market)}`;
-      $("quick-actions").classList.remove("hidden");
-    } else {
-      box.textContent = "no quick scalp right now"; box.className = "quick-box"; $("quick-sub").textContent = "";
-      $("quick-actions").classList.add("hidden");
-    }
-    $("quick-options").textContent = (q.options || []).map((o) => `${o.side} @ ${fmtC(o.ask)}: ~${Math.round(o.p_pop * 20) * 5}% chance of ${fmtC(o.target)} within ${mins(o)}, ~${Math.round(o.p_big * 20) * 5}% of ${fmtC(o.big)} by the close`).join("   ·   ");
-  }
-  $("quick-buy").addEventListener("click", () => {
-    const call = state && state.quick && state.quick.call; if (!call) return;
-    pendingSide = call.side;
-    const f = $("pos-form"); f.dataset.touched = "1"; f.dataset.target = String(call.target);
-    $("pos-side-label").textContent = call.side; $("pos-side-label").className = "pill " + (call.side === "UP" ? "BUY-UP" : "BUY-DOWN");
-    f.price_cents.value = (call.ask * 100).toFixed(1); f.amount.value = Number(call.amount).toFixed(2);
-    $("side-buttons").classList.add("hidden"); f.classList.remove("hidden"); f.amount.focus();
-    $("position-card").scrollIntoView({ behavior: "smooth", block: "center" });
-  });
 
   // ---------------------------------------------------------------- position card
   let pendingSide = null;

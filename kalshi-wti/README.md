@@ -97,14 +97,9 @@ automatically; nothing to click.
   confirmed setup cannot become a plan (not enough room to scalp, too little chance of reaching the target,
   model and Kalshi's odds too far apart). A refusal is held on the card instead of being reworded every
   second, and a setup refused in the last minute does not start a new countdown.
-- **Quick scalps** (since v8.4, the card under the signal card): for every side priced at or under 35¢ it
-  shows the simulated chance that the bid pops at least 3¢ (or 15%) within the next 3 minutes, and calls the
-  best one when that chance is at least 35% (recent price action is not a veto here: a sharp move away from
-  the target is often the setup, the cheap side only has to come part of the way back), with the chance of
-  the price doubling before the close shown next to it:
-  `BUY DOWN @ 31¢ · sell at 35¢+ · ~55% chance within 3 min`, sized at $5. It is riskier and less confident
-  than a plan on purpose; keep a hand on the sell button. "I bought this" pre-fills the position form and
-  makes that sell level the low end of your zone. The call is held for 5 s so it does not spin.
+- The **quick-scalps card** of v8.4–v9 (cheap sides, a few cents within minutes) is retired: it lost in live use.
+  The code stays behind `quick_scalps` / `take_quick`, both off; the dashboard no longer shows it and the auto
+  trader never buys from it.
 - **Your position** (built for scalping): tap **UP** or **DOWN**, the price box fills with the live ask
   (edit it if your fill differed), type the dollars you spent, press Enter. The card then tracks it like
   Kalshi's sell sheet: shares, live sell price, **cash out** after fees and P&L, updating every second.
@@ -158,16 +153,16 @@ The app can place the orders itself, no button presses. Setup, in this order:
 3. `python -m wti15m auth` prints your balance and open positions. If it says 401/403, the key id or file is wrong
    (or the Mac's clock is off).
 4. `python -m wti15m serve` as usual. With `dry_run = true` the **Auto trading** card runs the whole thing against a
-   simulated account on the real quotes: it "buys" plans and quick scalps, "sells" on SELL NOW, keeps a P&L. Nothing
+   simulated account on the real quotes: it "buys" plans, "sells" on SELL NOW, keeps a P&L. Nothing
    is sent to Kalshi. Watch it for a day. When the log looks right, set `dry_run = false` and restart: the card turns
    red and says LIVE.
 
 What it does every second (`wti15m/autotrader.py`):
 
-- **Buys** one order when the signal card has a valid plan (ask at or a hair over the limit) or the quick-scalps card
-  has a call: a limit order at the card's price for the card's dollars, capped by `max_order_dollars`. It rests for
-  `buy_ttl_s` (20 s; quick scalps 8 s) and is cancelled if unfilled, if the plan dies, or if the window ends. A fill
-  opens the position card at the real fill price and fee, with the plan's sell zone.
+- **Buys** one order when the signal card has a valid plan (ask at or a hair over the limit): a limit order at the
+  plan's limit for the plan's dollars, capped by `max_order_dollars`. It rests for `buy_ttl_s` (20 s) and is
+  cancelled if unfilled, if the plan dies, or if the window ends. A fill opens the position card at the real fill
+  price and fee, with the plan's sell zone. Nothing else is bought.
 - **Sells** when the position card says SELL NOW: one immediate-or-cancel, reduce-only order down to
   `bid − sell_slip_cents` (3¢), so it takes whatever is on the book. A partial fill takes part of the position off and
   the next SELL NOW sells the rest. A position the card wants to hold to settlement is left alone; Kalshi pays it out.
@@ -176,7 +171,7 @@ What it does every second (`wti15m/autotrader.py`):
   already shows a position on the window, and never while an order is open.
 - **Limits** (all in `[auto]`): `max_order_dollars` (20), `max_window_dollars` (50), `max_day_dollars` (300),
   `max_day_loss` (40: realized loss in a day that stops buying until tomorrow), `max_losses_in_a_row` (4: stops
-  buying until you press RESUME). `take_plans` / `take_quick` choose which cards it trades.
+  buying until you press RESUME). `take_plans = false` turns buying off while sells keep running.
 - **PAUSE** stops new buys (sells still run, so an open position is still managed). **STOP** cancels the open order
   and pauses. The card shows the balance, today's buys and P&L, the open order, the last fills, and the exact reason
   when it is not buying. Live mode refuses to start unless the dashboard is bound to `127.0.0.1`.
