@@ -106,7 +106,8 @@ automatically; nothing to click.
   loss-taking case, when the chance of getting back to breakeven is at or under `give_up_prob` (10%) and
   the sale still returns something worth clicking for; otherwise a hopeless position is called a lottery
   ticket and left alone. Every SELL NOW latches: a 1¢ wobble back across its threshold does not flip the
-  box back to HOLD. **HOLD TO SETTLEMENT** appears only in the last two minutes with ≥ 90% and selling
+  box back to HOLD, a SELL NOW appears only once its rule has held for two seconds, and it stays until the
+  rule has been gone for two seconds; the paper trade that mirrors each plan follows the same rules. **HOLD TO SETTLEMENT** appears only in the last two minutes with ≥ 90% and selling
   clearly worse. "I sold at the bid" records the exit at the live price in one click; "I sold at this"
   takes the price you actually got.
 - **History**: every window with target, result, model Up at 10 and 3 minutes, market Up at close,

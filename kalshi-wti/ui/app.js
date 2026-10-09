@@ -287,7 +287,7 @@
       : `<div class="sub">No ended plans yet.</div>`;
     const l = d.calibrator || {};
     $("learner").innerHTML = `<div>Trained on ${l.n_windows || 0} settled windows (${l.n_samples || 0} snapshots) · weight in final answer ${Math.round((l.shrink || 0) * 100)}%</div>` +
-      `<div class="sub">Feed basis allowance: $${(d.basis_error || 0).toFixed(2)}` + (d.basis ? ` · ${d.basis.source}: measured bias ${(d.basis.raw * 100).toFixed(1)}¢ over ${d.basis.n} windows, ${Math.abs(d.basis.applied) >= 0.005 ? "applied as " + (-d.basis.applied * 100).toFixed(1) + "¢" : "not applied (needs 6+ consistent windows)"}` : "") + `</div>` +
+      `<div class="sub">Feed basis allowance: $${(d.basis_error || 0).toFixed(2)}` + (d.basis ? ` · ${d.basis.source}: measured bias ${(d.basis.raw * 100).toFixed(1)}¢ over ${d.basis.n} windows, ${d.basis.consistent ? "applied as " + (-d.basis.applied * 100).toFixed(1) + "¢" : "not applied (needs " + (d.basis.min_windows || 6) + "+ consistent windows)"}` : "") + `</div>` +
       `<pre class="pre">${esc(JSON.stringify(l.weights || {}, null, 1))}</pre>`;
   }
   async function loadRules() {

@@ -45,8 +45,7 @@ class Engine:
                                      on_event=self.on_market_event)
         self.position: Position | None = _position_from_row(store.get_open_position())
         self.plans = PlanTracker(t, self.fees, recent_amounts_fn=lambda: store.recent_amounts(10), decider=self.decider)
-        self._sell_streak = 0
-        self._last_hold_sig: Signal | None = None
+        self._paper_pos: Position | None = None  # the paper trade's Position, kept across seconds so its latches work
         self._wait_sig: Signal | None = None  # WAIT text is held for a few seconds so the card reads calmly
         self._wait_since = 0.0
         for row in store.open_plans():  # plans from a previous run cannot be judged any more
@@ -78,6 +77,12 @@ class Engine:
         if source == self._basis_source:
             return
         self._basis_source = source
+        if self.store.get_state(f"basis_n:{source}") is None:
+            # a database from before the consistency gate: re-derive the shift from the stored errors (and gate it)
+            if self.store.feed_errors(source, 1):
+                self._update_basis_error(source)
+            else:
+                self.store.set_state(f"basis_signed:{source}", "0")
         self.model.basis_error = _float(self.store.get_state(f"basis_error:{source}"), 0.0)
         self.model.basis_signed = _float(self.store.get_state(f"basis_signed:{source}"), 0.0)
 
@@ -300,6 +305,7 @@ class Engine:
         self.store.set_state(f"basis_signed:{source}", str(applied))
         self.store.set_state(f"basis_raw:{source}", str(bias))
         self.store.set_state(f"basis_n:{source}", str(n))
+        self.store.set_state(f"basis_consistent:{source}", "1" if consistent else "0")
         if source == self._basis_source:
             self.model.basis_error = basis
             self.model.basis_signed = applied
@@ -347,11 +353,14 @@ class Engine:
         pid = self.store.open_position(m.ticker, side, qty, price, now, note, amount, entry_fee, high)
         zone_ts = 0.0
         if target is not None:
+            # the plan's zone was sized for its limit; a fill at a worse price must not put the low under breakeven
+            be = self.decider.breakeven(Position(m.ticker, side, qty, price, now, pid, amount, entry_fee, high))
+            target = max(target, round(be + 0.02, 2))
+            target_high = max(target_high if target_high else min(0.95, target + 0.10), round(target + 0.05, 2))
+            target_high = min(target_high, max(0.95, round(target + 0.02, 3)))
             zone_ts = now
-            self.store.update_position_zone(pid, target, target_high if target_high else min(0.95, target + 0.10), zone_ts)
+            self.store.update_position_zone(pid, target, target_high, zone_ts)
         self.position = Position(m.ticker, side, qty, price, now, pid, amount, entry_fee, high, target, target_high, zone_ts)
-        self._sell_streak = 0
-        self._last_hold_sig = None
         self.log_event("you", f"you bought ${amount:.2f} of {side} @ {cents(price)} = {qty_text(qty)} shares on {m.ticker}"
                               + (f" · sell zone {cents(target)}–{cents(target_high)}" if target else ""))
         return self.position
@@ -476,22 +485,23 @@ class Engine:
 
     def _stable_position_signal(self, raw: Signal, pos: Position, now: float) -> Signal:
         """Persist the sell zone the decider committed (set once, then re-planned at most every zone_refresh_s)
-        and require SELL NOW to hold for 2 consecutive seconds."""
-        sc = raw.scalp or {}
+        and remember what was shown: the decider's latches and its two-second debounce key on the rule shown
+        last second and on the rule that fired last second."""
+        self._remember(pos, raw, now)
+        return raw
+
+    def _remember(self, pos: Position, sig: Signal, now: float, paper: bool = False):
+        sc = sig.scalp or {}
         zone = sc.get("commit_zone")
         if zone and len(zone) == 2:
             pos.target, pos.target_high, pos.zone_ts = float(zone[0]), float(zone[1]), now
-            self.store.update_position_zone(pos.id, pos.target, pos.target_high, now)
-            self.log_event("zone", f"sell zone for your {pos.side}: {cents(pos.target)}–{cents(pos.target_high)}")
-        pos.last_reason = raw.reasons[0] if raw.reasons else None  # the decider's latch for next second
-        if raw.action == "SELL":
-            self._sell_streak += 1
-            if self._sell_streak < 2 and self._last_hold_sig is not None:
-                return self._last_hold_sig
-            return raw
-        self._sell_streak = 0
-        self._last_hold_sig = raw
-        return raw
+            if paper:
+                self.store.set_state(f"paper_zone:{pos.ticker}", f"{pos.target},{pos.target_high},{now}")
+            else:
+                self.store.update_position_zone(pos.id, pos.target, pos.target_high, now)
+                self.log_event("zone", f"sell zone for your {pos.side}: {cents(pos.target)}–{cents(pos.target_high)}")
+        pos.last_reason = sig.reasons[0] if sig.reasons else None
+        pos.last_raw_reason = sig.triggers.get("raw_rule", pos.last_reason)
 
     def _on_plan_event(self, event: PlanEvent, now: float, quotes: Quotes):
         plan = event.plan
@@ -539,27 +549,33 @@ class Engine:
         """Paper trades are opened when a plan is created (fill assumed at the limit) and managed like a position."""
         paper = self.store.open_paper_trade_for(m.ticker)
         if paper is None:
+            self._paper_pos = None
             return
         if tau is not None and tau <= 0:
             return  # settlement will close it
-        low = high = None
-        zone_ts = 0.0
-        raw_zone = self.store.get_state(f"paper_zone:{m.ticker}")
-        if raw_zone:
-            parts = raw_zone.split(",")
-            if len(parts) == 3:
-                low, high, zone_ts = _float(parts[0], 0.0) or None, _float(parts[1], 0.0) or None, _float(parts[2], 0.0)
-        pos = Position(m.ticker, paper["side"], float(paper["size"]), paper["entry_price"], paper["entry_ts"], paper["id"],
-                       amount=paper["entry_price"] * paper["size"], entry_fee=paper["entry_fee"] or 0.0, target=low,
-                       target_high=high, zone_ts=zone_ts)
+        pos = self._paper_pos
+        if pos is None or pos.id != paper["id"]:
+            low = high = None
+            zone_ts = 0.0
+            raw_zone = self.store.get_state(f"paper_zone:{m.ticker}")
+            if raw_zone:
+                parts = raw_zone.split(",")
+                if len(parts) == 3:
+                    low, high, zone_ts = _float(parts[0], 0.0) or None, _float(parts[1], 0.0) or None, _float(parts[2], 0.0)
+            pos = Position(m.ticker, paper["side"], float(paper["size"]), paper["entry_price"], paper["entry_ts"], paper["id"],
+                           amount=paper["entry_price"] * paper["size"], entry_fee=paper["entry_fee"] or 0.0, target=low,
+                           target_high=high, zone_ts=zone_ts)
+            self._paper_pos = pos
+        bid = quotes.bid(pos.side)
+        if bid is not None and (pos.high_bid is None or bid > pos.high_bid):
+            pos.high_bid = bid
         psig = self.decider.decide(pred, quotes, price, m.strike, tau, elapsed, pos, now)
-        zone = (psig.scalp or {}).get("commit_zone")
-        if zone and len(zone) == 2:
-            self.store.set_state(f"paper_zone:{m.ticker}", f"{zone[0]},{zone[1]},{now}")
+        self._remember(pos, psig, now, paper=True)  # same zone, latches and two-second debounce as your card
         if psig.action == "SELL" and psig.price is not None:
             fee = taker_fee(psig.price, pos.qty, self.fees)
             self.store.close_paper_trade(paper["id"], now, psig.price, fee, psig.reasons[0] if psig.reasons else "sell")
             self.log_event("paper", f"paper SELL {qty_text(pos.qty)} {pos.side} @ {cents(psig.price)} ({psig.reasons[0] if psig.reasons else ''})")
+            self._paper_pos = None
 
     # ------------------------------------------------------------------ state for the UI
     def log_event(self, kind: str, text: str):
@@ -576,7 +592,9 @@ class Engine:
             src = self._basis_source or ""
             data["basis"] = {"source": src, "applied": self.model.basis_signed,
                              "raw": _float(self.store.get_state(f"basis_raw:{src}"), 0.0),
-                             "n": int(_float(self.store.get_state(f"basis_n:{src}"), 0.0))}
+                             "n": int(_float(self.store.get_state(f"basis_n:{src}"), 0.0)),
+                             "consistent": self.store.get_state(f"basis_consistent:{src}") == "1",
+                             "min_windows": self.cfg.trading.basis_min_windows}
             data["plans"] = self.store.plan_stats()
             self._stats_cache = (time.time(), data)
             return data

@@ -23,6 +23,17 @@ def engine(**over):
     return DecisionEngine(cfg, FeeSchedule())
 
 
+def shown(eng, pred, q, price, strike, left, elapsed, pos, now, n=2):
+    """What the card shows after n consecutive seconds of the same picture (the engine remembers the shown and
+    the raw rule on the position between seconds; a SELL needs two seconds in a row before it shows)."""
+    sig = None
+    for i in range(n):
+        sig = eng.decide(pred, q, price, strike, left, elapsed, pos, now + i)
+        pos.last_reason = sig.reasons[0]
+        pos.last_raw_reason = sig.triggers.get("raw_rule", sig.reasons[0])
+    return sig
+
+
 def test_kelly_fraction():
     assert abs(kelly_fraction(0.6, 0.5) - 0.2) < 1e-9
     assert kelly_fraction(0.4, 0.5) == 0.0
@@ -135,7 +146,10 @@ def test_screenshot_premature_stop_is_now_a_hold_with_recovery_chance():
     # the bid reaches the committed zone later: SELL NOW, in the zone
     pos.target, pos.target_high, pos.zone_ts = sc["target"], sc["target_high"], 1000.0
     pred = m.predict(90.19, 90.21, 360, p_market=0.60, feed_age_s=0.3)
-    sig = eng.decide(pred, Quotes(0.59, 0.61, pos.target + 0.01, pos.target + 0.03), 90.19, 90.21, 300, 600, pos, now=1200.0)
+    q = Quotes(0.59, 0.61, pos.target + 0.01, pos.target + 0.03)
+    first = eng.decide(pred, q, 90.19, 90.21, 300, 600, pos, now=1200.0)
+    assert first.action == "HOLD" and first.triggers["raw_rule"] == "zone"  # one second is not enough (debounce)
+    sig = shown(eng, pred, q, 90.19, 90.21, 300, 600, pos, now=1200.0)
     assert sig.action == "SELL" and sig.reasons == ["zone"] and sig.scalp["action"] == "SELL NOW" and sig.scalp["pnl"] > 0
 
 
@@ -165,12 +179,13 @@ def test_give_up_only_when_recovery_is_nearly_hopeless_and_worth_the_click():
     # getting back to ~57c is nearly impossible -> salvage what is left (the only loss-taking sell)
     pos = Position("T", "UP", 54.5, 0.55, 0.0, amount=30.0, entry_fee=0.5)
     pred = m.predict(90.09, 90.21, 160, p_market=0.09, feed_age_s=0.3)
-    sig = eng.decide(pred, Quotes(0.08, 0.10, 0.90, 0.92), 90.09, 90.21, 100, 800, pos, now=1000.0)
+    sig = shown(eng, pred, Quotes(0.08, 0.10, 0.90, 0.92), 90.09, 90.21, 100, 800, pos, now=1000.0)
     assert sig.action == "SELL" and sig.reasons == ["give_up"]
     assert sig.scalp["action"] == "SELL NOW" and sig.scalp["p_recover"] <= eng.cfg.give_up_prob and "salvage" in sig.scalp["text"]
     # same picture but the bid is 1c: selling returns pennies -> lottery ticket, not a sell
+    pos.last_reason = pos.last_raw_reason = None
     pred = m.predict(90.05, 90.21, 160, p_market=0.02, feed_age_s=0.3)
-    sig = eng.decide(pred, Quotes(0.01, 0.03, 0.97, 0.99), 90.05, 90.21, 100, 800, pos, now=1000.0)
+    sig = shown(eng, pred, Quotes(0.01, 0.03, 0.97, 0.99), 90.05, 90.21, 100, 800, pos, now=1000.0)
     assert sig.action == "HOLD" and sig.reasons == ["lottery"]
 
 
@@ -190,8 +205,8 @@ def test_rollover_lock_in():
     eng = engine()
     pos = Position("T", "UP", 100, 0.02, 0.0, amount=2.0, high_bid=0.10)
     pred = m.predict(90.24, 90.21, 400, p_market=0.07, feed_age_s=0.3)
-    sig = eng.decide(pred, Quotes(0.06, 0.08, 0.92, 0.94), 90.24, 90.21, 400, 500, pos)
-    # bid 0.06 is 40% off the 0.10 high while still in profit -> lock it in (unless the model says the market overpays, also a SELL)
+    sig = shown(eng, pred, Quotes(0.06, 0.08, 0.92, 0.94), 90.24, 90.21, 400, 500, pos, now=1000.0)
+    # bid 0.06 is 40% off the 0.10 high while still in profit -> lock it in (or it is already inside the zone: also a SELL)
     assert sig.action == "SELL" and sig.scalp["action"] == "SELL NOW"
 
 
@@ -236,27 +251,29 @@ def test_sell_rules_latch_instead_of_flickering():
     # zone latch: in the zone at 35c, a 1.5c dip under it keeps SELL NOW; a 5c dip does not
     pos = Position("T", "DOWN", 125.0, 0.24, 0.0, amount=30.0, entry_fee=0.32, target=0.35, target_high=0.64, zone_ts=990.0, high_bid=0.35)
     pred = m.predict(90.19, 90.21, 360, p_market=0.64, feed_age_s=0.3)
-    sig = eng.decide(pred, Quotes(0.64, 0.66, 0.35, 0.37), 90.19, 90.21, 300, 600, pos, now=1000.0)
+    sig = shown(eng, pred, Quotes(0.64, 0.66, 0.35, 0.37), 90.19, 90.21, 300, 600, pos, now=1000.0)
     assert sig.action == "SELL" and sig.reasons == ["zone"]
-    pos.last_reason = "zone"
-    sig = eng.decide(pred, Quotes(0.655, 0.675, 0.335, 0.355), 90.19, 90.21, 300, 600, pos, now=1001.0)
+    sig = shown(eng, pred, Quotes(0.655, 0.675, 0.335, 0.355), 90.19, 90.21, 300, 600, pos, now=1002.0)
     assert sig.action == "SELL" and sig.reasons == ["zone"] and "dipped" in sig.headline
-    sig = eng.decide(pred, Quotes(0.69, 0.71, 0.30, 0.32), 90.19, 90.21, 300, 600, pos, now=1002.0)
+    # a real drop: one second keeps the SELL (debounce), the second second lets go
+    sig = eng.decide(pred, Quotes(0.69, 0.71, 0.30, 0.32), 90.19, 90.21, 300, 600, pos, now=1004.0)
+    assert sig.action == "SELL" and sig.triggers["raw_rule"] == "hold"
+    sig = shown(eng, pred, Quotes(0.69, 0.71, 0.30, 0.32), 90.19, 90.21, 300, 600, pos, now=1004.0)
     assert sig.action == "HOLD"
     # rollover re-arms only on a new high: once ignored, the same dip does not nag again
     pos = Position("T", "UP", 136.0, 0.22, 0.0, amount=30.0, entry_fee=0.3, target=0.41, target_high=0.79, zone_ts=990.0, high_bid=0.36)
     pred = m.predict(90.17, 90.21, 500, p_market=0.28, feed_age_s=0.3)
     q = Quotes(0.27, 0.29, 0.71, 0.73)
-    sig = eng.decide(pred, q, 90.17, 90.21, 440, 460, pos, now=1000.0)
+    first = eng.decide(pred, q, 90.17, 90.21, 440, 460, pos, now=1000.0)
+    assert first.action == "HOLD" and pos.rollover_ref is None  # a hidden first second must not disarm the rule
+    sig = shown(eng, pred, q, 90.17, 90.21, 440, 460, pos, now=1000.0)
     assert sig.action == "SELL" and sig.reasons == ["rollover"] and pos.rollover_ref == 0.36
-    pos.last_reason = "rollover"
-    sig = eng.decide(pred, Quotes(0.32, 0.34, 0.66, 0.68), 90.17, 90.21, 440, 460, pos, now=1001.0)
+    sig = shown(eng, pred, Quotes(0.32, 0.34, 0.66, 0.68), 90.17, 90.21, 440, 460, pos, now=1002.0)
     assert sig.action == "HOLD"  # recovered above 85% of the high: back to the zone plan
-    pos.last_reason = "hold"
-    sig = eng.decide(pred, q, 90.17, 90.21, 440, 460, pos, now=1002.0)
+    sig = shown(eng, pred, q, 90.17, 90.21, 440, 460, pos, now=1004.0, n=3)
     assert sig.action == "HOLD"  # same dip again, no new high: not re-armed
     pos.high_bid = 0.40
-    sig = eng.decide(pred, Quotes(0.29, 0.31, 0.69, 0.71), 90.17, 90.21, 440, 460, pos, now=1003.0)
+    sig = shown(eng, pred, Quotes(0.29, 0.31, 0.69, 0.71), 90.17, 90.21, 440, 460, pos, now=1007.0)
     assert sig.action == "SELL" and sig.reasons == ["rollover"]
 
 
@@ -289,10 +306,30 @@ def test_last_seconds_take_the_profit_but_never_a_loss():
     # in profit with 20 s left and a zone that is out of reach: the card says take the profit before the close
     pos = Position("T", "DOWN", 125.0, 0.24, 0.0, amount=30.0, entry_fee=0.32, target=0.50, target_high=0.70, zone_ts=900.0, high_bid=0.33)
     pred = m.predict(90.20, 90.21, 80, p_market=0.67, feed_age_s=0.3)
-    sig = eng.decide(pred, Quotes(0.66, 0.68, 0.32, 0.34), 90.20, 90.21, 20, 880, pos, now=1000.0)
+    sig = shown(eng, pred, Quotes(0.66, 0.68, 0.32, 0.34), 90.20, 90.21, 20, 880, pos, now=1000.0)
     assert sig.action == "SELL" and sig.reasons == ["zone"] and "before the close" in sig.headline and sig.scalp["pnl"] > 0
     # under water with 20 s left and a real chance of winning: no sell, and the chance shown is at least the win chance
     pos = Position("T", "DOWN", 125.0, 0.24, 0.0, amount=30.0, entry_fee=0.32, target=0.35, target_high=0.64, zone_ts=900.0, high_bid=0.24)
     pred = m.predict(90.215, 90.21, 80, p_market=0.60, feed_age_s=0.3)
-    sig = eng.decide(pred, Quotes(0.59, 0.61, 0.39 - 0.19, 0.41 - 0.19), 90.215, 90.21, 20, 880, pos, now=1000.0)
+    sig = shown(eng, pred, Quotes(0.59, 0.61, 0.39 - 0.19, 0.41 - 0.19), 90.215, 90.21, 20, 880, pos, now=1000.0)
     assert sig.action == "HOLD" and sig.scalp["p_recover"] >= round(pred.p_down, 3) - 0.0011
+
+
+def test_debounce_hides_one_second_blips_both_ways():
+    """Review finding: a one-second SELL blip must not show, must not set the latches, and must not disarm the
+    rollover rule; a shown SELL must survive a one-second wobble back across its line."""
+    m = warmed_model()
+    eng = engine()
+    pos = Position("T", "DOWN", 125.0, 0.24, 0.0, amount=30.0, entry_fee=0.32, target=0.35, target_high=0.64, zone_ts=990.0, high_bid=0.30)
+    pred = m.predict(90.19, 90.21, 360, p_market=0.64, feed_age_s=0.3)
+    inzone, below = Quotes(0.64, 0.66, 0.35, 0.37), Quotes(0.69, 0.71, 0.30, 0.32)
+    seq = [below, inzone, below, below, inzone, inzone, below, inzone, below, below]
+    shown_rules = []
+    for i, q in enumerate(seq):
+        sig = eng.decide(pred, q, 90.19, 90.21, 300, 600, pos, now=1000.0 + i)
+        pos.last_reason, pos.last_raw_reason = sig.reasons[0], sig.triggers.get("raw_rule", sig.reasons[0])
+        shown_rules.append(sig.reasons[0])
+    # the lone blip at index 1 is hidden; the two-second run at 4-5 shows and survives the one-second dip at 6
+    assert shown_rules[:4] == ["hold", "hold", "hold", "hold"]
+    assert shown_rules[4] == "hold" and shown_rules[5] == "zone" and shown_rules[6] == "zone" and shown_rules[7] == "zone"
+    assert shown_rules[8] == "zone" and shown_rules[9] == "hold"

@@ -19,6 +19,7 @@ from .paths import TouchCurve, simulate
 from .sizing import dollars_for
 
 _ND = NormalDist()
+SELL_RULES = ("zone", "rollover", "give_up")
 
 
 def cents(x: float | None) -> str:
@@ -93,8 +94,9 @@ class Position:
     target: float | None = None  # low end of the committed sell zone (from the plan, or set at entry)
     target_high: float | None = None  # high end of the sell zone
     zone_ts: float = 0.0  # when the zone was last (re)planned
-    last_reason: str | None = None  # the previous second's rule (in memory only): lets SELL NOW latch instead of flicker
-    rollover_ref: float | None = None  # high bid when the rollover rule last fired (in memory): it re-arms only on a new high
+    last_reason: str | None = None  # the rule SHOWN last second (in memory only): the latches key on it
+    last_raw_reason: str | None = None  # the rule that FIRED last second, before the two-second debounce
+    rollover_ref: float | None = None  # high bid when a rollover SELL was last shown (in memory): it re-arms only on a new high
 
     @property
     def cost(self) -> float:
@@ -396,6 +398,8 @@ class DecisionEngine:
         commit: tuple[float, float] | None = None
         p_low = p_high = p_recover = None
         low, high = pos.target, pos.target_high
+        if low is not None and low < breakeven + 0.015:
+            low = high = None  # a plan filled at a worse price, or a target from before zones existed: never a loss
         closing = curve is not None and curve.horizon_s <= 0  # no sellable time left before the last seconds
         if curve is not None:
             fresh_low, fresh_high = self.zone_from(curve, breakeven)
@@ -425,22 +429,56 @@ class DecisionEngine:
                            f"{cents(low)} before the close, ~{pct5(p_high)} chance of {cents(high)}"
                            + (f", ~{pct5(p_recover)} chance of getting back to breakeven ({cents(breakeven)}) or winning." if losing else "."))
 
-        # Each SELL NOW rule latches: once it has fired, a 1¢ wobble back across its threshold does not
-        # turn the box back to HOLD (that is the flicker the user hated). The latch is the previous rule.
+        # --- which rule fires this second (the "raw" answer) ---
+        # Every SELL NOW rule latches on the PREVIOUSLY SHOWN rule, so a 1¢ wobble back across its threshold
+        # does not turn the box back to HOLD (that is the flicker the user hated).
         prev = pos.last_reason
-        # 1. nearly settled and strongly in your favour: don't pay to exit (only if selling is clearly worse).
-        #    With hysteresis against the zone rule, so the last two minutes do not alternate HOLD/SELL.
-        ride_p = cfg.hold_to_settle_prob + (-0.05 if prev == "ride_to_settle" else 0.03 if prev in ("zone", "rollover") else 0.0)
+        ride_p = cfg.hold_to_settle_prob + (-0.05 if prev == "ride_to_settle" else 0.03 if prev in SELL_RULES else 0.0)
         ride_gap = 0.0 if prev == "ride_to_settle" else 0.01
-        if (cfg.settle_advice != "never" and seconds_left is not None and seconds_left <= 120
-                and p >= ride_p and hold_val >= sell_val + ride_gap):
-            return hold("ride_to_settle", f"HOLD to settlement · {side} {pct(p)} with {mmss(seconds_left)} left; selling would give up "
-                        f"{cents(hold_val - sell_val)} per share",
-                        scalp("HOLD", "ride_to_settle", f"{side} {pct(p)} with {mmss(seconds_left)} left · selling gives up {cents(hold_val - sell_val)} a share", cash, pnl),
-                        hold_val - sell_val)
-        # 2. the bid is inside the zone: take it
+        can_ride = (cfg.settle_advice != "never" and seconds_left is not None and seconds_left <= 120
+                    and p >= ride_p and hold_val >= sell_val + ride_gap)
         latched = prev == "zone" and bid >= max(low - max(0.02, 0.08 * low), breakeven + 0.005)  # never a loss
-        if bid >= low - 0.002 or latched:
+        in_zone = bid >= low - 0.002 or latched
+        ran = pos.high_bid is not None and pos.high_bid >= pos.avg_price + 0.5 * (low - pos.avg_price)
+        armed = pos.rollover_ref is None or (pos.high_bid is not None and pos.high_bid >= pos.rollover_ref + 0.03)
+        rolled = False
+        if pos.high_bid:
+            rolled = (armed and bid <= pos.high_bid * 0.75) or (prev == "rollover" and bid <= pos.high_bid * 0.85)
+        rollover = ran and pnl > 0 and bid > pos.avg_price and rolled
+        hopeless = p_recover is not None and (p_recover <= cfg.give_up_prob or (prev == "give_up" and p_recover <= 2 * cfg.give_up_prob))
+        min_cash = min(cfg.give_up_min_cash, 0.2 * pos.cost) * (0.5 if prev == "give_up" else 1.0)
+        # vs the model's settlement value: a lottery ticket beats salvage when the bid is far under it; with
+        # hysteresis so a 1¢ wobble does not flip salvage <-> lottery every second
+        slack = cfg.edge_min * (2.0 if prev == "give_up" else 0.5 if prev == "lottery" else 1.0)
+        salvage_ok = cash >= min_cash and sell_val >= hold_val - slack
+        if can_ride:
+            rule = "ride_to_settle"
+        elif in_zone:
+            rule = "zone"
+        elif rollover:
+            rule = "rollover"
+        elif losing and hopeless:
+            rule = "give_up" if salvage_ok else "lottery"
+        else:
+            rule = "hold"
+        # --- debounce, done here so the shown card always carries this second's numbers ---
+        # A SELL has to be the raw answer two seconds in a row before it shows; a shown SELL stays until the raw
+        # answer has been something else two seconds in a row.
+        prev_raw = pos.last_raw_reason
+        shown = rule
+        if rule in SELL_RULES and prev not in SELL_RULES and prev_raw != rule:
+            shown = prev if prev in ("ride_to_settle", "lottery") else "hold"
+        elif rule not in SELL_RULES and prev in SELL_RULES and prev_raw in SELL_RULES:
+            shown = prev
+        triggers["raw_rule"] = rule
+
+        # --- render the shown rule with fresh numbers ---
+        if shown == "ride_to_settle":
+            return hold("ride_to_settle", f"HOLD to settlement · {side} {pct(p)} with {mmss(seconds_left)} left; selling would give up "
+                        f"{cents(max(hold_val - sell_val, 0.0))} per share",
+                        scalp("HOLD", "ride_to_settle", f"{side} {pct(p)} with {mmss(seconds_left)} left · selling gives up {cents(max(hold_val - sell_val, 0.0))} a share", cash, pnl),
+                        hold_val - sell_val)
+        if shown == "zone":
             if closing and not losing and (commit or prev == "zone"):
                 # the zone came down to the bid because the clock ran out, not because the price got there
                 why = f"last {mmss(seconds_left)} · take the profit before the close · {money(pnl)}"
@@ -449,34 +487,20 @@ class DecisionEngine:
                 dipped = "" if bid >= low - 0.002 else " (dipped a hair under it)"
                 why = f"{where} your sell zone {zone_txt}{dipped} · {money(pnl)}"
             return sell("zone", f"SELL NOW {side} at {cents(bid)} · {why}", scalp("SELL NOW", "zone", why, cash, pnl), sell_val - hold_val)
-        # 3. in profit, a real run happened, and the bid rolled over hard from its high: lock it in.
-        #    Once ignored, it re-arms only after a NEW high (3¢ above the one it fired on), not on every dip.
-        ran = pos.high_bid is not None and pos.high_bid >= pos.avg_price + 0.5 * (low - pos.avg_price)
-        armed = pos.rollover_ref is None or (pos.high_bid is not None and pos.high_bid >= pos.rollover_ref + 0.03)
-        rolled = False
-        if pos.high_bid:
-            rolled = (armed and bid <= pos.high_bid * 0.75) or (prev == "rollover" and bid <= pos.high_bid * 0.85)
-        if ran and pnl > 0 and bid > pos.avg_price and rolled:
-            pos.rollover_ref = pos.high_bid
+        if shown == "rollover":
+            pos.rollover_ref = pos.high_bid  # shown, so the rule re-arms only after a new high (3¢ above this one)
             return sell("rollover", f"SELL NOW {side} at {cents(bid)} · lock in {money(pnl)}; bid rolled over from {cents(pos.high_bid)}",
                         scalp("SELL NOW", "rollover", f"bid rolled over from {cents(pos.high_bid)} · lock in {money(pnl)}", cash, pnl), sell_val - hold_val)
-        # 4. under water and the loss is nearly certain: salvage what is left (the ONLY loss-taking sell)
-        hopeless = p_recover is not None and (p_recover <= cfg.give_up_prob or (prev == "give_up" and p_recover <= 2 * cfg.give_up_prob))
-        if losing and hopeless:
-            min_cash = min(cfg.give_up_min_cash, 0.2 * pos.cost) * (0.5 if prev == "give_up" else 1.0)
-            worth_it = cash >= min_cash
-            # vs the model's settlement value: a lottery ticket beats salvage when the bid is far under it; with
-            # hysteresis so a 1¢ wobble does not flip salvage <-> lottery every second
-            slack = cfg.edge_min * (2.0 if prev == "give_up" else 0.5 if prev == "lottery" else 1.0)
-            if worth_it and sell_val >= hold_val - slack:
-                return sell("give_up", f"SELL NOW {side} at {cents(bid)} · only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)}; "
-                            f"salvage ${cash:.2f} ({money(pnl)})",
-                            scalp("SELL NOW", "give_up", f"only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)} · salvage ${cash:.2f}", cash, pnl,
-                                  p_recover=round(p_recover, 3), breakeven=round(breakeven, 3)), sell_val - hold_val)
+        if shown == "give_up":
+            return sell("give_up", f"SELL NOW {side} at {cents(bid)} · only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)}; "
+                        f"salvage ${cash:.2f} ({money(pnl)})",
+                        scalp("SELL NOW", "give_up", f"only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)} · salvage ${cash:.2f}", cash, pnl,
+                              p_recover=None if p_recover is None else round(p_recover, 3), breakeven=round(breakeven, 3)), sell_val - hold_val)
+        if shown == "lottery":
             details.append("Selling would return almost nothing; a lottery ticket is worth more than that.")
             return hold("lottery", f"HOLD {side} · ride it as a {pct(p)} lottery ticket (cash out is only ${cash:.2f})",
                         scalp("HOLD", "lottery", f"{pct(p)} lottery ticket · cash out is only ${cash:.2f}", cash, pnl), hold_val - sell_val)
-        # 5. otherwise hold for the zone, and say how likely it is
+        # hold for the zone, and say how likely it is
         text = f"now {cents(bid)}"
         if p_low is not None:
             text += f" · ~{pct5(p_low)} chance of {cents(low)} · ~{pct5(p_high)} chance of {cents(high)}"
