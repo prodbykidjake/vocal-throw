@@ -391,6 +391,9 @@ class DecisionEngine:
             if full is None or full.zone is None:
                 continue
             p_pop = full.zone.touch(target)
+            big = min(0.95, max(2.0 * limit, limit + 0.10))  # the "it came all the way back" level, before the close
+            big = math.ceil(big * 100 - 1e-6) / 100.0
+            p_big = full.touch(big)
             p_side = p_for_side(pred, side)
             pm = None if pred.p_market is None else (pred.p_market if side == "UP" else 1 - pred.p_market)
             mom = mom_up if side == "UP" else -mom_up
@@ -398,10 +401,13 @@ class DecisionEngine:
             shares = cfg.quick_dollars / limit
             profit = shares * (target - limit) - taker_fee(limit, shares, self.fees) - taker_fee(target, shares, self.fees)
             out.append({"side": side, "ask": ask, "limit": limit, "target": round(target, 3), "p_pop": round(p_pop, 3),
+                        "big": big, "p_big": round(p_big, 3),
                         "tilt": round(tilt, 4), "mom": round(mom, 2), "p_side": round(p_side, 3),
                         "p_market": None if pm is None else round(pm, 3), "score": round(p_pop + tilt, 4),
                         "amount": cfg.quick_dollars, "shares": round(shares, 1), "profit": round(profit, 2),
-                        "call": bool(p_pop >= cfg.quick_min_chance and tilt >= -0.02), "horizon_s": round(horizon)})
+                        # no veto on recent price action here: a sharp move away from the target is often the
+                        # setup (cheap side, lots of time, the price only has to come part of the way back)
+                        "call": bool(p_pop >= cfg.quick_min_chance), "horizon_s": round(horizon)})
         out.sort(key=lambda o: o["score"], reverse=True)
         return out
 

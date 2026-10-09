@@ -97,7 +97,9 @@ automatically; nothing to click.
   second, and a setup refused in the last minute does not start a new countdown.
 - **Quick scalps** (since v8.4, the card under the signal card): for every side priced at or under 35¢ it
   shows the simulated chance that the bid pops at least 3¢ (or 15%) within the next 3 minutes, and calls the
-  best one when that chance is at least 35% and the model or recent price action is not against it:
+  best one when that chance is at least 35% (recent price action is not a veto here: a sharp move away from
+  the target is often the setup, the cheap side only has to come part of the way back), with the chance of
+  the price doubling before the close shown next to it:
   `BUY DOWN @ 31¢ · sell at 35¢+ · ~55% chance within 3 min`, sized at $5. It is riskier and less confident
   than a plan on purpose; keep a hand on the sell button. "I bought this" pre-fills the position form and
   makes that sell level the low end of your zone. The call is held for 5 s so it does not spin.

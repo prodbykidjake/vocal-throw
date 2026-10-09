@@ -115,13 +115,13 @@
     if (call) {
       box.textContent = `BUY ${call.side} @ ${fmtC(call.ask)} · sell at ${fmtC(call.target)}+ · ~${Math.round(call.p_pop * 20) * 5}% chance within ${mins(call)}`;
       box.className = "quick-box call " + call.side.toLowerCase();
-      $("quick-sub").textContent = `$${Number(call.amount).toFixed(0)} ≈ ${call.shares} shares · ≈ ${fmtUsd(call.profit)} at the target after fees · model ${fmtP(call.p_side)} vs market ${fmtP(call.p_market)}`;
+      $("quick-sub").textContent = `$${Number(call.amount).toFixed(0)} ≈ ${call.shares} shares · ≈ ${fmtUsd(call.profit)} at the target after fees · ~${Math.round(call.p_big * 20) * 5}% chance of ${fmtC(call.big)} before the close · model ${fmtP(call.p_side)} vs market ${fmtP(call.p_market)}`;
       $("quick-actions").classList.remove("hidden");
     } else {
       box.textContent = "no quick scalp right now"; box.className = "quick-box"; $("quick-sub").textContent = "";
       $("quick-actions").classList.add("hidden");
     }
-    $("quick-options").textContent = (q.options || []).map((o) => `${o.side} @ ${fmtC(o.ask)}: ~${Math.round(o.p_pop * 20) * 5}% chance of ${fmtC(o.target)} within ${mins(o)}`).join("   ·   ");
+    $("quick-options").textContent = (q.options || []).map((o) => `${o.side} @ ${fmtC(o.ask)}: ~${Math.round(o.p_pop * 20) * 5}% chance of ${fmtC(o.target)} within ${mins(o)}, ~${Math.round(o.p_big * 20) * 5}% of ${fmtC(o.big)} by the close`).join("   ·   ");
   }
   $("quick-buy").addEventListener("click", () => {
     const call = state && state.quick && state.quick.call; if (!call) return;
