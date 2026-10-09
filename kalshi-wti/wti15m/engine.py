@@ -479,6 +479,7 @@ class Engine:
             pos.target, pos.target_high, pos.zone_ts = float(zone[0]), float(zone[1]), now
             self.store.update_position_zone(pos.id, pos.target, pos.target_high, now)
             self.log_event("zone", f"sell zone for your {pos.side}: {cents(pos.target)}–{cents(pos.target_high)}")
+        pos.last_reason = raw.reasons[0] if raw.reasons else None  # the decider's latch for next second
         if raw.action == "SELL":
             self._sell_streak += 1
             if self._sell_streak < 2 and self._last_hold_sig is not None:

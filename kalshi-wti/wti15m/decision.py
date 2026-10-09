@@ -93,6 +93,8 @@ class Position:
     target: float | None = None  # low end of the committed sell zone (from the plan, or set at entry)
     target_high: float | None = None  # high end of the sell zone
     zone_ts: float = 0.0  # when the zone was last (re)planned
+    last_reason: str | None = None  # the previous second's rule (in memory only): lets SELL NOW latch instead of flicker
+    rollover_ref: float | None = None  # high bid when the rollover rule last fired (in memory): it re-arms only on a new high
 
     @property
     def cost(self) -> float:
@@ -401,15 +403,10 @@ class DecisionEngine:
                 high = max(min(max(high if high else 0.0, fresh_high, low + 0.05), 0.95), round(low + 0.02, 3))
                 commit = (low, high)
             elif now - pos.zone_ts >= cfg.zone_refresh_s:
-                # The low end never chases the price upward (that would move the goalposts every time the bid
-                # climbed); it comes down only when the old low has become unlikely. The stretch end may rise.
-                new_low, new_high = low, high
+                # The zone never chases the price upward (that would move the goalposts every time the bid
+                # climbed); it comes down only when the old low has become unlikely.
                 if curve.touch(low) < cfg.zone_drop_prob and fresh_low <= low - 0.02:
-                    new_low, new_high = fresh_low, max(fresh_high, fresh_low + 0.05)
-                elif fresh_high >= high + 0.03:
-                    new_high = fresh_high
-                if (new_low, new_high) != (low, high):
-                    commit = (new_low, new_high)
+                    commit = (fresh_low, max(fresh_high, fresh_low + 0.05))
                     low, high = commit
             p_low, p_high = curve.touch(low), curve.touch(high)
             if losing:
@@ -424,27 +421,45 @@ class DecisionEngine:
                            f"{cents(low)} before the close, ~{pct5(p_high)} chance of {cents(high)}"
                            + (f", ~{pct5(p_recover)} chance of getting back to breakeven ({cents(breakeven)})." if losing else "."))
 
-        # 1. nearly settled and strongly in your favour: don't pay to exit (only if selling is clearly worse)
+        # Each SELL NOW rule latches: once it has fired, a 1¢ wobble back across its threshold does not
+        # turn the box back to HOLD (that is the flicker the user hated). The latch is the previous rule.
+        prev = pos.last_reason
+        # 1. nearly settled and strongly in your favour: don't pay to exit (only if selling is clearly worse).
+        #    With hysteresis against the zone rule, so the last two minutes do not alternate HOLD/SELL.
+        ride_p = cfg.hold_to_settle_prob + (-0.05 if prev == "ride_to_settle" else 0.03 if prev in ("zone", "rollover") else 0.0)
+        ride_gap = 0.0 if prev == "ride_to_settle" else 0.01
         if (cfg.settle_advice != "never" and seconds_left is not None and seconds_left <= 120
-                and p >= cfg.hold_to_settle_prob and hold_val >= sell_val + 0.01):
+                and p >= ride_p and hold_val >= sell_val + ride_gap):
             return hold("ride_to_settle", f"HOLD to settlement · {side} {pct(p)} with {mmss(seconds_left)} left; selling would give up "
                         f"{cents(hold_val - sell_val)} per share",
                         scalp("HOLD", "ride_to_settle", f"{side} {pct(p)} with {mmss(seconds_left)} left · selling gives up {cents(hold_val - sell_val)} a share", cash, pnl),
                         hold_val - sell_val)
         # 2. the bid is inside the zone: take it
-        if bid >= low - 0.002:
+        if bid >= low - 0.002 or (prev == "zone" and bid >= low - max(0.02, 0.08 * low)):
             where = "top of" if bid >= high - 0.002 else "in"
-            return sell("zone", f"SELL NOW {side} at {cents(bid)} · {where} your sell zone {zone_txt} · {money(pnl)}",
-                        scalp("SELL NOW", "zone", f"{where} your sell zone {zone_txt} · {money(pnl)}", cash, pnl), sell_val - hold_val)
-        # 3. in profit, a real run happened, and the bid rolled over hard from its high: lock it in
+            dipped = "" if bid >= low - 0.002 else " (dipped a hair under it)"
+            return sell("zone", f"SELL NOW {side} at {cents(bid)} · {where} your sell zone {zone_txt}{dipped} · {money(pnl)}",
+                        scalp("SELL NOW", "zone", f"{where} your sell zone {zone_txt}{dipped} · {money(pnl)}", cash, pnl), sell_val - hold_val)
+        # 3. in profit, a real run happened, and the bid rolled over hard from its high: lock it in.
+        #    Once ignored, it re-arms only after a NEW high (3¢ above the one it fired on), not on every dip.
         ran = pos.high_bid is not None and pos.high_bid >= pos.avg_price + 0.5 * (low - pos.avg_price)
-        if ran and pnl > 0 and bid > pos.avg_price and bid <= pos.high_bid * 0.75:
+        armed = pos.rollover_ref is None or (pos.high_bid is not None and pos.high_bid >= pos.rollover_ref + 0.03)
+        rolled = False
+        if pos.high_bid:
+            rolled = (armed and bid <= pos.high_bid * 0.75) or (prev == "rollover" and bid <= pos.high_bid * 0.85)
+        if ran and pnl > 0 and bid > pos.avg_price and rolled:
+            pos.rollover_ref = pos.high_bid
             return sell("rollover", f"SELL NOW {side} at {cents(bid)} · lock in {money(pnl)}; bid rolled over from {cents(pos.high_bid)}",
                         scalp("SELL NOW", "rollover", f"bid rolled over from {cents(pos.high_bid)} · lock in {money(pnl)}", cash, pnl), sell_val - hold_val)
         # 4. under water and the loss is nearly certain: salvage what is left (the ONLY loss-taking sell)
-        if losing and p_recover is not None and p_recover <= cfg.give_up_prob:
-            worth_it = cash >= min(cfg.give_up_min_cash, 0.2 * pos.cost)
-            if worth_it and sell_val >= hold_val - cfg.edge_min:
+        hopeless = p_recover is not None and (p_recover <= cfg.give_up_prob or (prev == "give_up" and p_recover <= 2 * cfg.give_up_prob))
+        if losing and hopeless:
+            min_cash = min(cfg.give_up_min_cash, 0.2 * pos.cost) * (0.5 if prev == "give_up" else 1.0)
+            worth_it = cash >= min_cash
+            # vs the model's settlement value: a lottery ticket beats salvage when the bid is far under it; with
+            # hysteresis so a 1¢ wobble does not flip salvage <-> lottery every second
+            slack = cfg.edge_min * (2.0 if prev == "give_up" else 0.5 if prev == "lottery" else 1.0)
+            if worth_it and sell_val >= hold_val - slack:
                 return sell("give_up", f"SELL NOW {side} at {cents(bid)} · only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)}; "
                             f"salvage ${cash:.2f} ({money(pnl)})",
                             scalp("SELL NOW", "give_up", f"only ~{pct5(p_recover)} chance of getting back to {cents(breakeven)} · salvage ${cash:.2f}", cash, pnl,

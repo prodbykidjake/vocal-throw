@@ -228,3 +228,33 @@ def test_trigger_price_is_reported_in_feed_terms():
         # recompute what the model-space trigger would be and check the feed-space number is shifted by the basis
         side = sig.triggers["side"]
         assert sig.triggers["price_needed"] == round(sig.triggers["price_needed"], 2)
+
+
+def test_sell_rules_latch_instead_of_flickering():
+    m = warmed_model()
+    eng = engine()
+    # zone latch: in the zone at 35c, a 1.5c dip under it keeps SELL NOW; a 5c dip does not
+    pos = Position("T", "DOWN", 125.0, 0.24, 0.0, amount=30.0, entry_fee=0.32, target=0.35, target_high=0.64, zone_ts=990.0, high_bid=0.35)
+    pred = m.predict(90.19, 90.21, 360, p_market=0.64, feed_age_s=0.3)
+    sig = eng.decide(pred, Quotes(0.64, 0.66, 0.35, 0.37), 90.19, 90.21, 300, 600, pos, now=1000.0)
+    assert sig.action == "SELL" and sig.reasons == ["zone"]
+    pos.last_reason = "zone"
+    sig = eng.decide(pred, Quotes(0.655, 0.675, 0.335, 0.355), 90.19, 90.21, 300, 600, pos, now=1001.0)
+    assert sig.action == "SELL" and sig.reasons == ["zone"] and "dipped" in sig.headline
+    sig = eng.decide(pred, Quotes(0.69, 0.71, 0.30, 0.32), 90.19, 90.21, 300, 600, pos, now=1002.0)
+    assert sig.action == "HOLD"
+    # rollover re-arms only on a new high: once ignored, the same dip does not nag again
+    pos = Position("T", "UP", 136.0, 0.22, 0.0, amount=30.0, entry_fee=0.3, target=0.41, target_high=0.79, zone_ts=990.0, high_bid=0.36)
+    pred = m.predict(90.17, 90.21, 500, p_market=0.28, feed_age_s=0.3)
+    q = Quotes(0.27, 0.29, 0.71, 0.73)
+    sig = eng.decide(pred, q, 90.17, 90.21, 440, 460, pos, now=1000.0)
+    assert sig.action == "SELL" and sig.reasons == ["rollover"] and pos.rollover_ref == 0.36
+    pos.last_reason = "rollover"
+    sig = eng.decide(pred, Quotes(0.32, 0.34, 0.66, 0.68), 90.17, 90.21, 440, 460, pos, now=1001.0)
+    assert sig.action == "HOLD"  # recovered above 85% of the high: back to the zone plan
+    pos.last_reason = "hold"
+    sig = eng.decide(pred, q, 90.17, 90.21, 440, 460, pos, now=1002.0)
+    assert sig.action == "HOLD"  # same dip again, no new high: not re-armed
+    pos.high_bid = 0.40
+    sig = eng.decide(pred, Quotes(0.29, 0.31, 0.69, 0.71), 90.17, 90.21, 440, 460, pos, now=1003.0)
+    assert sig.action == "SELL" and sig.reasons == ["rollover"]
