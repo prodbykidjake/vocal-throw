@@ -61,9 +61,10 @@ basis_min_t = 1.5               # ... and only when the bias is this many standa
 
 # Auto trading: the app places the coach's calls on YOUR Kalshi account, no button presses.
 # 1. kalshi.com/account/profile > API Keys > Create API key: Ed25519 (the default) or RSA both work. Permissions:
-#    tick "Read all data" and the granular "Trade" (write::trade) only; leave "Full access" off so the key can
-#    never move money out. Note the key id and keep the private-key file it downloads somewhere outside this
-#    folder (e.g. ~/kalshi-key.txt). Never commit or share it (config.toml, *.pem and *.key are git-ignored).
+#    tick "Read all data", and under granular access "Trade" and "Transfers"; leave "Full access" off. Kalshi keeps
+#    cash per exchange (WTI trades on "Crypto & Commodities"), and Transfers lets the app move your cash between
+#    your own Kalshi exchanges; the API has no way to withdraw to a bank. Note the key id and keep the private-key
+#    file it downloads somewhere outside this folder (e.g. ~/kalshi-key.txt). Never commit or share it.
 # 2. python -m wti15m auth        (checks the key: balance and positions, places nothing)
 # 3. enabled = true, dry_run = true: same code path, fills simulated on the real quotes; watch the Auto card for a day
 # 4. dry_run = false: live. PAUSE/STOP on the dashboard stop buying at once; sells still run while paused.
@@ -86,6 +87,7 @@ sell_slip_cents = 3             # a sell takes the book down to bid − this
 sync_s = 5                      # how often to read your Kalshi balance and positions
 fractional = true               # fractional contracts (switches itself off if Kalshi rejects the count)
 order_api = "v2"                # v2 (/portfolio/events/orders) or legacy (/portfolio/orders)
+move_cash = true                # move cash from your other Kalshi exchanges to the one WTI trades on when it runs short
 
 [server]
 host = "127.0.0.1"

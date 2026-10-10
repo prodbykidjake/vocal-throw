@@ -109,6 +109,7 @@ class AutoCfg:
     sell_slip_cents: float = 3.0  # a sell takes the book down to bid − this many cents
     sync_s: float = 5.0  # how often to read your Kalshi balance and positions
     fractional: bool = True  # the market allows fractional contracts (set false if orders are rejected over the count)
+    move_cash: bool = True  # move cash from your other Kalshi shards to the WTI market's shard when it runs short (needs the key's Transfers scope)
     order_api: str = "v2"  # v2 = /portfolio/events/orders (bid/ask on the Yes price) | legacy = /portfolio/orders
 
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import math
 import time
 
 from . import clock
@@ -48,6 +49,8 @@ class AutoTrader:
         self.blocked = ""  # why no buy right now (limits), recomputed every tick
         self.order: dict | None = None
         self.balance: float | None = None
+        self.shard_cash: dict[int, float] = {}  # Kalshi exchange shard -> cash on it
+        self._move_wait_until = 0.0
         self.kalshi_pos: AccountPosition | None = None
         self.synced_ts = 0.0
         self.sync_error: str | None = None
@@ -141,7 +144,10 @@ class AutoTrader:
                 break
         self.window_bought = self.store.bought_since(day0, ticker, self.mode) if ticker else 0.0
         try:
-            self.balance = await self.broker.balance()
+            if hasattr(self.broker, "balances"):
+                self.balance, self.shard_cash = await self.broker.balances()
+            else:
+                self.balance, self.shard_cash = await self.broker.balance(), {}
             positions = await self.broker.positions(ticker) if ticker else []
             self.sync_error = None
         except BrokerError as exc:
@@ -203,9 +209,47 @@ class AutoTrader:
             return f"daily buy limit (${a.max_day_dollars:.0f}) reached"
         if self.window_bought + amount > a.max_window_dollars + 1e-9:
             return f"window buy limit (${a.max_window_dollars:.0f}) reached"
-        if self.balance is not None and self.balance < 1.5:
-            return f"balance ${self.balance:.2f} is too small to trade"
         return None
+
+    def _usable(self, m) -> float | None:
+        """Cash an order on this market can spend: its shard's balance when Kalshi reports shards, else the total."""
+        shard = getattr(m, "exchange_index", None)
+        if self.shard_cash and shard is not None:
+            return self.shard_cash.get(shard, 0.0)
+        return self.balance
+
+    async def _top_up(self, now: float, m, needed: float) -> bool:
+        """The market's shard is short: move cash over from your richest other shard. True when a move was sent
+        (the caller waits for it to land before buying)."""
+        shard = getattr(m, "exchange_index", None)
+        if not self.shard_cash or shard is None or now < self._move_wait_until:
+            return now < self._move_wait_until
+        others = sorted(((bal, idx) for idx, bal in self.shard_cash.items() if idx != shard and bal >= 0.5), reverse=True)
+        if not others:
+            return False
+        have = self.shard_cash.get(shard, 0.0)
+        src_bal, src = others[0]
+        move = math.floor(min(src_bal, max(needed - have + 0.5, min(src_bal, self.a.max_window_dollars))) * 100) / 100.0
+        if move < 0.5:
+            return False
+        if not self.a.move_cash:
+            self.pause(f"your cash is on Kalshi exchange {src} (${src_bal:.2f}) but WTI trades on exchange {shard} "
+                       f"(${have:.2f}); set [auto] move_cash = true or move it in the Kalshi app")
+            return False
+        try:
+            await self.broker.move_cash(src, shard, move)
+        except BrokerError as exc:
+            if exc.status in (401, 403):
+                self.pause(f"your cash is on Kalshi exchange {src} (${src_bal:.2f}) but WTI trades on exchange {shard} "
+                           f"(${have:.2f}), and this API key may not move it: make a key with Trade AND Transfers ticked")
+            else:
+                self.say(f"could not move cash to exchange {shard}: {exc}")
+                self.cooldown_until = now + RETRY_COOLDOWN_S
+            return False
+        self._move_wait_until = now + 6.0
+        self.synced_ts = 0.0  # re-read the balances next tick
+        self.say(f"moved ${move:.2f} of your cash from Kalshi exchange {src} to exchange {shard}, where WTI trades")
+        return True
 
     async def _maybe_buy(self, now: float, m, quotes: Quotes):
         eng = self.engine
@@ -231,17 +275,27 @@ class AutoTrader:
             self.blocked = ""
             return
         amount = min(cand["amount"], self.a.max_order_dollars, self.cfg.trading.max_trade_dollars)
-        if self.balance is not None:
-            amount = min(amount, round(self.balance - 0.5, 2))  # a plan bigger than the account is cut to what is there
+        price = cand["price"]
         why = self._gate(now, amount, tau)
         if why:
             self.blocked = why
-            if why.startswith(("daily", "window", "balance", "paused", f"{self.losses_row} losses")):
+            if why.startswith(("daily", "window", "paused", f"{self.losses_row} losses")):
                 self.attempted.add(cand["key"])  # a limit is not going to lift this second; do not re-check every tick
+            return
+        # the cash this order can spend lives on the market's shard; Kalshi also holds back the fee
+        per_dollar = 1.0 + 0.07 * (1.0 - price) + 0.01
+        usable = self._usable(m)
+        if usable is not None and usable < amount * per_dollar + 0.05:
+            if await self._top_up(now, m, amount * per_dollar + 0.05):
+                self.blocked = "waiting for the cash move to land"
+                return
+            usable = self._usable(m)
+            amount = min(amount, math.floor(max(0.0, usable - 0.05) / per_dollar * 100) / 100.0)
+        if amount < 1.0:
+            self.blocked = (f"only ${usable:.2f} on the exchange WTI trades on" if usable is not None else "no cash to trade")
             return
         self.blocked = ""
         self.attempted.add(cand["key"])
-        price = cand["price"]
         count = amount / price
         if count < (0.01 if self.a.fractional else 1):
             self.say(f"skip {cand['text']}: ${amount:.2f} buys too little")
@@ -259,6 +313,10 @@ class AutoTrader:
                 self.say(f"Kalshi rejected a fractional count; switching to whole contracts ({exc})")
             elif exc.status in (401, 403):
                 self.pause(f"Kalshi rejected the API key (HTTP {exc.status})")
+            elif "insufficient_balance" in body:
+                self.synced_ts = 0.0  # re-read the per-exchange balances; the next plan sizes to them (or moves cash)
+                self.attempted.discard(cand["key"])
+                self.say(f"BUY refused: not enough cash on the exchange WTI trades on (${self._usable(m) or 0:.2f}); re-checking balances")
             else:
                 self.say(f"BUY failed: {exc}")
             self.store.add_order(now, m.ticker, cand["side"], "buy", price, count, amount, "", coid or "", "error", cand["reason"],
@@ -397,6 +455,8 @@ class AutoTrader:
         return {
             "mode": self.mode, "paused": self.paused, "pause_reason": self.pause_reason, "blocked": self.blocked,
             "balance": self.balance, "sync_age_s": None if not self.synced_ts else round(now - self.synced_ts, 1),
+            "shard_cash": {str(k): round(v, 2) for k, v in sorted(self.shard_cash.items())},
+            "market_shard": getattr(self.engine.tracker.current, "exchange_index", None) if self.engine.tracker.current else None,
             "sync_error": self.sync_error, "errors": self.errors, "api": getattr(self.broker, "order_api", ""),
             "kalshi_position": None if kp is None or kp.qty <= 0 else {"side": kp.side, "qty": round(kp.qty, 2), "exposure": round(kp.exposure, 2)},
             "order": None if o is None else {"action": o["action"], "side": o["side"], "price": o["price"], "count": round(o["count"], 2),

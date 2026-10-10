@@ -91,8 +91,22 @@ async def run_auth(cfg) -> int:
     try:
         st = await broker.exchange_status()
         print(f"exchange: {st}")
-        bal = await broker.balance()
-        print(f"balance: ${bal:.2f}")
+        bal, shards = await broker.balances()
+        print(f"balance: ${bal:.2f}" + ("  by exchange: " + ", ".join(f"{k}: ${v:.2f}" for k, v in sorted(shards.items())) if shards else ""))
+        try:
+            from .kalshi import KalshiClient
+            pub = KalshiClient(cfg.kalshi.base_url, cfg.kalshi.timeout_s)
+            mk = await pub.get_markets(cfg.kalshi.series_ticker, status="open")
+            await pub.aclose()
+            idx = next((m.exchange_index for m in mk if m.exchange_index is not None), None)
+            if idx is not None:
+                here = shards.get(idx) if shards else None
+                print(f"WTI 15-min trades on exchange {idx}" + (f": ${here:.2f} of your cash is there" if here is not None else ""))
+                if here is not None and here < 1.0 and bal >= 1.0:
+                    print("  -> your cash is on another exchange. The auto trader moves it over when it needs to, which needs "
+                          "an API key with Trade AND Transfers ticked (money only moves between your own Kalshi balances).")
+        except Exception as exc:  # informational only
+            print(f"(could not look up the WTI market's exchange: {exc})")
         pos = await broker.positions()
         live = [p for p in pos if p.qty > 0]
         print(f"open positions: {len(live)}")

@@ -136,8 +136,10 @@ Treat the coach as untested until Stats shows a model Brier score at least as go
 The app can place the orders itself, no button presses. Setup, in this order:
 
 1. At `kalshi.com/account/profile` → **API Keys → Create API key**. Key type: Ed25519 (the default) or RSA, both
-   work. Permissions: tick **Read all data** and the granular **Trade** (`write::trade`); leave **Full access** off
-   so the key can never move money out of the account. Note the key id and keep the private-key file Kalshi
+   work. Permissions: tick **Read all data**, and under granular access **Trade** (`write::trade`) and **Transfers**
+   (`write::transfer`); leave **Full access** off. Kalshi keeps your cash per exchange (WTI trades on the
+   "Crypto & Commodities" one) and an order only spends the cash on its market's exchange; Transfers lets the app
+   move your cash between your own Kalshi exchanges (the API has no way to withdraw to a bank). Note the key id and keep the private-key file Kalshi
    downloads (a `.txt`) somewhere outside this folder, e.g. `~/kalshi-key.txt`. Never commit or share it
    (`config.toml`, `*.pem` and `*.key` are git-ignored). Anyone with the file can trade your account.
 2. In `config.toml`:
@@ -163,6 +165,10 @@ What it does every second (`wti15m/autotrader.py`):
   plan's limit for the plan's dollars, capped by `max_order_dollars`. It rests for `buy_ttl_s` (20 s) and is
   cancelled if unfilled, if the plan dies, or if the window ends. A fill opens the position card at the real fill
   price and fee, with the plan's sell zone. Nothing else is bought.
+- **Cash per exchange**: Kalshi keeps a separate balance for each exchange shard. Orders are sized to the cash on
+  the WTI market's shard (fee included); when it is short, the trader moves cash over from your richest other shard
+  (`move_cash = true`, needs the Transfers permission) and buys once it lands. Without that permission it pauses
+  and says so. `python -m wti15m auth` prints the cash on each exchange and which one WTI trades on.
 - **Sells** when the position card says SELL NOW: one immediate-or-cancel, reduce-only order down to
   `bid − sell_slip_cents` (3¢), so it takes whatever is on the book. A partial fill takes part of the position off and
   the next SELL NOW sells the rest. A position the card wants to hold to settlement is left alone; Kalshi pays it out.

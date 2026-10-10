@@ -190,6 +190,19 @@ def parse_order(d: dict, side: str | None = None) -> OrderResult:
                        remaining, avg, fees, o)
 
 
+def parse_balance(d: dict) -> tuple[float, dict[int, float]]:
+    total = _num(d, "balance_dollars")
+    if total is None:
+        total = _num(d, "balance", default=0.0, cents_keys=("balance",))
+    shards: dict[int, float] = {}
+    for b in (d.get("balance_breakdown") or []) if isinstance(d, dict) else []:
+        try:
+            shards[int(b.get("exchange_index"))] = float(_num(b, "balance_dollars", "balance", default=0.0) or 0.0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return float(total or 0.0), shards
+
+
 def parse_positions(d: dict) -> list[AccountPosition]:
     out = []
     for p in (d.get("market_positions") or []) if isinstance(d, dict) else []:
@@ -272,11 +285,22 @@ class KalshiBroker:
         return await self._request("GET", "/exchange/status")
 
     async def balance(self) -> float:
+        return (await self.balances())[0]
+
+    async def balances(self) -> tuple[float, dict[int, float]]:
+        """(total, {exchange shard: dollars}). Kalshi keeps cash per exchange shard; an order spends only the cash on
+        its market's shard, so the total alone can say $15 while the WTI shard holds nothing."""
         d = await self._request("GET", "/portfolio/balance")
-        bal = _num(d, "balance_dollars")
-        if bal is None:
-            bal = _num(d, "balance", default=0.0, cents_keys=("balance",))
-        return float(bal or 0.0)
+        return parse_balance(d)
+
+    async def move_cash(self, source_shard: int, dest_shard: int, dollars: float) -> str:
+        """Move cash between two shards of your own account (needs the key's Transfers scope). Asynchronous on
+        Kalshi's side: the destination balance updates a moment later."""
+        body = {"source": "event_contract", "destination": "event_contract", "amount": int(round(dollars * 10000)),  # centicents
+                "source_exchange_shard": int(source_shard), "destination_exchange_shard": int(dest_shard),
+                "client_transfer_id": new_client_order_id()}
+        d = await self._request("POST", "/portfolio/intra_exchange_instance_transfer", body=body)
+        return str((d or {}).get("transfer_id") or "")
 
     async def positions(self, ticker: str | None = None) -> list[AccountPosition]:
         params: dict = {"limit": 200}
@@ -384,6 +408,12 @@ class SimBroker:
 
     async def balance(self) -> float:
         return round(self.cash, 2)
+
+    async def balances(self) -> tuple[float, dict[int, float]]:
+        return round(self.cash, 2), {}  # one pot: no shards in the simulator
+
+    async def move_cash(self, source_shard: int, dest_shard: int, dollars: float) -> str:
+        raise BrokerError("the simulated account has no shards")
 
     def _quote(self, ticker: str, side: str) -> tuple[float | None, float | None]:
         q = self.quotes_fn()

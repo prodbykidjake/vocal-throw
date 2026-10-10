@@ -122,7 +122,9 @@
     $("auto-note").textContent = a.mode === "live" ? "(real orders on your Kalshi account)" : a.mode === "sim" ? "(simulated account on the demo market)" : "(dry run: real quotes, simulated fills · nothing is sent to Kalshi)";
     $("auto-text").textContent = a.last_text || "";
     const d = a.day || {}, lim = a.limits || {};
-    $("auto-line").textContent = `balance ${a.balance == null ? "--" : "$" + Number(a.balance).toFixed(2)} · today bought $${Number(d.bought || 0).toFixed(2)} of $${lim.day} · today P&L ${fmtUsd(d.pnl || 0)} (stop at -$${lim.day_loss}) · this window $${Number(a.window_bought || 0).toFixed(2)} of $${lim.window} · max $${lim.order}/order · ${lim.take_plans ? "buys the signal card's plans" : "buying off"}` +
+    const shards = a.shard_cash || {}, ms = a.market_shard;
+    const wtiCash = ms != null && shards[String(ms)] != null ? ` (on WTI's exchange ${ms}: $${Number(shards[String(ms)]).toFixed(2)})` : "";
+    $("auto-line").textContent = `balance ${a.balance == null ? "--" : "$" + Number(a.balance).toFixed(2)}${wtiCash} ·today bought $${Number(d.bought || 0).toFixed(2)} of $${lim.day} · today P&L ${fmtUsd(d.pnl || 0)} (stop at -$${lim.day_loss}) · this window $${Number(a.window_bought || 0).toFixed(2)} of $${lim.window} · max $${lim.order}/order · ${lim.take_plans ? "buys the signal card's plans" : "buying off"}` +
       (d.losses_row ? ` · ${d.losses_row} loss${d.losses_row > 1 ? "es" : ""} in a row` : "") + (a.sync_age_s != null ? ` · account synced ${a.sync_age_s.toFixed(0)}s ago` : "") + (a.api ? ` · ${a.api}` : "");
     const o = a.order, kp = a.kalshi_position;
     let line = "";

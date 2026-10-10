@@ -193,6 +193,7 @@ class Market:
     last_price: float | None = None
     volume: int | None = None
     open_interest: int | None = None
+    exchange_index: int | None = None  # the exchange shard the market trades on (orders spend that shard's cash)
     result: str | None = None  # "yes" | "no" | None
     settle_value: float | None = None  # numeric expiration_value once settled (the settlement price)
     rules_primary: str = ""
@@ -250,6 +251,7 @@ class Market:
             last_price=parse_price(d, "last_price"),
             volume=_int(d, "volume_fp", "volume"),
             open_interest=_int(d, "open_interest_fp", "open_interest"),
+            exchange_index=_int(d, "exchange_index"),
             result=result,
             settle_value=_float_or_none(d.get("expiration_value")),
             rules_primary=str(d.get("rules_primary") or ""),

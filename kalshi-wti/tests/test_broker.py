@@ -43,6 +43,14 @@ def test_parse_order_fixed_point_and_legacy():
     assert parse_order({"order_id": "c", "reduced_by": "10.00", "ts_ms": 1}).status == "unknown"  # v2 cancel response
 
 
+def test_parse_balance_by_exchange_shard():
+    from wti15m.broker import parse_balance
+    total, shards = parse_balance({"balance": 1502, "balance_dollars": "15.0200", "portfolio_value": 0, "updated_ts": 1,
+                                   "balance_breakdown": [{"exchange_index": 0, "balance": "15.0200"}, {"exchange_index": 2, "balance": "0.0000"}]})
+    assert total == 15.02 and shards == {0: 15.02, 2: 0.0}
+    assert parse_balance({"balance": 1502}) == (15.02, {})
+
+
 def test_parse_positions_and_fills():
     pos = parse_positions({"market_positions": [
         {"ticker": "T", "position_fp": "-16.13", "market_exposure_dollars": "4.84", "realized_pnl_dollars": "0", "fees_paid_dollars": "0.17"},
@@ -117,6 +125,8 @@ async def test_broker_sends_v2_orders_and_falls_back_to_legacy(pem):
             return httpx.Response(201, json={"order": {"order_id": "o2", "status": "executed", "fill_count_fp": "16.13", "remaining_count_fp": "0"}})
         if request.url.path.endswith("/portfolio/balance"):
             return httpx.Response(200, json={"balance": 12345})
+        if request.url.path.endswith("/portfolio/intra_exchange_instance_transfer"):
+            return httpx.Response(200, json={"transfer_id": "t1"})
         if request.url.path.endswith("/portfolio/orders/o1"):
             return httpx.Response(200, json={"order": {"order_id": "o1", "status": "canceled"}}) if request.method == "DELETE" else \
                 httpx.Response(200, json={"order": {"order_id": "o1", "status": "resting", "fill_count_fp": "0", "remaining_count_fp": "16.13"}})
@@ -139,6 +149,11 @@ async def test_broker_sends_v2_orders_and_falls_back_to_legacy(pem):
     body = seen[-1][2]
     assert body["side"] == "bid" and body["price"] == "0.6000" and body["reduce_only"] is True and "expiration_time" not in body
     assert (await b.balance()) == 123.45
+    assert (await b.move_cash(0, 2, 12.34)) == "t1"
+    _, p, body, _ = seen[-1]
+    assert p == "/trade-api/v2/portfolio/intra_exchange_instance_transfer"
+    assert body["amount"] == 123400 and body["source_exchange_shard"] == 0 and body["destination_exchange_shard"] == 2  # centicents
+    assert body["source"] == body["destination"] == "event_contract"
     got = await b.order("o1", "DOWN")
     assert got.status == "resting" and got.remaining == 16.13
     assert (await b.cancel("o1", "KXWTI15M-X")).status == "unknown"  # v2 cancel: routed by market_ticker, no status in the reply

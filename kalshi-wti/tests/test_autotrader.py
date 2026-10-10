@@ -128,11 +128,66 @@ async def test_limits_and_pause_block_buys(tmp_path):
         engine.step()
         _plan(engine).id = 4
         await trader.tick(now + 3)
-        assert engine.position is not None and store.orders(1)[0]["amount"] == pytest.approx(5.5)
+        amt = store.orders(1)[0]["amount"]
+        assert engine.position is not None and 5.0 < amt <= 6.0 - 0.05 - 0.07 * 0.5 * amt  # cut to the cash, fee room kept
         engine.cancel_position()
         broker.pos.clear()
         st = trader.as_dict(now + 2)
         assert st["mode"] == "sim" and st["limits"]["order"] == 50.0 and isinstance(st["orders"], list)
+    finally:
+        await feed.stop()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_cash_on_another_exchange_is_moved_before_buying(tmp_path):
+    """Kalshi keeps cash per exchange shard: $15 on shard 0 buys nothing on shard 2, where WTI trades."""
+    cfg, engine, trader, broker, feed, store = await _engine(tmp_path, seed=5)
+    try:
+        moves = []
+        shards = {0: 15.0, 2: 0.0}
+
+        async def balances():
+            return sum(shards.values()), dict(shards)
+
+        async def move_cash(src, dst, dollars):
+            moves.append((src, dst, dollars))
+            shards[src] -= dollars
+            shards[dst] += dollars
+            return "t1"
+        broker.balances, broker.move_cash = balances, move_cash
+        broker.cash = 15.0
+        engine.tracker.current.exchange_index = 2
+        now = time.time()
+        _plan(engine)
+        await trader.tick(now)
+        assert moves and moves[0][:2] == (0, 2) and moves[0][2] <= 15.0  # moved from the rich shard to WTI's
+        assert engine.position is None and "moved" in trader.last_text  # waits for the move to land
+        await engine.tracker.poll_once()
+        engine.tracker.current.exchange_index = 2  # real listings carry the shard; the simulator's do not
+        engine.step()
+        _plan(engine).id = 9
+        await trader.tick(now + 7)
+        assert engine.position is not None  # bought once the cash is there
+        row = store.orders(1)[0]
+        assert row["amount"] <= 15.0 - 0.05  # sized to what the shard can pay, fee included
+        # without the Transfers scope: a clear pause instead of a silent refusal
+        engine.cancel_position()
+        broker.pos.clear()
+        from wti15m.broker import BrokerError
+
+        async def denied(src, dst, dollars):
+            raise BrokerError("forbidden", 403, "")
+        shards.update({0: 15.0, 2: 0.0})
+        broker.move_cash = denied
+        trader._move_wait_until = 0.0
+        trader.synced_ts = 0
+        await engine.tracker.poll_once()
+        engine.tracker.current.exchange_index = 2  # real listings carry the shard; the simulator's do not
+        engine.step()
+        _plan(engine).id = 10
+        await trader.tick(now + 20)
+        assert trader.paused and "Transfers" in trader.pause_reason, (trader.blocked, trader.last_text, trader.shard_cash)
     finally:
         await feed.stop()
         store.close()
