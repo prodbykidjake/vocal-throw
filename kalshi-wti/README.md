@@ -66,6 +66,24 @@ python -m wti15m replay --retrain --save   # walk-forward retrain the learner fr
 pytest                        # unit tests (offline, fixtures)
 ```
 
+### On your phone
+
+```bash
+python -m wti15m serve --phone   # or put `phone = true` under [server] in config.toml
+```
+
+The terminal prints a private link like `http://192.168.1.23:8787/?key=...`. Send it to your phone
+(AirDrop, or text it to yourself), open it in Safari on the same Wi-Fi, then Share → **Add to Home Screen**.
+The phone remembers the key for a year, so after that the home-screen icon just opens the dashboard. On a
+phone the settlement call is shown first.
+
+- The first time, macOS may ask whether Python may accept incoming connections: click **Allow**.
+- The Mac has to stay awake and keep `serve` running (the phone only shows what the Mac computes).
+- Away from home: install Tailscale (free) on the Mac and the phone, sign in to both, and open the same link
+  with the Mac's Tailscale address (`100.x.y.z`) in place of `192.168.x.y`.
+- Without the key every other device gets "Locked". The link is the key: keep it private. Delete
+  `data/phone_key.txt` and restart to lock every phone out and get a new link.
+
 Leave `serve` running. The first ~30 minutes are warm-up (it needs price history to size the odds);
 after that, BUY/SELL signals trigger a macOS notification and a sound. Each 15-minute window appears
 automatically; nothing to click.

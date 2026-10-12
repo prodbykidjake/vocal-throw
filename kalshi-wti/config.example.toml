@@ -76,6 +76,7 @@ basis_min_t = 1.5               # ... and only when the bias is this many standa
 host = "127.0.0.1"
 port = 8787
 open_browser = true
+phone = false   # true = also reachable from your phone with a private link (same as `serve --phone`)
 
 [notify]
 desktop = true                  # macOS Notification Center via osascript

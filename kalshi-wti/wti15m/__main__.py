@@ -30,11 +30,13 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--sim", action="store_true", help="use the simulated market + feed")
     s = sub.add_parser("serve", help="run the dashboard at http://127.0.0.1:8787")
     s.add_argument("--no-browser", action="store_true")
+    s.add_argument("--phone", action="store_true", help="also open the dashboard to your phone (private link)")
     d = sub.add_parser("demo", help="dashboard on a simulated market/feed (works offline)")
     d.add_argument("--window", type=int, default=120, help="simulated window length in seconds")
     d.add_argument("--warmup", type=int, default=10, help="simulated warm-up minutes required before signals")
     d.add_argument("--no-browser", action="store_true")
     d.add_argument("--db", default="data/demo.db")
+    d.add_argument("--phone", action="store_true", help="also open the demo to your phone (private link)")
     r = sub.add_parser("replay", help="re-score recorded windows")
     r.add_argument("--since", help="ISO date, e.g. 2026-10-08")
     r.add_argument("--retrain", action="store_true", help="walk-forward retrain the calibrator from scratch")
@@ -107,19 +109,33 @@ async def run_watch(cfg, sim: bool):
         await task
 
 
-def run_server(cfg, engine, open_browser: bool):
+def run_server(cfg, engine, open_browser: bool, phone: bool = False):
+    import os
+
     import uvicorn
 
     from .app import create_app
 
-    app = create_app(engine)
+    phone_key = None
+    if phone:
+        from .phone import load_or_create_key
+        phone_key = load_or_create_key(os.path.dirname(cfg.storage.db_path) or ".")
+    app = create_app(engine, phone_key)
     stop = asyncio.Event()
+    bind = "0.0.0.0" if phone else cfg.server.host
 
     async def main():
         engine_task = asyncio.create_task(engine.run(stop))
-        server = uvicorn.Server(uvicorn.Config(app, host=cfg.server.host, port=cfg.server.port, log_level="warning"))
-        url = f"http://{cfg.server.host}:{cfg.server.port}"
+        server = uvicorn.Server(uvicorn.Config(app, host=bind, port=cfg.server.port, log_level="warning"))
+        url = f"http://127.0.0.1:{cfg.server.port}" if phone else f"http://{cfg.server.host}:{cfg.server.port}"
         print(f"dashboard v{__version__}: {url}   (Ctrl-C to stop)")
+        if phone:
+            from .phone import phone_links
+            links = phone_links(cfg.server.port, phone_key)
+            print("phone: open this link on your phone (same Wi-Fi), then Add to Home Screen:")
+            for link in links or [f"http://<your Mac's IP>:{cfg.server.port}/?key={phone_key}"]:
+                print(f"   {link}")
+            print("   keep the link private: it is the key. Delete data/phone_key.txt to lock phones out and get a new one.")
         if open_browser:
             threading.Timer(1.5, lambda: webbrowser.open(url)).start()
         try:
@@ -157,7 +173,7 @@ def main(argv=None) -> int:
     if args.cmd == "serve":
         engine = make_engine(cfg)
         try:
-            run_server(cfg, engine, cfg.server.open_browser and not args.no_browser)
+            run_server(cfg, engine, cfg.server.open_browser and not args.no_browser, args.phone or cfg.server.phone)
         except KeyboardInterrupt:
             pass
         return 0
@@ -176,7 +192,7 @@ def main(argv=None) -> int:
         cfg.notify.sound = False
         engine = make_engine(cfg, sim=True, window_s=args.window, db_path=args.db)
         try:
-            run_server(cfg, engine, cfg.server.open_browser and not args.no_browser)
+            run_server(cfg, engine, cfg.server.open_browser and not args.no_browser, args.phone)
         except KeyboardInterrupt:
             pass
         return 0

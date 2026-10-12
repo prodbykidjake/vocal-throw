@@ -102,6 +102,7 @@ class ServerCfg:
     host: str = "127.0.0.1"
     port: int = 8787
     open_browser: bool = True
+    phone: bool = False  # true = `serve` also answers your phone (same Wi-Fi or Tailscale) via a private link
 
 
 @dataclass
