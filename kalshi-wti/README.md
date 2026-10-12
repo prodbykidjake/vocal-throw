@@ -102,25 +102,7 @@ automatically; nothing to click.
   and Kalshi's odds are not wildly apart), otherwise it calls its best lean with `call_deadline_s` (2:00) left. A
   window the app joined late gets no call. The record (**Wins | Losses**) sits next to the number of wins Kalshi's
   own odds expected at the moments of the calls, so it shows whether the calls beat the market or only agree with it.
-  Since v12 the card also says what the call is worth paying: **worth buying up to 81¢** is the highest price that
-  still leaves `call_buy_margin` (2¢) of expected profit per contract after Kalshi's taker fee, from the model's
-  chance right now (the side stays locked; the price moves). The record adds what buying `unit_dollars` of every
-  call at Kalshi's ask at the moment it was made would have made after fees, and the same for only the calls whose
-  ask was at or under that price. Being right is not the same as making money: a call that wins 80% of the time
-  loses money bought at 85¢.
-- **Quick scalps** (v11, rebuilt): for each side priced 3–35¢, the card simulates the next 2 minutes of the bid and
-  asks the scalper's question: does the bid reach the sell target *before* it falls to the stop (or the 2 minutes run
-  out)? The underlying starts from the settlement feed's own price, and Kalshi's premium or discount to the model's
-  fair value fades over a few minutes (the market catching up). It tries targets 3–12¢ above the buy and stops
-  4–15¢ below (or no stop, out at 2:00) and keeps the pair with the best expected dollars after Kalshi's fees: the
-  buy takes the ask (taker fee), the target sell rests as a limit order (no fee on this series), a stop or timeout
-  sells into the bid (taker fee). It calls a side only when that pair still wins at least 55% of the time, makes
-  money on average after fees, the model rates the side at least as high as Kalshi does, there is no oil report in
-  the window, and a confident settlement call does not point the other way. Contracts this cheap swing ~15–20¢ in
-  two minutes, so a small model-vs-market disagreement does not survive the noise and the fees: the card stays
-  quiet most of the time and says why for each side. Every call is scored on paper ($5, from the ask it was called
-  at): **Wins | Losses**, paper P&L, and how many wins the simulations expected. "I bought this" fills the position
-  form and makes the target the low end of your sell zone. The signal card and the settlement call are unaffected.
+  The calls themselves never weigh prices or stakes: the card answers only "where will this settle?".
 - **Your position** (built for scalping): tap **UP** or **DOWN**, the price box fills with the live ask
   (edit it if your fill differed), type the dollars you spent, press Enter. The card then tracks it like
   Kalshi's sell sheet: shares, live sell price, **cash out** after fees and P&L, updating every second.

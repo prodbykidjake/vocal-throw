@@ -73,18 +73,6 @@ def test_record_counts_wins_losses_and_what_the_market_expected():
     assert ct2.step(10, "A", pred(0.1), 500, 400, 180) is None and ct2.call["side"] == "UP"
 
 
-def test_worth_buying_price_leaves_the_margin_after_fees():
-    from wti15m.calls import worth_up_to
-    from wti15m.fees import taker_fee
-
-    top = worth_up_to(0.80, 10.0, 0.02)
-    qty = 10.0 / top
-    assert 0.75 <= top <= 0.78 and 0.80 - top - taker_fee(top, qty) / qty >= 0.02
-    nxt = top + 0.01
-    assert 0.80 - nxt - taker_fee(nxt, 10.0 / nxt) / (10.0 / nxt) < 0.02  # one cent more no longer pays
-    assert worth_up_to(0.01, 10.0, 0.02) is None
-
-
 def test_old_config_call_prob_follows_the_timing_fix(tmp_path):
     from wti15m import config
 

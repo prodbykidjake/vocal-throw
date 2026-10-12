@@ -43,7 +43,7 @@ class PositionIn(BaseModel):
     amount: float  # dollars you spent
     price: float | None = None  # dollars per share (0.026 = 2.6¢); defaults to the live ask
     note: str = ""
-    target: float | None = None  # a sell target you took from the quick-scalps card (dollars)
+    target: float | None = None  # a sell target to start the sell zone from (dollars)
 
 
 class CloseIn(BaseModel):

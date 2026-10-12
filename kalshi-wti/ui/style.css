@@ -32,8 +32,7 @@ main { padding: 16px 20px 40px; max-width: 1400px; margin: 0 auto; }
   .grid > .card.prices { grid-column: span 12; }
   .grid > #signal-card { grid-column: span 5; }
   .grid > .chart-card { grid-column: span 7; }
-  .grid > #call-card { grid-column: span 5; }
-  .grid > #quick-card { grid-column: span 7; }
+  .grid > #call-card { grid-column: span 12; }
   .grid > #position-card { grid-column: span 12; }
   .grid > #log-card { grid-column: span 12; }
 }
@@ -99,6 +98,3 @@ input.amount { width: 180px; }
 .chip { font: 600 12px/1 var(--mono); padding: 4px 6px; border-radius: 6px; background: var(--card2); }
 .chip.win { color: var(--up); } .chip.loss { color: var(--down); }
 .version { font-size: 12px; margin-left: 6px; }
-.quick-box { font-size: 20px; font-weight: 800; text-align: center; padding: 12px; border-radius: 10px; margin: 6px 0 4px; background: var(--card2); color: var(--muted); letter-spacing: .02em; }
-.quick-box.call.up { background: rgba(46,204,143,.14); color: var(--up); }
-.quick-box.call.down { background: rgba(242,92,92,.14); color: var(--down); }

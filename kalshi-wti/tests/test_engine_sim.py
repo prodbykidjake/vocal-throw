@@ -197,7 +197,7 @@ def test_store_prune_and_settled_count(tmp_path):
     store.close()
 
 
-def test_quick_scalp_target_becomes_the_zone_low(tmp_path):
+def test_a_given_sell_target_becomes_the_zone_low(tmp_path):
     cfg = Config()
     store = Store(str(tmp_path / "q.db"))
     feed = SimFeed(start_price=90.0, warmup_minutes=40, seed=3)
@@ -212,7 +212,6 @@ def test_quick_scalp_target_becomes_the_zone_low(tmp_path):
         await feed.stop()
     asyncio.run(run())
     st = engine.state
-    assert "quick" in st and isinstance(st["quick"]["options"], list)
     m = engine.tracker.current
     side = "DOWN" if m.no_ask and m.no_ask <= 0.5 else "UP"
     pos = engine.open_position(side, 5.0, target=0.80)

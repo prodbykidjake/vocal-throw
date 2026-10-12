@@ -12,10 +12,6 @@ record:
 
 The record shows wins and losses next to the number of wins Kalshi's own odds expected at the moments of the calls,
 so it is clear whether the calls beat the market or just agree with it.
-
-v12: being right is not the same as making money. A call that wins 80% of the time loses money bought at 85¢, so the
-card also says what the call is worth paying ("worth buying up to"), records Kalshi's price at the moment of the call,
-and keeps a second record: what buying every call at that price would have made after fees.
 """
 from __future__ import annotations
 
@@ -23,21 +19,7 @@ import time
 
 from .config import TradingCfg
 from .decision import Quotes
-from .fees import FeeSchedule, taker_fee
 from .model import Prediction
-
-
-def worth_up_to(p_side: float | None, stake: float, margin: float, fees: FeeSchedule | None = None) -> float | None:
-    """The highest whole-cent price at which buying `stake` dollars of a side the model gives `p_side` still leaves
-    `margin` of expected value per contract after the taker fee. None when no price does."""
-    if p_side is None:
-        return None
-    for c in range(99, 0, -1):
-        price = c / 100.0
-        qty = stake / price
-        if p_side - price - taker_fee(price, qty, fees) / qty >= margin - 1e-9:
-            return price
-    return None
 
 
 class CallTracker:
@@ -49,9 +31,7 @@ class CallTracker:
         self._hold: tuple[str, float] | None = None  # (side, since): a confident side being confirmed
         self.watch: dict = {}  # what it is looking at before the call (for the card)
         self._first_left: float | None = None  # seconds left when the app first saw this window
-        self.fees = FeeSchedule()  # the engine keeps this in step with the series' fee schedule
-        self._quotes = Quotes()
-        self._pred: Prediction | None = None
+        self._quotes = Quotes()  # Kalshi's prices this second, recorded with a call
 
     # ------------------------------------------------------------------ per second
     def step(self, now: float, ticker: str | None, pred: Prediction | None, seconds_left: float | None,
@@ -59,7 +39,6 @@ class CallTracker:
         """Returns the call the second it is made, else None."""
         cfg = self.cfg
         self._quotes = quotes if quotes is not None else Quotes()
-        self._pred = pred
         if ticker != self._ticker:
             self._ticker = ticker
             self._hold = None
@@ -105,36 +84,10 @@ class CallTracker:
         if pred.p_market is not None:
             pm = pred.p_market if side == "UP" else 1.0 - pred.p_market
         q = self._quotes
-        self.store.add_call(ticker, side, p_side, pm, now, seconds_left, kind, q.ask(side), q.bid(side), self.max_price(p_side))
+        self.store.add_call(ticker, side, p_side, pm, now, seconds_left, kind, q.ask(side), q.bid(side))
         self.call = self.store.call_for(ticker)
         self._hold = None
         return self.call
-
-    def max_price(self, p_side: float | None) -> float | None:
-        return worth_up_to(p_side, self.cfg.unit_dollars, self.cfg.call_buy_margin, self.fees)
-
-    def backfill_prices(self):
-        """Calls made before v12 have no recorded price: take Kalshi's quote at that second from the stored quotes."""
-        for row in self.store.calls_missing_price():
-            q = self.store.quote_near(row["ticker"], row["ts"])
-            if q is None:
-                continue
-            up = row["side"] == "UP"
-            ask, bid = (q["yes_ask"], q["yes_bid"]) if up else (q["no_ask"], q["no_bid"])
-            if ask is not None:
-                self.store.set_call_price(row["ticker"], ask, bid, self.max_price(row["p_side"]))
-
-    def guide(self) -> dict | None:
-        """While the window is open: what the locked call is worth paying now (the side never changes; the price does)."""
-        call, pred = self.call, self._pred
-        if call is None or call.get("result") is not None or pred is None or pred.confidence in ("stale", "no_target"):
-            return None
-        side = call["side"]
-        p_now = pred.p_final if side == "UP" else 1.0 - pred.p_final
-        ask = self._quotes.ask(side)
-        top = self.max_price(p_now)
-        return {"p_now": round(p_now, 3), "ask": ask, "max_price": top,
-                "worth_it": ask is not None and top is not None and ask <= top + 1e-9}
 
     # ------------------------------------------------------------------ scoring
     def settle(self, ticker: str, label_up: bool):
@@ -143,7 +96,5 @@ class CallTracker:
             self.call = self.store.call_for(ticker)
 
     def state(self) -> dict:
-        return {"call": self.call, "watch": self.watch, "guide": self.guide(),
-                "record": self.store.call_record(stake=self.cfg.unit_dollars, fees=self.fees),
-                "rules": {"prob": self.cfg.call_prob, "hold_s": self.cfg.call_hold_s, "deadline_s": self.cfg.call_deadline_s,
-                          "margin": self.cfg.call_buy_margin, "stake": self.cfg.unit_dollars}}
+        return {"call": self.call, "watch": self.watch, "record": self.store.call_record(),
+                "rules": {"prob": self.cfg.call_prob, "hold_s": self.cfg.call_hold_s, "deadline_s": self.cfg.call_deadline_s}}

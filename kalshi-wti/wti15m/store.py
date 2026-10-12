@@ -77,7 +77,7 @@ class Store:
             if col not in have:
                 self.conn.execute(f"ALTER TABLE plans ADD COLUMN {col} {typ}")
         have = {row[1] for row in self.conn.execute("PRAGMA table_info(calls)")}
-        for col, typ in (("ask", "REAL"), ("bid", "REAL"), ("max_price", "REAL")):  # v12: Kalshi's price at the call
+        for col, typ in (("ask", "REAL"), ("bid", "REAL")):  # v12: Kalshi's price at the moment of the call
             if col not in have:
                 self.conn.execute(f"ALTER TABLE calls ADD COLUMN {col} {typ}")
 
@@ -175,38 +175,11 @@ class Store:
             (ticker, seconds_left_lo, seconds_left_hi)).fetchone()
         return float(row[0]) if row else None
 
-    # ------------------------------------------------------------------ quick scalps (paper-scored)
-    def add_quick(self, ticker: str, side: str, ts: float, ask: float, target: float, stop: float, horizon_end: float,
-                  p_win: float, ev: float, amount: float):
-        self.conn.execute("INSERT INTO quick_calls (ticker, side, ts, ask, target, stop, horizon_end, p_win, ev, amount) "
-                          "VALUES (?,?,?,?,?,?,?,?,?,?)", (ticker, side, ts, ask, target, stop, horizon_end, p_win, ev, amount))
-
-    def quick_open(self, ticker: str, side: str) -> dict | None:
-        row = self.conn.execute("SELECT * FROM quick_calls WHERE ticker=? AND side=? AND status='open' ORDER BY id DESC LIMIT 1",
-                                (ticker, side)).fetchone()
-        return dict(row) if row else None
-
-    def quick_open_rows(self, ticker: str) -> list[dict]:
-        return [dict(r) for r in self.conn.execute("SELECT * FROM quick_calls WHERE ticker=? AND status='open'", (ticker,)).fetchall()]
-
-    def close_quick(self, row_id: int, ts: float, exit_price: float, pnl: float, status: str, reason: str):
-        self.conn.execute("UPDATE quick_calls SET status=?, exit_price=?, pnl=?, ended_ts=?, reason=? WHERE id=? AND status='open'",
-                          (status, exit_price, pnl, ts, reason, row_id))
-
-    def quick_record(self, recent: int = 20) -> dict:
-        rows = [dict(r) for r in self.conn.execute("SELECT * FROM quick_calls WHERE status IN ('win','loss') ORDER BY ended_ts DESC").fetchall()]
-        wins = sum(1 for r in rows if r["status"] == "win")
-        return {"wins": wins, "losses": len(rows) - wins, "pnl": round(sum(r["pnl"] or 0.0 for r in rows), 2),
-                "expected_wins": round(sum(r["p_win"] or 0.0 for r in rows), 1),
-                "by_reason": {k: sum(1 for r in rows if r["reason"] == k) for k in ("target", "stop", "time", "window ended")},
-                "recent": [{"side": r["side"], "ask": r["ask"], "win": r["status"] == "win", "pnl": r["pnl"], "reason": r["reason"]}
-                           for r in rows[:recent]]}
-
     # ------------------------------------------------------------------ settlement calls
     def add_call(self, ticker: str, side: str, p_side: float, p_market_side: float | None, ts: float, seconds_left: float,
-                 kind: str, ask: float | None = None, bid: float | None = None, max_price: float | None = None):
-        self.conn.execute("INSERT OR IGNORE INTO calls (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid, max_price) "
-                          "VALUES (?,?,?,?,?,?,?,?,?,?)", (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid, max_price))
+                 kind: str, ask: float | None = None, bid: float | None = None):
+        self.conn.execute("INSERT OR IGNORE INTO calls (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid) "
+                          "VALUES (?,?,?,?,?,?,?,?,?)", (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid))
 
     def call_for(self, ticker: str) -> dict | None:
         row = self.conn.execute("SELECT * FROM calls WHERE ticker=?", (ticker,)).fetchone()
@@ -221,26 +194,9 @@ class Store:
                                  "WHERE c.result IS NULL AND w.result IN ('yes','no')").fetchall()
         return [dict(r) for r in rows]
 
-    def calls_missing_price(self) -> list[dict]:
-        return [dict(r) for r in self.conn.execute("SELECT * FROM calls WHERE ask IS NULL").fetchall()]
-
-    def quote_near(self, ticker: str, ts: float, within_s: float = 3.0) -> dict | None:
-        row = self.conn.execute("SELECT * FROM quotes WHERE ticker=? AND ts BETWEEN ? AND ? ORDER BY ABS(ts - ?) LIMIT 1",
-                                (ticker, ts - within_s, ts + within_s, ts)).fetchone()
-        return dict(row) if row else None
-
-    def set_call_price(self, ticker: str, ask: float | None, bid: float | None, max_price: float | None):
-        self.conn.execute("UPDATE calls SET ask=?, bid=?, max_price=? WHERE ticker=?", (ask, bid, max_price, ticker))
-
-    def call_record(self, recent: int = 20, stake: float = 10.0, fees=None) -> dict:
-        """Wins and losses, what Kalshi's odds expected, and what buying `stake` dollars of every call at Kalshi's ask
-        (at the moment it was made, taker fee included) would have made, held to settlement: for all calls, and for
-        the ones whose ask was at or under the card's 'worth buying up to' price."""
-        from .fees import taker_fee
-
+    def call_record(self, recent: int = 20) -> dict:
         rows = [dict(r) for r in self.conn.execute("SELECT * FROM calls WHERE result IS NOT NULL ORDER BY ts DESC").fetchall()]
-        out: dict = {"wins": 0, "losses": 0, "market_expected": 0.0, "model_expected": 0.0, "n_market": 0, "by_kind": {},
-                     "stake": stake, "bought": {"n": 0, "wins": 0, "pnl": 0.0}, "value": {"n": 0, "wins": 0, "pnl": 0.0}}
+        out: dict = {"wins": 0, "losses": 0, "market_expected": 0.0, "model_expected": 0.0, "n_market": 0, "by_kind": {}}
         for r in rows:
             win = bool(r["correct"])
             out["wins" if win else "losses"] += 1
@@ -250,23 +206,10 @@ class Store:
             if r["p_market_side"] is not None:
                 out["market_expected"] += r["p_market_side"]
                 out["n_market"] += 1
-            ask = r.get("ask")
-            if ask is not None and 0 < ask < 1:
-                qty = stake / ask
-                pnl = (qty if win else 0.0) - stake - taker_fee(ask, qty, fees)
-                groups = [out["bought"]]
-                if r.get("max_price") is not None and ask <= r["max_price"] + 1e-9:
-                    groups.append(out["value"])
-                for g in groups:
-                    g["n"] += 1
-                    g["wins"] += int(win)
-                    g["pnl"] += pnl
-        for g in (out["bought"], out["value"]):
-            g["pnl"] = round(g["pnl"], 2)
         out["market_expected"] = round(out["market_expected"], 1)
         out["model_expected"] = round(out["model_expected"], 1)
         out["recent"] = [{"ticker": r["ticker"], "side": r["side"], "correct": bool(r["correct"]), "kind": r["kind"],
-                          "p": r["p_side"], "seconds_left": r["seconds_left"], "ask": r.get("ask"), "max_price": r.get("max_price")}
+                          "p": r["p_side"], "seconds_left": r["seconds_left"]}
                          for r in rows[:recent]]
         return out
 

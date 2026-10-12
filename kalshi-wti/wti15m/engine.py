@@ -19,7 +19,6 @@ from .kalshi import Market, MarketTracker
 from .model import Calibrator, Model, Prediction
 from .notify import Notifier
 from .calls import CallTracker
-from .quick import QuickScalper
 from .plans import PlanEvent, PlanTracker
 from .store import Store
 
@@ -85,10 +84,8 @@ class Engine:
         self._refit_vol()
         # v10: the settlement call (one locked Up/Down prediction per window) and its record
         self.calls = CallTracker(t, store)
-        self.quick = QuickScalper(t, store)  # v11: quick scalps judged by first passage, scored on paper
         for row in store.unsettled_calls():  # windows that settled while the app was off
             self.calls.settle(row["ticker"], row["result"] == "yes")
-        self.calls.backfill_prices()  # v12: Kalshi's price at the moment of calls made before prices were recorded
 
     # ------------------------------------------------------------------ per-feed basis
     def _migrate_settle_timing(self):
@@ -195,7 +192,6 @@ class Engine:
                 self.fees = FeeSchedule.from_series(self.tracker.series.fee_type, self.tracker.series.fee_multiplier)
                 self.decider.fees = self.fees
                 self.plans.fees = self.fees
-                self.calls.fees = self.fees
         elif kind == "window_open":
             self.store.upsert_window(m)
             self._last_signal_key = None
@@ -513,10 +509,6 @@ class Engine:
                 when = f"{int(made['seconds_left'] // 60)}:{int(made['seconds_left'] % 60):02d} left"
                 text = (f"settlement call: {made['side']} on {m.ticker} · model {round(made['p_side'] * 100)}% "
                         f"({made['kind']}, {when})")
-                if made.get("max_price"):
-                    text += f" · worth buying up to {cents(made['max_price'])}"
-                    if made.get("ask") is not None:
-                        text += f" (Kalshi asks {cents(made['ask'])})"
                 self.log_event("call", text)
                 self.notifier.notify(f"WTI 15m: settles {made['side']}", text, "Glass")
             raw = self.decider.decide(pred, quotes, tick.price, m.strike, tau, elapsed, pos, now)
@@ -536,17 +528,9 @@ class Engine:
                 self.log_event("signal", sig.headline)
                 self._last_signal_key = sig.key
             self._maybe_notify(sig, now)
-            report = bool((self.decider.context or {}).get("events"))
-            self.quick.step(now, m.ticker, pred, quotes, tick.price, m.strike, tau, self.fees, report,
-                            self.calls.call, show=pos is None)
-            for line in self.quick.events:
-                self.log_event("quick", line)
             self._paper_step(m, pred, tick.price, tau, elapsed, now, quotes)
         else:
             self.calls.step(now, m.ticker if m else None, None, None, None, self._study_len())
-            self.quick.step(now, m.ticker if m else None, None, Quotes(), None, None, None, self.fees, False, None, show=False)
-            for line in self.quick.events:
-                self.log_event("quick", line)
             event = self.plans.update(now, m.ticker if m else None, None, Quotes(), None, None, None, None, self.position is not None)
             if event:
                 self._on_plan_event(event, now, Quotes())
@@ -821,7 +805,6 @@ class Engine:
             "signal": sig.as_dict() if sig else None,
             "position": self._position_state(m, sig, quotes_fresh),
             "plan": self.plans.plan.as_dict() if self.plans.plan else None,
-            "quick": self.quick.state(now),
             "plan_cooldown_s": max(0, round(self.plans.cooldown_until - now)) if self.plans.plan is None else 0,
             "last_plan": self.plans.last.as_dict() if self.plans.last else None,
             "paper": paper,
