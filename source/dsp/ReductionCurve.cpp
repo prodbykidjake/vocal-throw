@@ -18,6 +18,12 @@ static constexpr float kHardLevelRefDb = -80.0f;   // Hard mode: level factor is
 static constexpr float kHardLevelRangeDb = 30.0f;
 static constexpr float kLowCutStartHz = 80.0f;     // nothing is cut below here, full effect above kLowCutEndHz
 static constexpr float kLowCutEndHz = 200.0f;
+static constexpr float kTiltLowFullHz = 300.0f;    // low tilt is full strength below this, gone by kTiltLowGoneHz
+static constexpr float kTiltLowGoneHz = 1000.0f;
+static constexpr float kTiltHighStartHz = 2000.0f; // high tilt starts here, full strength from kTiltHighFullHz
+static constexpr float kTiltHighFullHz = 6000.0f;
+static constexpr float kTiltDetailRange = 0.5f;    // full tilt moves Detail by this much (0..1 scale)
+static constexpr float kTiltTimeOctaves = 2.5f;    // full tilt scales a time constant by 2^this
 // ----------------------------------------------------------------------------------------------------
 
 static float smoothstep (float edge0, float edge1, float x) noexcept
@@ -36,6 +42,8 @@ void ReductionCurve::prepare (const FrameConfig& config)
     attackCoef.assign (nb, 1.0f);
     releaseCoef.assign (nb, 1.0f);
     freqWeight.assign (nb, 1.0f);
+    lowShelf.assign (nb, 0.0f);
+    highShelf.assign (nb, 0.0f);
     specDb.assign (nb, 0.0f);
     clipped.assign (nb, 0.0f);
     target.assign (nb, 0.0f);
@@ -44,7 +52,12 @@ void ReductionCurve::prepare (const FrameConfig& config)
     prefix.assign (nb + 1, 0.0);
 
     for (size_t k = 0; k < nb; ++k)
-        freqWeight[k] = smoothstep (kLowCutStartHz, kLowCutEndHz, (float) k * cfg.binHz());
+    {
+        const auto f = (float) k * cfg.binHz();
+        freqWeight[k] = smoothstep (kLowCutStartHz, kLowCutEndHz, f);
+        lowShelf[k] = 1.0f - smoothstep (kTiltLowFullHz, kTiltLowGoneHz, f);
+        highShelf[k] = smoothstep (kTiltHighStartHz, kTiltHighFullHz, f);
+    }
 
     rebuildEnvelopeTables();
     rebuildBallisticsTables();
@@ -57,8 +70,11 @@ void ReductionCurve::reset()
 
 void ReductionCurve::setParams (const ReductionParams& p)
 {
-    const auto detailChanged = ! juce::exactlyEqual (p.detail01, params.detail01);
-    const auto timeChanged = ! juce::exactlyEqual (p.attack01, params.attack01) || ! juce::exactlyEqual (p.release01, params.release01);
+    const auto detailChanged = ! juce::exactlyEqual (p.detail01, params.detail01)
+        || ! juce::exactlyEqual (p.detailLow, params.detailLow) || ! juce::exactlyEqual (p.detailHigh, params.detailHigh);
+    const auto timeChanged = ! juce::exactlyEqual (p.attack01, params.attack01) || ! juce::exactlyEqual (p.release01, params.release01)
+        || ! juce::exactlyEqual (p.attackLow, params.attackLow) || ! juce::exactlyEqual (p.attackHigh, params.attackHigh)
+        || ! juce::exactlyEqual (p.releaseLow, params.releaseLow) || ! juce::exactlyEqual (p.releaseHigh, params.releaseHigh);
     params = p;
 
     if (detailChanged)
@@ -69,12 +85,15 @@ void ReductionCurve::setParams (const ReductionParams& p)
 
 void ReductionCurve::rebuildEnvelopeTables()
 {
-    const auto widthOct = kWidestEnvelopeOct * std::pow (kNarrowestEnvelopeOct / kWidestEnvelopeOct, params.detail01);
-    const auto ratio = std::pow (2.0f, widthOct * 0.5f);
     const int last = cfg.numBins - 1;
 
     for (int k = 0; k <= last; ++k)
     {
+        const auto tilt = params.detailLow * lowShelf[(size_t) k] + params.detailHigh * highShelf[(size_t) k];
+        const auto detail = juce::jlimit (0.0f, 1.0f, params.detail01 + kTiltDetailRange * juce::jlimit (-1.0f, 1.0f, tilt));
+        const auto widthOct = kWidestEnvelopeOct * std::pow (kNarrowestEnvelopeOct / kWidestEnvelopeOct, detail);
+        const auto ratio = std::pow (2.0f, widthOct * 0.5f);
+
         auto lo = (int) std::floor ((float) k / ratio);
         auto hi = (int) std::ceil ((float) k * ratio);
         lo = std::min (lo, k - 4);
@@ -95,8 +114,12 @@ void ReductionCurve::rebuildBallisticsTables()
     {
         const auto f = std::max ((float) k * cfg.binHz(), 20.0f);
         const auto freqScale = juce::jlimit (0.35f, 2.5f, std::pow (1000.0f / f, 0.4f));
-        const auto a = attackMs * 0.001f * freqScale;
-        const auto r = releaseMs * 0.001f * freqScale;
+        const auto lo = lowShelf[(size_t) k];
+        const auto hi = highShelf[(size_t) k];
+        const auto attackTilt = juce::jlimit (-1.0f, 1.0f, params.attackLow * lo + params.attackHigh * hi);
+        const auto releaseTilt = juce::jlimit (-1.0f, 1.0f, params.releaseLow * lo + params.releaseHigh * hi);
+        const auto a = attackMs * 0.001f * freqScale * std::exp2 (attackTilt * kTiltTimeOctaves);
+        const auto r = releaseMs * 0.001f * freqScale * std::exp2 (releaseTilt * kTiltTimeOctaves);
         attackCoef[(size_t) k] = 1.0f - std::exp (-hopSeconds / a);
         releaseCoef[(size_t) k] = 1.0f - std::exp (-hopSeconds / r);
     }

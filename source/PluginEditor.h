@@ -35,6 +35,8 @@ private:
     ReductionGraph graph;
 
     std::vector<std::unique_ptr<Knob>> knobs;
+    std::vector<std::unique_ptr<Knob>> tiltKnobs;
+    juce::Label tiltLabel { {}, "TILT  (low < 500 Hz, high > 2 kHz)" };
 
     juce::ComboBox modeBox, stereoBox;
     juce::Label modeLabel { {}, "Mode" }, stereoLabel { {}, "Stereo" };

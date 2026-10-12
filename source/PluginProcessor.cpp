@@ -152,6 +152,12 @@ vs::SuppressorParams PluginProcessor::readParams() const noexcept
     p.link = get (ParamIDs::link);
     p.delta = get (ParamIDs::delta) >= 0.5f;
     p.bypass = get (ParamIDs::bypass) >= 0.5f;
+    p.detailTiltLow = get (ParamIDs::detailLow);
+    p.detailTiltHigh = get (ParamIDs::detailHigh);
+    p.attackTiltLow = get (ParamIDs::attackLow);
+    p.attackTiltHigh = get (ParamIDs::attackHigh);
+    p.releaseTiltLow = get (ParamIDs::releaseLow);
+    p.releaseTiltHigh = get (ParamIDs::releaseHigh);
     return p;
 }
 

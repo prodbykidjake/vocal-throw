@@ -17,6 +17,12 @@ inline constexpr auto stereoMode = "stereoMode";
 inline constexpr auto link = "link";
 inline constexpr auto delta = "delta";
 inline constexpr auto bypass = "bypass";
+inline constexpr auto detailLow = "detailLow";
+inline constexpr auto detailHigh = "detailHigh";
+inline constexpr auto attackLow = "attackLow";
+inline constexpr auto attackHigh = "attackHigh";
+inline constexpr auto releaseLow = "releaseLow";
+inline constexpr auto releaseHigh = "releaseHigh";
 } // namespace ParamIDs
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();

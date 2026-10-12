@@ -86,6 +86,12 @@ void ResonanceSuppressor::setParams (const SuppressorParams& p) noexcept
     rp.attack01 = juce::jlimit (0.0f, 1.0f, p.attack * 0.01f);
     rp.release01 = juce::jlimit (0.0f, 1.0f, p.release * 0.01f);
     rp.maxCutDb = p.maxCutDb;
+    rp.detailLow = juce::jlimit (-1.0f, 1.0f, p.detailTiltLow * 0.01f);
+    rp.detailHigh = juce::jlimit (-1.0f, 1.0f, p.detailTiltHigh * 0.01f);
+    rp.attackLow = juce::jlimit (-1.0f, 1.0f, p.attackTiltLow * 0.01f);
+    rp.attackHigh = juce::jlimit (-1.0f, 1.0f, p.attackTiltHigh * 0.01f);
+    rp.releaseLow = juce::jlimit (-1.0f, 1.0f, p.releaseTiltLow * 0.01f);
+    rp.releaseHigh = juce::jlimit (-1.0f, 1.0f, p.releaseTiltHigh * 0.01f);
     for (auto& c : curves)
         c.setParams (rp);
 

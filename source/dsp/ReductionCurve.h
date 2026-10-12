@@ -14,6 +14,12 @@ struct ReductionParams
     float release01 = 0.5f;
     float maxCutDb = 12.0f;
 
+    // Tilts, -1..+1. "Low" acts below ~500 Hz and "high" above ~2 kHz, like very gentle shelves.
+    // Positive detail tilt = narrower, positive attack/release tilt = slower.
+    float detailLow = 0.0f, detailHigh = 0.0f;
+    float attackLow = 0.0f, attackHigh = 0.0f;
+    float releaseLow = 0.0f, releaseHigh = 0.0f;
+
     bool operator== (const ReductionParams&) const = default;
 };
 
@@ -42,7 +48,7 @@ private:
     ReductionParams params;
 
     std::vector<int> loIdx, hiIdx;
-    std::vector<float> attackCoef, releaseCoef, freqWeight;
+    std::vector<float> attackCoef, releaseCoef, freqWeight, lowShelf, highShelf;
     std::vector<float> specDb, clipped, target, smoothed, reduction;
     std::vector<double> prefix;
 };

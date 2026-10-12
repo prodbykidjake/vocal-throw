@@ -23,6 +23,11 @@ struct SuppressorParams
     float link = 100.0f; // percent
     bool delta = false;
     bool bypass = false;
+
+    // -100..+100 %
+    float detailTiltLow = 0.0f, detailTiltHigh = 0.0f;
+    float attackTiltLow = 0.0f, attackTiltHigh = 0.0f;
+    float releaseTiltLow = 0.0f, releaseTiltHigh = 0.0f;
 };
 
 /** The whole effect: (optional M/S) -> analysis -> reduction curve -> minimum-phase dynamic filter ->

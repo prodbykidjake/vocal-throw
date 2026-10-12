@@ -33,5 +33,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::delta, version }, "Delta", false));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::bypass, version }, "Bypass", false));
 
+    auto tilt = [] (const char* id, const char* name) {
+        return std::make_unique<AudioParameterFloat> (ParameterID { id, version }, name,
+            NormalisableRange<float> (-100.0f, 100.0f, 0.1f), 0.0f,
+            AudioParameterFloatAttributes().withLabel ("%"));
+    };
+
+    layout.add (tilt (ParamIDs::detailLow, "Detail Tilt Low"));
+    layout.add (tilt (ParamIDs::detailHigh, "Detail Tilt High"));
+    layout.add (tilt (ParamIDs::attackLow, "Attack Tilt Low"));
+    layout.add (tilt (ParamIDs::attackHigh, "Attack Tilt High"));
+    layout.add (tilt (ParamIDs::releaseLow, "Release Tilt Low"));
+    layout.add (tilt (ParamIDs::releaseHigh, "Release Tilt High"));
+
     return layout;
 }

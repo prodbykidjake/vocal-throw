@@ -10,6 +10,8 @@ constexpr int kGraphHeight = 190;
 constexpr int kKnobSize = 92;
 constexpr int kKnobGap = 8;
 constexpr int kNumKnobs = 9;
+constexpr int kTiltKnobSize = 70;
+constexpr int kTiltRowHeight = 18 + kTiltKnobSize + 20;
 } // namespace
 
 PluginEditor::Knob::Knob (juce::AudioProcessorValueTreeState& state, const juce::String& paramID, const juce::String& labelText, juce::Component& parent)
@@ -49,6 +51,21 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     for (const auto& [id, name] : knobDefs)
         knobs.push_back (std::make_unique<Knob> (processorRef.apvts, id, name, *this));
 
+    const std::pair<const char*, const char*> tiltDefs[] = {
+        { ParamIDs::detailLow, "Detail Lo" },
+        { ParamIDs::detailHigh, "Detail Hi" },
+        { ParamIDs::attackLow, "Attack Lo" },
+        { ParamIDs::attackHigh, "Attack Hi" },
+        { ParamIDs::releaseLow, "Release Lo" },
+        { ParamIDs::releaseHigh, "Release Hi" },
+    };
+    for (const auto& [id, name] : tiltDefs)
+        tiltKnobs.push_back (std::make_unique<Knob> (processorRef.apvts, id, name, *this));
+
+    tiltLabel.setFont (juce::FontOptions (11.0f));
+    tiltLabel.setColour (juce::Label::textColourId, juce::Colours::grey);
+    addAndMakeVisible (tiltLabel);
+
     // The choice items must exist before the attachments pick a selection, so add them via the parameter
     modeBox.addItemList ({ "Soft", "Hard" }, 1);
     stereoBox.addItemList ({ "L/R", "M/S" }, 1);
@@ -71,7 +88,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         inspector->setVisible (true);
     };
 
-    setSize (kMargin * 2 + kNumKnobs * kKnobSize + (kNumKnobs - 1) * kKnobGap, kHeaderHeight + kGraphHeight + 2 * kMargin + 18 + kKnobSize + 20 + 28 + 30);
+    setSize (kMargin * 2 + kNumKnobs * kKnobSize + (kNumKnobs - 1) * kKnobGap, kHeaderHeight + kGraphHeight + 2 * kMargin + 18 + kKnobSize + 20 + 28 + 30 + kMargin + 16 + kTiltRowHeight);
 }
 
 PluginEditor::~PluginEditor()
@@ -118,6 +135,16 @@ void PluginEditor::resized()
     controls.removeFromLeft (20);
     deltaButton.setBounds (controls.removeFromLeft (80));
     bypassButton.setBounds (controls.removeFromLeft (80));
+
+    area.removeFromTop (kMargin);
+    tiltLabel.setBounds (area.removeFromTop (16).reduced (kMargin, 0));
+    area.removeFromTop (18);
+    auto tiltRow = area.removeFromTop (kTiltKnobSize + 20).reduced (kMargin, 0);
+    for (auto& k : tiltKnobs)
+    {
+        k->slider.setBounds (tiltRow.removeFromLeft (kTiltKnobSize));
+        tiltRow.removeFromLeft (kKnobGap);
+    }
 
     inspectButton.setBounds (getLocalBounds().removeFromBottom (30).removeFromRight (120).reduced (4));
 }
