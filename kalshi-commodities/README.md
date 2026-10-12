@@ -7,6 +7,16 @@ Platinum, plus any new one Kalshi adds. Each card runs the WTI coach's **settlem
 - the confidence meter;
 - a **Wins | Losses** record next to what Kalshi's own odds expected.
 
+**WTI, Natural Gas and Gold run their coaches' own engines**:
+- WTI: the WTI coach's v12 engine;
+- Natural Gas: the gas coach's v1.0.1 engine;
+- Gold: the gold coach's v1 engine.
+
+Each runs exactly as in its own app: the same model, study period, learned volatility, settlement timing, learner,
+and call rules. Silver, Copper, Palladium and Platinum run the board's own settlement-caller desk (the same call,
+with scale worked out per market). The engines are copies inside this folder (`wti15m/`, `ng15m/`, `gold15m/`). On
+the board only their settlement calls notify; their signal-card BUY/SELL alerts stay quiet.
+
 It is a separate app (package `cm15m`, folder `kalshi-commodities`, port **8790**). It shares no code, data or
 records with the WTI, natural gas or gold coaches, and they keep running as they are.
 
@@ -52,8 +62,8 @@ It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
   Windows holding a report get no new calls. CPI, jobs and PCE dates are not built in, because they could not be
   checked against the official schedules. Add them per market in `config.toml` (see `config.example.toml`).
-- **Kalshi's rate limit:** one shared connection, at most 10 requests a second. Each market refreshes every
-  2 seconds, staggered. The page footer shows if Kalshi ever slows the board down.
+- **Kalshi's rate limit:** one shared limiter, at most 14 requests a second. The three coach engines refresh every
+  second, as in their own apps, and the other four markets every 2 seconds, staggered. The page footer shows if Kalshi ever slows the board down.
 
 ## Setup (macOS, next to the other coaches)
 

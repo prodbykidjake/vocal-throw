@@ -1,7 +1,7 @@
 # Copy to config.toml (git-ignored). Every key is optional; these are the defaults.
 
 [kalshi]
-max_requests_per_s = 10.0       # shared by every market on the board (Kalshi's public tier allows ~20; the other coaches need some)
+max_requests_per_s = 14.0       # shared by every market on the board (Kalshi's public tier allows ~20; the other coaches need some)
 poll_s = 2.0                    # each market's order book and live price, staggered across markets
 discovery_s = 10.0              # how often each market re-reads its window list
 category = "Commodities"        # Kalshi category searched for 15-minute series

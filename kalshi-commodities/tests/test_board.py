@@ -99,3 +99,40 @@ async def test_seven_simulated_markets_each_get_a_card_with_its_own_scale(tmp_pa
     assert sorted(p.name for p in tmp_path.glob("*.db")) == sorted(f"{m.key}.db" for m in KNOWN)
     board.set_muted("gold", True)
     assert Board(cfg).muted == {"gold"}  # remembered across restarts
+
+
+async def test_wti_gas_and_gold_run_their_own_coach_engines(tmp_path):
+    from cm15m.engines import CallsOnlyNotifier, EngineDesk
+    from wti15m import __version__ as wti_version
+    from wti15m.engine import Engine as WtiEngine
+    from ng15m.engine import Engine as GasEngine
+    from gold15m.engine import Engine as GoldEngine
+
+    cfg = Config()
+    cfg.storage.data_dir = str(tmp_path)
+    cfg.notify.desktop = cfg.notify.sound = False
+    cfg.trading.min_warmup_minutes = 1
+    board = Board(cfg, sim={"window_s": 120, "warmup_minutes": 10})
+    await board.build()
+    kinds = {d.spec.key: type(getattr(d, "engine", d)) for d in board.desks}
+    assert kinds["wti"] is WtiEngine and kinds["natgas"] is GasEngine and kinds["gold"] is GoldEngine
+    assert wti_version.startswith("0.12")  # the v12 line
+    assert not isinstance(board.desk("silver"), EngineDesk)  # the other four use the board's own desks
+    stop = asyncio.Event()
+    task = asyncio.create_task(board.run(stop))
+    await asyncio.sleep(4)
+    stop.set()
+    await task
+    by = {m["key"]: m for m in board.state["markets"]}
+    assert by["wti"]["engine"] == "WTI v12 engine" and by["wti"]["prediction"] and "meter" in by["wti"]["call"]
+    assert by["natgas"]["engine"].startswith("gas") and by["gold"]["engine"].startswith("gold")
+    assert board.desk("wti").detail()["chart"]["ticks"]
+    # the engines' BUY/SELL and plan notifications stay quiet on the board; settlement calls go through unless muted
+    sent = []
+    class Inner:
+        def notify(self, title, message, sound_name="Glass"):
+            sent.append(title)
+    n = CallsOnlyNotifier(Inner(), "wti", lambda k: False)
+    n.notify("WTI 15m: BUY UP", "x"); n.notify("WTI 15m: settles UP", "y")
+    CallsOnlyNotifier(Inner(), "wti", lambda k: True).notify("WTI 15m: settles DOWN", "z")
+    assert sent == ["WTI 15m: settles UP"]

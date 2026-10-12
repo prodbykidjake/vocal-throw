@@ -14,6 +14,7 @@ import time
 
 from .config import Config
 from .desk import Desk
+from .engines import ENGINES, EngineDesk
 from .feeds.kalshi_live import KalshiLiveFeed, event_ticker_for
 from .kalshi import KalshiClient, RateLimiter
 from .markets import KNOWN, MarketSpec, discover
@@ -66,7 +67,9 @@ class Board:
             self.desks.append(self._make_desk(spec))
         log.info("board: %d markets: %s", len(self.desks), ", ".join(d.spec.name for d in self.desks))
 
-    def _make_desk(self, spec: MarketSpec) -> Desk:
+    def _make_desk(self, spec: MarketSpec):
+        if spec.key in ENGINES:  # WTI, Natural Gas and Gold run their coaches' own engines
+            return EngineDesk(spec, self.cfg, self.limiter, self.notifier, self.is_muted, self.sim)
         store = Store(os.path.join(self.cfg.storage.data_dir, f"{spec.key}.db"))
         if self.sim is not None:
             from .feeds.sim import SimFeed
@@ -115,8 +118,11 @@ class Board:
                 except Exception:
                     pass
 
-    async def _start_desk(self, d: Desk, delay: float, stop: asyncio.Event):
+    async def _start_desk(self, d, delay: float, stop: asyncio.Event):
         await asyncio.sleep(delay)
+        if isinstance(d, EngineDesk):
+            await d.start(stop)
+            return
         await d.feed.start()
         await d.tracker.run(stop)
 
@@ -141,4 +147,6 @@ class Board:
         total["market_expected"] = round(total["market_expected"], 1)
         return {"now": time.time(), "status": "live", "uptime_s": round(time.time() - self.started_ts),
                 "markets": markets, "record": total, "lines": lines,
-                "requests": getattr(self.client, "requests", None), "throttled": self.limiter.throttled}
+                "requests": None if self.sim is not None else (getattr(self.client, "requests", 0) or 0)
+                + sum(d.requests for d in self.desks if isinstance(d, EngineDesk)),
+                "throttled": self.limiter.throttled}

@@ -12,28 +12,27 @@
 
   // ------------------------------------------------------------------ cards
   function cardHtml(m) {
-    return `<div class="mkt" id="mkt-${esc(m.key)}" data-key="${esc(m.key)}">
-      <div class="mkt-top"><span class="mkt-badge" style="background:${esc(m.color)}">${esc(m.badge)}</span>
-        <span class="mkt-kind">${esc(m.kind === "metal" ? "metals" : m.kind === "oil" || m.kind === "gas" ? "oil & gas" : "commodities")}</span>
-        <button type="button" class="mute" data-act="mute" title="mute or unmute this market's notifications">🔔</button></div>
-      <div class="mkt-title"><span data-f="title"></span></div>
-      <div class="mkt-live"><span class="dot">● LIVE</span> <span data-f="close"></span> · <span data-f="countdown" class="mono"></span></div>
-      <div class="mkt-prices"><div><div class="lbl">target</div><div class="val" data-f="target">--</div></div>
-        <div style="text-align:right"><div class="lbl">now</div><div class="val" data-f="now">--</div><div class="sub" data-f="delta"></div></div></div>
-      <div class="mkt-odds"><div class="odd up" data-f="odd-up">Up --</div><div class="odd down" data-f="odd-down">Down --</div></div>
-      <div class="call-box" data-f="box">waiting…</div>
+    return `<article class="mkt" id="mkt-${esc(m.key)}" data-key="${esc(m.key)}" style="--accent:${esc(m.color)}">
+      <div class="mkt-top"><span class="chip-badge" style="background:${esc(m.color)}">${esc(m.badge)}</span>
+        <div><div class="mkt-name">${esc(m.name)}</div><div class="mkt-meta" data-f="meta"></div></div>
+        <div class="spacer"></div>
+        <button type="button" class="icon-btn" data-act="mute" title="mute or unmute this market's notifications">🔔</button></div>
+      <div class="timebar"><span class="live">LIVE</span><div class="progress"><div data-f="progress" style="width:0%"></div></div><span class="cd" data-f="countdown">--:--</span></div>
+      <div class="prices"><div><div class="px-k">target</div><div class="px-v" data-f="target">--</div></div>
+        <div class="right"><div class="px-k">now</div><div class="px-v" data-f="now">--</div><div class="px-d" data-f="delta"></div></div></div>
+      <div class="odds"><div class="odds-bar"><div class="o-up" data-f="odd-up" style="width:50%">Up --</div><div class="o-down" data-f="odd-down">Down --</div></div></div>
+      <div class="callbox" data-f="box">waiting…</div>
       <div class="meter hidden" data-f="meter">
         <div class="meter-labels"><span class="down">◀ DOWN</span><span class="meter-read" data-f="read">--</span><span class="up">UP ▶</span></div>
         <div class="meter-track"><div class="meter-band" data-f="band"></div><div class="meter-fill" data-f="fill"></div>
           <div class="meter-line" data-f="line-down"></div><div class="meter-line" data-f="line-up"></div><div class="meter-mid"></div>
           <div class="meter-mkt" data-f="mkt" title="Kalshi's odds"></div></div>
       </div>
-      <div class="mkt-note" data-f="note"></div>
-      <div class="mkt-status" data-f="status"></div>
-      <div class="mkt-record" data-f="record">Wins: 0 | Losses: 0</div>
-      <div class="mkt-bench" data-f="bench"></div>
-      <div class="call-recent" data-f="recent"></div>
-    </div>`;
+      <div class="note" data-f="note"></div>
+      <div class="warn" data-f="status"></div>
+      <div class="rec"><div><div class="rec-v" data-f="record">0–0</div><div class="rec-k" data-f="bench">no settled calls yet</div></div>
+        <div class="chips" data-f="recent"></div></div>
+    </article>`;
   }
 
   function ensureCards(markets) {
@@ -48,49 +47,50 @@
   function renderCard(m) {
     const card = $(`mkt-${m.key}`); if (!card) return;
     const sc = m.scale || { decimals: 2, cents: true }, mk = m.market, tick = m.tick, c = m.call || {};
-    f(card, "title").textContent = `${m.name} 15 min` + (mk && mk.strike != null ? ` · ${px(mk.strike, sc.decimals)} target` : "");
-    f(card, "close").textContent = mk && mk.close_label ? `closes ${mk.close_label}` : "";
+    f(card, "meta").innerHTML = `${esc(m.series)} · ${mk && mk.close_label ? "closes " + esc(mk.close_label) : "waiting for a window"}` +
+      (m.engine ? ` · <span class="eng">${esc(m.engine)}</span>` : "");
     f(card, "countdown").textContent = m.countdown || "--:--";
-    card.classList.toggle("live", m.status === "live");
+    f(card, "progress").style.width = m.seconds_left == null ? "0%" : `${Math.max(0, Math.min(100, 100 * (1 - m.seconds_left / 900))).toFixed(1)}%`;
     f(card, "target").textContent = mk && mk.strike != null ? px(mk.strike, sc.decimals) : "--";
     f(card, "now").textContent = tick ? px(tick.price, sc.decimals) : "--";
     const d = tick && mk && mk.strike != null ? tick.price - mk.strike : null;
     const dl = f(card, "delta");
-    dl.textContent = d == null ? "" : `${d >= 0 ? "▲" : "▼"} ${move(d, sc)} vs target`;
-    dl.className = "sub " + (d == null ? "" : d >= 0 ? "up" : "down");
+    dl.textContent = d == null ? "" : `${d >= 0 ? "▲" : "▼"} ${move(d, sc)} ${d >= 0 ? "above" : "below"}`;
+    dl.className = "px-d " + (d == null ? "" : d >= 0 ? "up" : "down");
     const pm = m.prediction && m.prediction.p_market != null ? m.prediction.p_market : (mk && mk.yes_bid != null && mk.yes_ask != null ? (mk.yes_bid + mk.yes_ask) / 2 : null);
-    f(card, "odd-up").textContent = `Up ${pct(pm)}`;
+    const ou = f(card, "odd-up");
+    ou.style.width = pm == null ? "50%" : `${Math.max(14, Math.min(86, pm * 100)).toFixed(1)}%`;
+    ou.textContent = `Up ${pct(pm)}`;
     f(card, "odd-down").textContent = `Down ${pm == null ? "--" : pct(1 - pm)}`;
     card.querySelector('[data-act="mute"]').textContent = m.muted ? "🔕" : "🔔";
-    // the call box
     const call = c.call, w = c.watch || {}, rules = c.rules || {}, box = f(card, "box");
+    card.classList.toggle("called-up", !!call && call.side === "UP" && call.result == null);
+    card.classList.toggle("called-down", !!call && call.side === "DOWN" && call.result == null);
     if (call) {
       const res = call.result == null ? "" : call.correct ? " · WIN ✓" : " · LOSS ✗";
-      box.textContent = `${call.side} AT SETTLEMENT${res}`;
-      box.className = "call-box " + (call.side === "UP" ? "up" : "down") + (call.result == null ? "" : call.correct ? " win" : " loss");
+      box.textContent = `${call.side === "UP" ? "▲" : "▼"} ${call.side} AT SETTLEMENT${res}`;
+      box.className = "callbox " + (call.side === "UP" ? "up" : "down") + (call.result == null ? "" : call.correct ? " win" : " loss");
     } else if (w.status === "studying" || w.status === "watching") {
-      box.textContent = (w.status === "studying" ? `STUDYING · ${mmss(w.study_left_s)}` : "WATCHING") + (w.confirming_s != null ? ` · confirming ${w.confirming_s}/${rules.hold_s} s` : "");
-      box.className = "call-box";
+      box.textContent = (w.status === "studying" ? `STUDYING · ${mmss(w.study_left_s)}` : "WATCHING") + (w.confirming_s != null ? ` · confirming ${w.confirming_s}/${rules.hold_s}s` : "");
+      box.className = "callbox";
     } else {
-      box.textContent = (w.status || "waiting for the next window").toUpperCase(); box.className = "call-box";
+      box.textContent = (w.status || "waiting for the next window").toUpperCase(); box.className = "callbox";
     }
     renderMeter(card, c, call, w, rules);
-    // status line for problems only
     const st = f(card, "status");
-    st.textContent = m.status === "no_series" ? `Kalshi has no ${m.series} series (check the probe)` :
+    st.textContent = m.status === "no_series" ? `Kalshi has no ${m.series} series right now` :
       m.status === "no_feed" ? "waiting for Kalshi's live price…" : m.status === "no_market" ? "no window trading right now" :
-      (m.feed && m.feed.age_s != null && m.feed.age_s > 8) ? `live price is ${Math.round(m.feed.age_s)} s old: no new calls` : "";
-    // record
+      (m.feed && m.feed.age_s != null && m.feed.age_s > 8) ? `live price is ${Math.round(m.feed.age_s)}s old: no new calls` : "";
     const r = c.record || {}, n = (r.wins || 0) + (r.losses || 0);
-    f(card, "record").textContent = `Wins: ${r.wins || 0} | Losses: ${r.losses || 0}` + (n ? ` (${Math.round(100 * r.wins / n)}%)` : "");
-    f(card, "bench").textContent = n ? `Kalshi's odds expected ${r.market_expected} wins over ${r.n_market} calls` : "no settled calls yet";
-    f(card, "recent").innerHTML = (r.recent || []).slice(0, 10).reverse().map((x) =>
-      `<span class="chip ${x.correct ? "win" : "loss"}" title="${esc(x.ticker)} · ${esc(x.kind)} · ${pct(x.p)}">${x.side === "UP" ? "▲" : "▼"}${x.correct ? "✓" : "✗"}</span>`).join("");
+    f(card, "record").textContent = `${r.wins || 0}–${r.losses || 0}` + (n ? ` · ${Math.round(100 * r.wins / n)}%` : "");
+    f(card, "bench").textContent = n ? `Kalshi expected ${r.market_expected} of ${r.n_market}` : "no settled calls yet";
+    f(card, "recent").innerHTML = (r.recent || []).slice(0, 12).reverse().map((x) =>
+      `<span class="c ${x.correct ? "w" : "l"}" title="${esc(x.ticker)} · ${esc(x.side)} · ${pct(x.p)}">${x.correct ? "✓" : "✗"}</span>`).join("");
   }
 
   function renderMeter(card, c, call, w, rules) {
     const m = c.meter, box = f(card, "meter"), note = f(card, "note");
-    if (!m) { box.classList.add("hidden"); note.textContent = w.status && !call ? "" : note.textContent; return; }
+    if (!m) { box.classList.add("hidden"); note.textContent = ""; return; }
     box.classList.remove("hidden");
     const pos = (p) => `${(100 * p).toFixed(1)}%`, up = m.p_up >= 0.5, side = up ? "UP" : "DOWN";
     const pSide = up ? m.p_up : 1 - m.p_up, line = m.line || 0.72;
@@ -105,14 +105,14 @@
     const read = f(card, "read");
     read.textContent = `${side} ${Math.round(pSide * 100)}%`; read.className = "meter-read " + (up ? "up" : "down");
     const loSide = up ? m.lo : 1 - m.hi, hiSide = up ? m.hi : 1 - m.lo;
-    const range = (m.lo < 0.5 && m.hi > 0.5) ? "crossing between Up and Down" : `between ${Math.round(Math.min(loSide, hiSide) * 100)}% and ${Math.round(Math.max(loSide, hiSide) * 100)}% ${side}`;
+    const range = (m.lo < 0.5 && m.hi > 0.5) ? "crossing Up/Down" : `${Math.round(Math.min(loSide, hiSide) * 100)}–${Math.round(Math.max(loSide, hiSide) * 100)}% ${side}`;
     let t;
-    if (call) t = `called ${call.side} with ${mmss(call.seconds_left)} left at ${pct(call.p_side)} · model now ${side} ${Math.round(pSide * 100)}% · the call stays (locked)`;
+    if (call) t = `called ${call.side} at ${pct(call.p_side)} with ${mmss(call.seconds_left)} left · now ${side} ${Math.round(pSide * 100)}% · locked`;
     else if ((w.status || "").startsWith("no call")) t = `${w.status} · the meter only shows what the model sees`;
-    else if (w.status === "studying") t = `studying: no call for ${mmss(w.study_left_s)} · last 30 s ${range}`;
-    else if (w.confirming_s != null) t = `over the ${Math.round(line * 100)}% line · confirming ${w.confirming_s}/${rules.hold_s} s`;
-    else if (m.disagree) t = "model and Kalshi's odds are far apart: no confident call until they come closer";
-    else t = `needs ${Math.round(line * 100)}% for ${rules.hold_s} s · last 30 s ${range}` + (w.deadline_in_s != null ? ` · otherwise its lean in ${mmss(w.deadline_in_s)}` : "");
+    else if (w.status === "studying") t = `studying · no call for ${mmss(w.study_left_s)} · last 30s ${range}`;
+    else if (w.confirming_s != null) t = `over the ${Math.round(line * 100)}% line · confirming ${w.confirming_s}/${rules.hold_s}s`;
+    else if (m.disagree) t = "model and Kalshi far apart: no confident call yet";
+    else t = `needs ${Math.round(line * 100)}% for ${rules.hold_s}s · last 30s ${range}` + (w.deadline_in_s != null ? ` · lean call in ${mmss(w.deadline_in_s)}` : "");
     note.textContent = t;
   }
 
@@ -122,10 +122,15 @@
     ensureCards(markets);
     markets.forEach(renderCard);
     const r = s.record || {}, n = (r.wins || 0) + (r.losses || 0);
-    $("total-record").textContent = `Wins: ${r.wins || 0} | Losses: ${r.losses || 0}` + (n ? ` (${Math.round(100 * r.wins / n)}%)` : "");
-    $("total-sub").textContent = n ? `all markets · Kalshi's odds expected ${r.market_expected} wins over ${r.n_market} calls` : "all markets · no settled calls yet";
-    $("lines").innerHTML = (s.lines || []).map((l) => `<span>${esc(l.name)} <b>${l.wins}-${l.losses}</b></span>`).join("");
-    $("board-foot").textContent = `${markets.length} markets · ${s.requests != null ? s.requests + " Kalshi requests so far" : "simulated"}` + (s.throttled ? ` · slowed down by Kalshi ${s.throttled}×` : "");
+    $("total-record").textContent = `${r.wins || 0}–${r.losses || 0}`;
+    $("total-rate").textContent = n ? `${Math.round(100 * r.wins / n)}%` : "--";
+    $("total-exp").textContent = n ? `${r.market_expected} / ${r.n_market}` : "--";
+    const live = markets.find((m) => m.countdown && m.seconds_left != null);
+    $("clock").textContent = live ? live.countdown : "--:--";
+    const colors = Object.fromEntries(markets.map((m) => [m.key, m.color]));
+    $("lines").innerHTML = (s.lines || []).map((l) => `<span class="pill" data-key="${esc(l.key)}"><span class="dot" style="background:${esc(colors[l.key] || "#888")}"></span>${esc(l.name)} <b>${l.wins}–${l.losses}</b></span>`).join("");
+    $("board-foot").textContent = `${markets.length} markets · WTI, Natural Gas and Gold run their own coach engines · ` +
+      (s.requests != null ? `${s.requests} Kalshi requests so far` : "simulated markets") + (s.throttled ? ` · slowed down by Kalshi ${s.throttled}×` : "");
     if (openKey) renderDetailLive();
   }
 
@@ -143,7 +148,8 @@
     const m = marketState(openKey); if (!m) return;
     const sc = m.scale || { decimals: 2, cents: true }, p = m.prediction;
     $("d-badge").textContent = m.badge; $("d-badge").style.background = m.color;
-    $("d-title").textContent = `${m.name} 15 min · ${m.series}` + (m.market && m.market.strike != null ? ` · ${px(m.market.strike, sc.decimals)} target · ${m.countdown}` : "");
+    $("d-title").textContent = `${m.name} · ${m.market && m.market.strike != null ? px(m.market.strike, sc.decimals) + " target" : "no window"}`;
+    $("d-sub").textContent = `${m.series} · ${m.countdown} left` + (m.engine ? ` · ${m.engine}` : " · board desk");
     $("d-model").textContent = p ? `Model: Up ${pct(p.p_up)} · Kalshi ${pct(p.p_market)} · ${p.confidence.replace("_", " ")} · z ${p.z >= 0 ? "+" : ""}${p.z.toFixed(2)} · expected move to the close ±${move(p.expected_move, sc)}` +
       (p.notes && p.notes.length ? " · " + p.notes.join(" · ") : "") : "no prediction yet";
     const v = m.vol || {};
@@ -181,10 +187,10 @@
     const strike = c.strike != null ? xs.map(() => c.strike) : xs.map(() => null);
     const data = [xs, ys, strike];
     $("d-chart-note").textContent = c.strike != null ? `dashed = target ${px(c.strike, sc.decimals)}` : "";
-    const opts = { width: Math.max(320, el.clientWidth || 900), height: 300, legend: { show: false },
-      axes: [{ stroke: "#8b93a1", grid: { stroke: "#262b33" } },
-             { stroke: "#8b93a1", grid: { stroke: "#262b33" }, size: 90, values: (u, v) => v.map((y) => px(y, sc.decimals)) }],
-      series: [{}, { stroke: "#9fb3c8", width: 2 }, { stroke: "#e8eaed", dash: [6, 6], width: 1 }] };
+    const opts = { width: Math.max(320, el.clientWidth || 700), height: 260, legend: { show: false },
+      axes: [{ stroke: "#5b6372", grid: { stroke: "rgba(255,255,255,0.05)" }, ticks: { stroke: "rgba(255,255,255,0.08)" } },
+             { stroke: "#5b6372", grid: { stroke: "rgba(255,255,255,0.05)" }, ticks: { stroke: "rgba(255,255,255,0.08)" }, size: 96, values: (u, v) => v.map((y) => px(y, sc.decimals)) }],
+      series: [{}, { stroke: m.color || "#6aa8ff", width: 2, fill: "rgba(106,168,255,0.06)" }, { stroke: "#eef1f6", dash: [6, 6], width: 1 }] };
     if (chart) chart.destroy();
     el.textContent = "";
     chart = new uPlot(opts, data, el);
@@ -205,6 +211,7 @@
   });
   $("d-close").addEventListener("click", closeDetail);
   $("detail").addEventListener("click", (ev) => { if (ev.target === $("detail")) closeDetail(); });
+  $("lines").addEventListener("click", (ev) => { const p = ev.target.closest(".pill"); if (p) openDetail(p.dataset.key); });
   document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeDetail(); });
   setInterval(() => { if (openKey) loadDetail(); }, 15000);
 
