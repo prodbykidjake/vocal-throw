@@ -28,7 +28,7 @@ public:
         const float* h = history.data() + writePos;
         const float current = dot (h, kernelCur.data(), K);
 
-        if (fadePos >= cfg.hopSize)
+        if (fadePos >= cfg.fadeLength)
             return current;
 
         const float previous = dot (h, kernelPrev.data(), K);

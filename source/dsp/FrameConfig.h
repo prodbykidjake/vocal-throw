@@ -13,7 +13,8 @@ struct FrameConfig
     int fftSize = 2048;
     int hopSize = 512;
     int numBins = 1025;
-    int kernelLength = 1024; // taps of the minimum-phase FIR
+    int kernelLength = 512;  // taps of the minimum-phase FIR
+    int fadeLength = 128;    // samples over which a new kernel is crossfaded in
     int latency = 1024;      // lookahead in samples (half an analysis window)
 
     float binHz() const noexcept { return (float) (sampleRate / (double) fftSize); }
@@ -26,7 +27,8 @@ struct FrameConfig
         c.fftSize = 1 << c.fftOrder;
         c.hopSize = c.fftSize / 4;
         c.numBins = c.fftSize / 2 + 1;
-        c.kernelLength = c.fftSize / 2;
+        c.kernelLength = c.fftSize / 4;
+        c.fadeLength = c.hopSize / 4;
         c.latency = c.fftSize / 2;
         return c;
     }

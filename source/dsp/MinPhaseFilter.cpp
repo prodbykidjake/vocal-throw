@@ -12,7 +12,7 @@ void MinPhaseFilter::prepare (const FrameConfig& config)
     kernelCur.assign ((size_t) K, 0.0f);
     kernelPrev.assign ((size_t) K, 0.0f);
     history.assign ((size_t) K * 2, 0.0f);
-    fadeStep = 1.0f / (float) cfg.hopSize;
+    fadeStep = 1.0f / (float) cfg.fadeLength;
 
     // The kernel tail fades out over its last quarter so truncation doesn't click
     taper.assign ((size_t) K, 1.0f);
@@ -31,7 +31,7 @@ void MinPhaseFilter::reset()
     kernelPrev = kernelCur;
     std::fill (history.begin(), history.end(), 0.0f);
     writePos = 0;
-    fadePos = cfg.hopSize;
+    fadePos = cfg.fadeLength;
 }
 
 void MinPhaseFilter::setCurve (const float* reductionDb) noexcept
