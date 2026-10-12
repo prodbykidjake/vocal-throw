@@ -7,10 +7,11 @@ import pathlib
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import __version__
 from .engine import Engine
 
 UI_DIR = pathlib.Path(__file__).resolve().parents[1] / "ui"
@@ -56,9 +57,18 @@ def create_app(engine: Engine) -> FastAPI:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(LOCAL_HOSTS | {engine.cfg.server.host}))
     app.mount("/ui", StaticFiles(directory=str(UI_DIR)), name="ui")
 
+    @app.middleware("http")
+    async def no_stale_pages(request: Request, call_next):
+        """The dashboard changes with every version: never let the browser show a saved copy."""
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/ui/"):
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
     @app.get("/")
     async def index():
-        return FileResponse(str(UI_DIR / "index.html"))
+        page = (UI_DIR / "index.html").read_text(encoding="utf-8").replace("{{VERSION}}", __version__)
+        return HTMLResponse(page, headers={"Cache-Control": "no-store, max-age=0"})
 
     @app.get("/api/state")
     async def state():

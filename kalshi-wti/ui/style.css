@@ -97,3 +97,4 @@ input.amount { width: 180px; }
 .call-recent { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; margin-top: 8px; }
 .chip { font: 600 12px/1 var(--mono); padding: 4px 6px; border-radius: 6px; background: var(--card2); }
 .chip.win { color: var(--up); } .chip.loss { color: var(--down); }
+.version { font-size: 12px; margin-left: 6px; }

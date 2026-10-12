@@ -119,7 +119,7 @@ def run_server(cfg, engine, open_browser: bool):
         engine_task = asyncio.create_task(engine.run(stop))
         server = uvicorn.Server(uvicorn.Config(app, host=cfg.server.host, port=cfg.server.port, log_level="warning"))
         url = f"http://{cfg.server.host}:{cfg.server.port}"
-        print(f"dashboard: {url}   (Ctrl-C to stop)")
+        print(f"dashboard v{__version__}: {url}   (Ctrl-C to stop)")
         if open_browser:
             threading.Timer(1.5, lambda: webbrowser.open(url)).start()
         try:

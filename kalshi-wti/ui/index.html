@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>WTI 15-min coach</title>
 <link rel="stylesheet" href="/ui/vendor/uPlot.min.css">
-<link rel="stylesheet" href="/ui/style.css">
+<link rel="stylesheet" href="/ui/style.css?v={{VERSION}}">
 </head>
 <body>
 <header>
   <div class="brand">
     <span class="logo">🛢️</span>
     <div>
-      <div class="title">WTI 15 min <span id="ticker" class="muted mono"></span></div>
+      <div class="title">WTI 15 min <span id="ticker" class="muted mono"></span> <span class="muted mono version">v{{VERSION}}</span></div>
       <div class="sub" id="series-line">connecting…</div>
     </div>
   </div>
@@ -199,6 +199,6 @@
 </main>
 
 <script src="/ui/vendor/uPlot.iife.min.js"></script>
-<script src="/ui/app.js"></script>
+<script src="/ui/app.js?v={{VERSION}}"></script>
 </body>
 </html>
