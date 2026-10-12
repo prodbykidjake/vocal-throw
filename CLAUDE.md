@@ -171,6 +171,9 @@ market (`KXNATGAS15M`), rescaled for ~$3 prices with five-decimal targets. See `
 (`KXGOLD15M`), rescaled for ~$4,000 prices (dollar moves, gold-sized volatility, U.S. macro calendar).
 See `kalshi-gold/README.md`; tests: `cd kalshi-gold && pytest`.
 
+`kalshi-wti-junior/` (package `wtijr`, port 8791) is a separate copy of the WTI v12 coach tuned to be less cautious
+(65% for 6 s, 2-minute study, 20% less assumed movement). See its README; tests: `cd kalshi-wti-junior && pytest`.
+
 `kalshi-commodities/` (package `cm15m`, port 8790) is a separate board with a settlement caller for every Kalshi
 15-minute commodity (gold, silver, WTI, copper, natural gas, palladium, platinum), with per-market scale worked out
 automatically and one database per market. See `kalshi-commodities/README.md`; tests: `cd kalshi-commodities && pytest`.
