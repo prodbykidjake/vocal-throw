@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS windows (
   strike REAL, strike_source TEXT, status TEXT, result TEXT, settled_ts REAL,
   feed_price_at_close REAL, feed_error REAL, p_market_at_close REAL, p_model_at_close REAL,
   rules_primary TEXT, created_ts REAL, updated_ts REAL,
-  settle_price REAL, feed_error_lag0 REAL, feed_error_lag60 REAL, feed_source TEXT
+  settle_price REAL, feed_error_lag0 REAL, feed_error_lag60 REAL, feed_source TEXT,
+  sigma_forecast REAL, sigma_realized REAL, n_returns INTEGER, event TEXT
 );
 CREATE TABLE IF NOT EXISTS ticks (ts REAL, source TEXT, price REAL);
 CREATE INDEX IF NOT EXISTS ticks_ts ON ticks(ts);
@@ -35,6 +36,8 @@ CREATE TABLE IF NOT EXISTS paper_trades (id INTEGER PRIMARY KEY, ticker TEXT, si
 CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, ticker TEXT, side TEXT, qty REAL, avg_price REAL,
   opened_ts REAL, closed_ts REAL, exit_price REAL, pnl REAL, note TEXT, amount REAL, entry_fee REAL, high_bid REAL);
 CREATE TABLE IF NOT EXISTS model_state (key TEXT PRIMARY KEY, value TEXT, updated_ts REAL);
+CREATE TABLE IF NOT EXISTS calls (id INTEGER PRIMARY KEY, ticker TEXT UNIQUE, side TEXT, p_side REAL, p_market_side REAL,
+  ts REAL, seconds_left REAL, kind TEXT, result TEXT, correct INTEGER, settled_ts REAL);
 CREATE TABLE IF NOT EXISTS plans (id INTEGER PRIMARY KEY, ticker TEXT, side TEXT, limit_price REAL, amount REAL, shares REAL,
   target REAL, p_at_plan REAL, tier TEXT, created_ts REAL, ended_ts REAL, status TEXT, status_text TEXT,
   hit_target INTEGER, best_bid REAL, hypo_pnl REAL, expected_profit REAL);
@@ -57,7 +60,8 @@ class Store:
         """Add columns introduced after a database was first created."""
         have = {row[1] for row in self.conn.execute("PRAGMA table_info(windows)")}
         for col, typ in (("settle_price", "REAL"), ("feed_error_lag0", "REAL"), ("feed_error_lag60", "REAL"),
-                         ("feed_source", "TEXT")):
+                         ("feed_source", "TEXT"), ("sigma_forecast", "REAL"), ("sigma_realized", "REAL"),
+                         ("n_returns", "INTEGER"), ("event", "TEXT")):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE windows ADD COLUMN {col} {typ}")
         have = {row[1] for row in self.conn.execute("PRAGMA table_info(positions)")}
@@ -125,6 +129,71 @@ class Store:
             "AND feed_source=? ORDER BY close_time DESC LIMIT ?", (feed_source, limit)).fetchall()
         return [(r[0], r[1]) for r in rows]
 
+    # ------------------------------------------------------------------ volatility forecast vs realized
+    def set_window_forecast(self, ticker: str, sigma: float, event: str = ""):
+        """The raw σ forecast at the end of the window's study period (only the first one counts)."""
+        self.conn.execute("UPDATE windows SET sigma_forecast=COALESCE(sigma_forecast, ?), event=COALESCE(event, ?) WHERE ticker=?",
+                          (sigma, event, ticker))
+
+    def set_window_realized(self, ticker: str, sigma: float, n: int):
+        self.conn.execute("UPDATE windows SET sigma_realized=?, n_returns=? WHERE ticker=?", (sigma, n, ticker))
+
+    def vol_rows(self, limit: int = 3000) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT ticker, open_time, sigma_forecast, sigma_realized, COALESCE(event, '') AS event FROM windows "
+            "WHERE sigma_forecast > 0 AND sigma_realized > 0 ORDER BY open_time DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def windows_missing_vol(self, since_ts: float, before_ts: float) -> list[dict]:
+        """Closed windows still inside the ticks retention whose realized σ was never measured."""
+        rows = self.conn.execute(
+            "SELECT ticker, open_time, close_time, sigma_forecast, event FROM windows WHERE sigma_realized IS NULL "
+            "AND open_time >= ? AND close_time <= ? ORDER BY open_time", (since_ts, before_ts)).fetchall()
+        return [dict(r) for r in rows]
+
+    def snapshot_sigma_near(self, ticker: str, seconds_left_lo: float, seconds_left_hi: float) -> float | None:
+        row = self.conn.execute(
+            "SELECT sigma FROM snapshots WHERE ticker=? AND seconds_left BETWEEN ? AND ? AND sigma > 0 ORDER BY seconds_left DESC LIMIT 1",
+            (ticker, seconds_left_lo, seconds_left_hi)).fetchone()
+        return float(row[0]) if row else None
+
+    # ------------------------------------------------------------------ settlement calls
+    def add_call(self, ticker: str, side: str, p_side: float, p_market_side: float | None, ts: float, seconds_left: float,
+                 kind: str):
+        self.conn.execute("INSERT OR IGNORE INTO calls (ticker, side, p_side, p_market_side, ts, seconds_left, kind) VALUES (?,?,?,?,?,?,?)",
+                          (ticker, side, p_side, p_market_side, ts, seconds_left, kind))
+
+    def call_for(self, ticker: str) -> dict | None:
+        row = self.conn.execute("SELECT * FROM calls WHERE ticker=?", (ticker,)).fetchone()
+        return dict(row) if row else None
+
+    def settle_call(self, ticker: str, result: str, ts: float):
+        self.conn.execute("UPDATE calls SET result=?, correct=(side=?), settled_ts=? WHERE ticker=? AND result IS NULL",
+                          (result, result, ts, ticker))
+
+    def unsettled_calls(self) -> list[dict]:
+        rows = self.conn.execute("SELECT c.ticker, w.result FROM calls c JOIN windows w ON w.ticker=c.ticker "
+                                 "WHERE c.result IS NULL AND w.result IN ('yes','no')").fetchall()
+        return [dict(r) for r in rows]
+
+    def call_record(self, recent: int = 20) -> dict:
+        rows = [dict(r) for r in self.conn.execute("SELECT * FROM calls WHERE result IS NOT NULL ORDER BY ts DESC").fetchall()]
+        out: dict = {"wins": 0, "losses": 0, "market_expected": 0.0, "model_expected": 0.0, "n_market": 0, "by_kind": {}}
+        for r in rows:
+            win = bool(r["correct"])
+            out["wins" if win else "losses"] += 1
+            k = out["by_kind"].setdefault(r["kind"] or "?", {"wins": 0, "losses": 0})
+            k["wins" if win else "losses"] += 1
+            out["model_expected"] += r["p_side"] or 0.0
+            if r["p_market_side"] is not None:
+                out["market_expected"] += r["p_market_side"]
+                out["n_market"] += 1
+        out["market_expected"] = round(out["market_expected"], 1)
+        out["model_expected"] = round(out["model_expected"], 1)
+        out["recent"] = [{"ticker": r["ticker"], "side": r["side"], "correct": bool(r["correct"]), "kind": r["kind"],
+                          "p": r["p_side"], "seconds_left": r["seconds_left"]} for r in rows[:recent]]
+        return out
+
     def settled_window_count(self) -> int:
         row = self.conn.execute("SELECT COUNT(*) FROM windows WHERE result IN ('yes','no')").fetchone()
         return int(row[0] or 0)
@@ -171,6 +240,11 @@ class Store:
             rows = self.conn.execute("SELECT ts, price FROM ticks WHERE ts>=? ORDER BY ts LIMIT ?", (ts, limit)).fetchall()
         return [(r[0], r[1]) for r in rows]
 
+    def ticks_between(self, start: float, end: float, source: str) -> list[tuple[float, float]]:
+        rows = self.conn.execute("SELECT ts, price FROM ticks WHERE ts>=? AND ts<=? AND source=? ORDER BY ts",
+                                 (start, end, source)).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
     def add_quote(self, ts: float, m):
         self.conn.execute(
             "INSERT INTO quotes (ts, ticker, yes_bid, yes_ask, no_bid, no_ask, last_price, volume, open_interest) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -185,7 +259,7 @@ class Store:
         cur = self.conn.execute(
             """INSERT INTO snapshots (ts, ticker, seconds_left, price, strike, sigma, z, p_base, p_market, p_final, confidence, features)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (ts, ticker, seconds_left, price, strike, pred.sigma, pred.z, pred.p_base, pred.p_market, pred.p_final,
+            (ts, ticker, seconds_left, price, strike, getattr(pred, "sigma_raw", 0.0) or pred.sigma, pred.z, pred.p_base, pred.p_market, pred.p_final,
              pred.confidence, json.dumps(pred.features)))
         return int(cur.lastrowid)
 

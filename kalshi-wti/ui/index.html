@@ -24,6 +24,7 @@
     <span class="badge" id="feed-badge">feed</span>
     <span class="badge" id="kalshi-badge">kalshi</span>
     <span class="badge" id="warm-badge">warm-up</span>
+    <span class="badge hidden" id="event-badge"></span>
   </div>
 </header>
 
@@ -31,6 +32,7 @@
   <button class="tab active" data-tab="live">Live</button>
   <button class="tab" data-tab="history">History</button>
   <button class="tab" data-tab="stats">Stats</button>
+  <button class="tab" data-tab="tradingview">TradingView</button>
   <button class="tab" data-tab="rules">Rules &amp; setup</button>
 </nav>
 
@@ -76,6 +78,15 @@
     <div class="card chart-card">
       <div class="card-title">WTI vs target <span class="muted" id="chart-note"></span></div>
       <div id="chart"></div>
+    </div>
+
+    <div class="card" id="call-card">
+      <div class="card-title">Settlement call <span class="muted">(one Up/Down prediction per window, locked once made, scored when Kalshi settles it)</span></div>
+      <div class="call-box" id="call-box">waiting for the window…</div>
+      <div class="sub center" id="call-sub"></div>
+      <div class="call-record" id="call-record">Wins: 0 | Losses: 0</div>
+      <div class="sub center" id="call-bench"></div>
+      <div class="call-recent" id="call-recent"></div>
     </div>
 
     <div class="card" id="position-card">
@@ -158,6 +169,14 @@
     <div class="card"><div class="card-title">Paper P&amp;L by confidence</div><div id="paper-stats"></div></div>
     <div class="card"><div class="card-title">Plans: did the calls work?</div><div id="plan-stats"></div></div>
     <div class="card"><div class="card-title">Learner</div><div id="learner"></div></div>
+    <div class="card"><div class="card-title">Volatility: forecast vs what really happened (learned by hour)</div><div id="volprofile"></div></div>
+  </div>
+</section>
+
+<section id="tab-tradingview" class="tab-pane">
+  <div class="card">
+    <div class="card-title">TradingView <span class="muted" id="tv-note">(to look at; it does not feed the model, which uses Kalshi's own settlement price)</span></div>
+    <div id="tv-chart"></div>
   </div>
 </section>
 

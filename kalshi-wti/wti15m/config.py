@@ -29,6 +29,7 @@ class FeedCfg:
     hyperliquid_ws: str = "wss://api.hyperliquid.xyz/ws"
     stale_after_s: float = 8.0  # Hyperliquid mids arrive every 1-3 s; only call it stale well beyond that
     warmup_candles_min: int = 60
+    tradingview_symbol: str = "TVC:USOIL"  # the TradingView tab's chart (to look at; it does not feed the model)
 
 
 @dataclass
@@ -40,7 +41,20 @@ class TradingCfg:
     max_stake_fraction: float = 0.10
     confident_margin: float = 0.20
     min_warmup_minutes: float = 30.0
-    no_entry_first_s: float = 60.0
+    no_entry_first_s: float = 60.0  # (legacy) the study period below is the one that counts when longer
+    # --- v10: study each window, learn how much WTI really moves, respect the weekly oil reports ---
+    study_s: float = 180.0  # no calls in a window's first N seconds: the app measures the window instead
+    vol_profile: bool = True  # correct the volatility forecast by what each ET hour has really done
+    vol_profile_k: float = 8.0  # windows of evidence at which an hour's correction counts half
+    event_prior: float = 1.5  # assumed volatility multiplier for report windows until they are measured
+    event_entries: str = "block"  # block = no new calls in a window that holds an oil report | allow
+    extra_events: list = field(default_factory=list)  # ["2026-11-27 11:00 EIA inventories (holiday)"], ET
+    # --- v10: the settlement call (one Up/Down prediction per window, scored at settlement) ---
+    call_prob: float = 0.70  # call as soon as the model gives one side at least this ...
+    call_hold_s: float = 10.0  # ... for this many seconds in a row (after the study period)
+    call_deadline_s: float = 120.0  # otherwise call the lean when this many seconds are left
+    call_join_min_s: float = 300.0  # no call for a window first seen with less than this left (no free wins)
+    call_min_left_s: float = 60.0  # and never a call with less than this left
     late_entry_s: float = 60.0
     late_entry_min_z: float = 2.0
     hold_to_settle_prob: float = 0.90

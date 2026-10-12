@@ -11,6 +11,7 @@ fallback = "hyperliquid"        # used automatically when the primary feed goes 
 hyperliquid_dex = "xyz"         # trade.xyz HIP-3 markets live on the "xyz" dex
 hyperliquid_symbol = ""         # leave blank to auto-detect the WTI market (e.g. "xyz:CL")
 stale_after_s = 8.0             # feed older than this = "stale", no new entries (Hyperliquid updates every 1-3 s)
+tradingview_symbol = "TVC:USOIL"  # the TradingView tab (to look at only); e.g. "NYMEX:CL1!" for the front-month future
 
 [trading]
 bankroll = 200.0                # dollars you are willing to put at risk in total
@@ -20,7 +21,19 @@ max_contracts = 20
 max_stake_fraction = 0.10       # never suggest more than this share of bankroll on one window
 confident_margin = 0.20         # |p - 0.5| needed to call something "confident"
 min_warmup_minutes = 30         # feed history needed before any BUY signal
-no_entry_first_s = 60           # no entries in the first minute of a window (target just set)
+no_entry_first_s = 60           # (legacy) study_s below wins when it is longer
+study_s = 180                   # v10: no calls in a window's first 3 minutes; the app studies the window instead
+vol_profile = true              # v10: correct the volatility forecast by what each ET hour has really done (learned)
+vol_profile_k = 8               # windows at an hour before its correction counts half
+event_prior = 1.5               # assumed extra movement in oil-report windows until they are measured
+event_entries = "block"         # "block" = no new calls in a window holding the EIA / API / Baker Hughes report | "allow"
+extra_events = []               # one-off reports, ET: ["2026-11-27 11:00 EIA inventories (holiday)"]
+# v10: the settlement call card (one Up/Down prediction per window, locked once made, scored at settlement)
+call_prob = 0.70                # call as soon as the model gives one side at least this ...
+call_hold_s = 10                # ... for this many seconds in a row, after the study period
+call_deadline_s = 120           # otherwise call its best lean when this many seconds are left
+call_join_min_s = 300           # no call for a window the app first saw with less than this left (no free wins)
+call_min_left_s = 60            # and never a call with less than this left
 late_entry_s = 60               # in the last N seconds only very lopsided entries are allowed
 late_entry_min_z = 2.0
 hold_to_settle_prob = 0.90      # with <= 2 min left and p >= this: hold, don't pay to exit

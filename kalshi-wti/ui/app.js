@@ -14,6 +14,7 @@
     if (b.dataset.tab === "history") loadHistory();
     if (b.dataset.tab === "stats") loadStats();
     if (b.dataset.tab === "rules") loadRules();
+    if (b.dataset.tab === "tradingview") loadTradingView();
   }));
 
   // ---------------------------------------------------------------- live stream
@@ -65,7 +66,9 @@
     if (p) {
       $("model-up").textContent = "Up " + fmtP(p.p_up);
       $("model-down").textContent = "Down " + fmtP(p.p_down);
-      $("model-sub").textContent = `${p.confidence.replace("_", " ")} · z ${p.z >= 0 ? "+" : ""}${p.z.toFixed(2)} · ±$${p.expected_move.toFixed(2)} expected · learner weight ${Math.round(p.shrink * 100)}%`;
+      const vm = p.vol_mult != null && Math.abs(p.vol_mult - 1) >= 0.05 ? ` · vol ×${p.vol_mult.toFixed(2)}` : "";
+      $("model-sub").textContent = `${p.confidence.replace("_", " ")} · z ${p.z >= 0 ? "+" : ""}${p.z.toFixed(2)} · ±$${p.expected_move.toFixed(2)} expected${vm} · learner weight ${Math.round(p.shrink * 100)}%`;
+      $("model-sub").title = (s.vol && s.vol.note) || "";
     } else { $("model-up").textContent = "Up --"; $("model-down").textContent = "Down --"; $("model-sub").textContent = ""; }
     if (!m) { $("odds-up").textContent = "Up --"; $("odds-down").textContent = "Down --"; $("book").textContent = ""; }
     else if (s.quotes_fresh === false) { $("book").textContent += " · quotes stale"; }
@@ -88,6 +91,13 @@
       $("signal-headline").textContent = m ? "waiting for data…" : "no live window right now";
       $("signal-details").innerHTML = "";
     }
+    // scheduled oil reports / study period
+    const v = s.vol || {}, eb = $("event-badge");
+    if (v.events && v.events.length) { badge(eb, "report: " + v.events.map((e) => `${e.name} ${e.at}`).join(", "), "warn"); }
+    else if (v.studying) { badge(eb, `studying · ${v.study_left_s}s`, ""); }
+    else { eb.className = "badge hidden"; }
+    // settlement call
+    renderCall(s);
     // position
     renderPosition(s);
     const paper = s.paper;
@@ -103,6 +113,38 @@
       if (liveStrike !== chartData.strike) chartData.strike = liveStrike;
       if (s.tick.ts > last[0]) { chartData.ticks.push([s.tick.ts, s.tick.price]); drawChart(); }
     }
+  }
+
+  // ---------------------------------------------------------------- settlement call card
+  const mmss = (x) => { const t = Math.max(0, Math.round(x || 0)); return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
+  function renderCall(s) {
+    const c = s.call || {}, call = c.call, w = c.watch || {}, r = c.record || {}, rules = c.rules || {};
+    const box = $("call-box"), sub = $("call-sub");
+    if (call) {
+      const res = call.result == null ? "" : call.correct ? " · WIN ✓" : " · LOSS ✗";
+      box.textContent = `${call.side} AT SETTLEMENT${res}`;
+      box.className = "call-box " + (call.side === "UP" ? "up" : "down") + (call.result == null ? "" : call.correct ? " win" : " loss");
+      sub.textContent = `called with ${mmss(call.seconds_left)} left · model ${fmtP(call.p_side)} ${call.side}` +
+        (call.p_market_side != null ? ` · Kalshi had ${fmtP(call.p_market_side)}` : "") +
+        (call.kind === "late" ? ` · late call: never reached ${fmtP(rules.prob)}, this is its best lean` : " · confident call") +
+        (call.result == null ? " · waiting for settlement" : ` · settled ${call.result}`);
+    } else if (w.status === "studying" || w.status === "watching") {
+      const lean = w.lean ? ` · leaning ${w.lean} ${fmtP(w.p)}` : "";
+      box.textContent = (w.status === "studying" ? `STUDYING · ${mmss(w.study_left_s)}` : "WATCHING") + lean +
+        (w.confirming_s != null ? ` · confirming ${w.confirming_s}/${rules.hold_s} s` : "");
+      box.className = "call-box";
+      sub.textContent = `calls as soon as one side holds ${fmtP(rules.prob)}+ for ${rules.hold_s} s, otherwise its best lean at ${mmss(rules.deadline_s)} left` +
+        (w.deadline_in_s != null ? ` (in ${mmss(w.deadline_in_s)})` : "");
+    } else {
+      box.textContent = w.status ? w.status.toUpperCase() : "WAITING FOR THE NEXT WINDOW"; box.className = "call-box"; sub.textContent = "";
+    }
+    const n = (r.wins || 0) + (r.losses || 0);
+    $("call-record").textContent = `Wins: ${r.wins || 0} | Losses: ${r.losses || 0}` + (n ? ` (${Math.round(100 * r.wins / n)}%)` : "");
+    const k = r.by_kind || {}, kk = (x) => (k[x] ? `${k[x].wins}-${k[x].losses}` : "0-0");
+    $("call-bench").textContent = n ? `Kalshi's odds at the moments of the calls expected ${r.market_expected} wins over ${r.n_market} calls; the model expected ${r.model_expected} · confident calls ${kk("confident")} · late calls ${kk("late")}` :
+      "No settled calls yet. The record compares itself with Kalshi's own odds, so it shows whether the calls beat the market.";
+    $("call-recent").innerHTML = (r.recent || []).slice().reverse().map((x) =>
+      `<span class="chip ${x.correct ? "win" : "loss"}" title="${esc(x.ticker)} · ${esc(x.kind)} · ${fmtP(x.p)}">${x.side === "UP" ? "▲" : "▼"}${x.correct ? "✓" : "✗"}</span>`).join("");
   }
 
   // ---------------------------------------------------------------- position card
@@ -286,10 +328,37 @@
       `<table class="table"><thead><tr><th>tier</th><th>n</th><th>target hit</th><th>if taken</th></tr></thead><tbody>` +
       Object.entries(ps.by_tier || {}).map(([k, v]) => `<tr><td>${k}</td><td>${v.n}</td><td>${fmtP(v.hit_rate)}</td><td>${fmtUsd(v.pnl)}</td></tr>`).join("") + "</tbody></table>"
       : `<div class="sub">No ended plans yet.</div>`;
+    $("volprofile").innerHTML = renderVolProfile(d.vol_profile);
     const l = d.calibrator || {};
     $("learner").innerHTML = `<div>Trained on ${l.n_windows || 0} settled windows (${l.n_samples || 0} snapshots) · weight in final answer ${Math.round((l.shrink || 0) * 100)}%</div>` +
       `<div class="sub">Feed basis allowance: $${(d.basis_error || 0).toFixed(2)}` + (d.basis ? ` · ${d.basis.source}: measured bias ${(d.basis.raw * 100).toFixed(1)}¢ over ${d.basis.n} windows, ${d.basis.consistent ? "applied as " + (-d.basis.applied * 100).toFixed(1) + "¢" : "not applied (needs " + (d.basis.min_windows || 6) + "+ consistent windows)"}` : "") + `</div>` +
       `<pre class="pre">${esc(JSON.stringify(l.weights || {}, null, 1))}</pre>`;
+  }
+  function renderVolProfile(vp) {
+    if (!vp || !vp.n) return `<div class="sub">Nothing measured yet. Every window that runs past its study period adds one forecast-vs-real pair; the correction for an hour counts half after ${8} windows at that hour.</div>`;
+    const hrs = Object.entries(vp.hours || {});
+    const lbl = (h) => { const n = Number(h); return (n % 12 || 12) + (n < 12 ? " am" : " pm"); };
+    const err = vp.error_raw != null ? `<div class="sub">Typical forecast miss: ${Math.round(vp.error_raw * 100)}% raw, ${Math.round((vp.error_fit ?? vp.error_raw) * 100)}% with the hour correction (out of sample) · ${vp.n} windows · overall ×${vp.overall.toFixed(2)}</div>` : "";
+    const ev = Object.entries(vp.events || {});
+    return err + `<table class="table"><thead><tr><th>window opens (ET)</th><th>windows</th><th>moves vs live estimate</th></tr></thead><tbody>` +
+      hrs.map(([h, d]) => `<tr><td>${lbl(h)}</td><td>${d.n}</td><td>×${d.mult.toFixed(2)}</td></tr>`).join("") +
+      ev.map(([e, d]) => `<tr><td>${esc(e)}</td><td>${d.n}</td><td>×${d.mult.toFixed(2)}</td></tr>`).join("") + "</tbody></table>";
+  }
+  let tvLoaded = false;
+  function loadTradingView() {
+    if (tvLoaded) return;
+    tvLoaded = true;
+    const sym = (state && state.config && state.config.tradingview_symbol) || "TVC:USOIL";
+    const sc = document.createElement("script");
+    sc.src = "https://s3.tradingview.com/tv.js";
+    sc.onload = () => {
+      try {
+        new TradingView.widget({ container_id: "tv-chart", symbol: sym, interval: "1", timezone: "America/New_York", theme: "dark",
+          style: "1", locale: "en", autosize: true, allow_symbol_change: true, hide_side_toolbar: false, studies: ["RSI@tv-basicstudies"] });
+      } catch (e) { $("tv-chart").textContent = "TradingView did not load: " + e; }
+    };
+    sc.onerror = () => { $("tv-chart").textContent = "TradingView did not load (offline or blocked)."; tvLoaded = false; };
+    document.head.appendChild(sc);
   }
   async function loadRules() {
     const d = await (await fetch("/api/rules")).json();

@@ -85,7 +85,7 @@ def test_first_minute_blocks_entries():
     m = warmed_model()
     pred = m.predict(90.13, 90.21, 870, p_market=0.40, feed_age_s=0.3)
     sig = engine().decide(pred, Quotes(0.39, 0.41, 0.59, 0.61), 90.13, 90.21, 870, 30)
-    assert sig.action == "WAIT" and sig.reasons == ["window_just_opened"]
+    assert sig.action == "WAIT" and sig.reasons == ["studying"]
 
 
 def test_wide_spread_blocks_entries():

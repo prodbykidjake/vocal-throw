@@ -273,6 +273,8 @@ class Prediction:
     basis_signed: float = 0.0
     implied_price: float | None = None  # where Kalshi's odds say the settlement feed is
     disagree: bool = False
+    sigma_raw: float = 0.0  # the live EWMA estimate before the learned time-of-day / report correction
+    vol_mult: float = 1.0  # that correction
 
     @property
     def p_down(self) -> float:
@@ -287,6 +289,7 @@ class Prediction:
             "confidence": self.confidence, "shrink": round(self.shrink, 3), "notes": self.notes, "sigma_eff": self.sigma_eff,
             "price_adj": None if self.price_adj is None else round(self.price_adj, 4), "basis_signed": round(self.basis_signed, 4),
             "implied_price": None if self.implied_price is None else round(self.implied_price, 3), "disagree": self.disagree,
+            "sigma_raw": self.sigma_raw, "vol_mult": round(self.vol_mult, 3),
         }
 
 
@@ -303,6 +306,8 @@ class Model:
         self.basis_error = 0.0  # measured |feed - settlement| typical size, dollars (widens uncertainty)
         self.basis_signed = 0.0  # measured feed - settlement bias, dollars (shifts the price); 0 until ~3 windows
         self.disagreement_cap = 0.40  # |model - market| above this caps confidence at "lean"
+        self.vol_mult = 1.0  # learned correction for this window's hour / report (set by the engine each second)
+        self.vol_note = ""
 
     def features(self, p_base: float, p_market: float | None, price: float, sigma: float, tau_s: float,
                  price_60: float | None, price_180: float | None, price_300: float | None) -> np.ndarray:
@@ -320,11 +325,15 @@ class Model:
 
     def predict(self, price: float, strike: float | None, tau_s: float, p_market: float | None, feed_age_s: float | None,
                 price_60: float | None = None, price_180: float | None = None, price_300: float | None = None) -> Prediction:
-        sigma = self.vol.sigma()
+        sigma_raw = self.vol.sigma()
         notes: list[str] = []
-        if sigma is None:
-            sigma = self.vol.floor * 10  # placeholder until the first vol estimate exists
+        if sigma_raw is None:
+            sigma_raw = self.vol.floor * 10  # placeholder until the first vol estimate exists
             notes.append("no volatility estimate yet")
+        mult = clamp(self.vol_mult or 1.0, 0.5, 3.0)
+        sigma = sigma_raw * mult  # the odds use the corrected σ; the learner's momentum features keep the raw one
+        if abs(mult - 1.0) >= 0.05 and self.vol_note:
+            notes.append(f"volatility: {self.vol_note}")
         # widen uncertainty by the measured feed-vs-settlement basis: treat it as extra variance at expiry
         sigma_eff = sigma
         if self.basis_error > 0 and tau_s > 0.5:
@@ -332,10 +341,10 @@ class Model:
         if strike is None:
             return Prediction(0.5, 0.5, 0.5, p_market, 0.0, sigma, self.vol.sigma_slow(), self.vol.sigma_fast(), tau_s,
                               0.0, sigma_eff * math.sqrt(max(tau_s, 0)), "no_target", self.cal.shrink, [], ["no target yet"],
-                              sigma_eff)
+                              sigma_eff, sigma_raw=sigma_raw, vol_mult=mult)
         price_adj = price - self.basis_signed
         p_base, z = base_probability(price_adj, strike, sigma_eff, tau_s, self.tie_adj)
-        x = self.features(p_base, p_market, price, sigma, tau_s, price_60, price_180, price_300)
+        x = self.features(p_base, p_market, price, sigma_raw, tau_s, price_60, price_180, price_300)
         p_final, p_learner = self.cal.predict(p_base, x)
         warm = self.vol.seconds_seen
         if warm < self.min_warmup_s:
@@ -367,4 +376,5 @@ class Model:
             notes.append(f"feed adjusted by {-self.basis_signed * 100:+.1f}¢ (measured vs recent settlements)")
         return Prediction(p_final, p_base, p_learner, p_market, z, sigma, self.vol.sigma_slow(), self.vol.sigma_fast(),
                           tau_s, price_adj - strike, sigma_eff * math.sqrt(max(tau_s, 0)), conf, self.cal.shrink,
-                          [float(v) for v in x], notes, sigma_eff, price_adj, self.basis_signed, implied, disagree)
+                          [float(v) for v in x], notes, sigma_eff, price_adj, self.basis_signed, implied, disagree,
+                          sigma_raw=sigma_raw, vol_mult=mult)

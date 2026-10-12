@@ -10,7 +10,7 @@ import statistics
 import time
 from collections import deque
 
-from . import clock
+from . import clock, volcal
 from .config import Config
 from .decision import DecisionEngine, Position, Quotes, Signal, cash_out, cents, pct, pct5, qty_text
 from .fees import FeeSchedule, fee_per_contract, taker_fee
@@ -18,6 +18,7 @@ from .feeds.base import PriceFeed, Tick
 from .kalshi import Market, MarketTracker
 from .model import Calibrator, Model, Prediction
 from .notify import Notifier
+from .calls import CallTracker
 from .plans import PlanEvent, PlanTracker
 from .store import Store
 
@@ -71,6 +72,18 @@ class Engine:
         self.feed.subscribe_warmup(self.on_warmup)
         self._load_basis(self.feed.active_name)
         self._recover()
+        # v10: learned volatility by ET hour / report, from every window's forecast vs what really happened
+        self.vol_profile = volcal.VolProfile(t.vol_profile_k, t.event_prior)
+        self._extra_events = volcal.parse_extra_events(t.extra_events)
+        self._forecast_done: set[str] = set()
+        self._study: dict = {}  # this window's study readings: odds range, moves so far
+        self._vol_info: dict = {}
+        self._backfill_vol(time.time())
+        self._refit_vol()
+        # v10: the settlement call (one locked Up/Down prediction per window) and its record
+        self.calls = CallTracker(t, store)
+        for row in store.unsettled_calls():  # windows that settled while the app was off
+            self.calls.settle(row["ticker"], row["result"] == "yes")
 
     # ------------------------------------------------------------------ per-feed basis
     def _load_basis(self, source: str):
@@ -160,6 +173,8 @@ class Engine:
                                      f" (from {m.strike_source}), closes {clock.et_label(m.close_time)}")
         elif kind == "window_close":
             close_ts = m.close_time.timestamp() if m.close_time else now
+            if m.open_time is not None and self._measure_window(m.ticker, m.open_time.timestamp(), close_ts, self.feed.active_name):
+                self._refit_vol()
             price = self._feed_price_near(close_ts)
             self._close_capture[m.ticker] = {"feed_price": price, "p_market": m.yes_mid, "close_ts": close_ts,
                                              "p_model": self.pred.p_final if self.pred else None, "strike": m.strike,
@@ -245,6 +260,14 @@ class Engine:
         # user position
         if self.position and self.position.ticker == m.ticker:
             self._settle_position(label, now)
+        # the settlement call
+        call = self.store.call_for(m.ticker)
+        if call and call.get("result") is None:
+            self.calls.settle(m.ticker, bool(label))
+            won = call["side"] == ("UP" if label else "DOWN")
+            rec = self.store.call_record()
+            self.log_event("call", f"settlement call {call['side']} on {m.ticker}: {'WIN' if won else 'LOSS'} "
+                                   f"· record {rec['wins']}-{rec['losses']}")
         outcome = "UP" if label else "DOWN"
         p_model = cap.get("p_model")
         msg = f"{m.ticker} settled {outcome}"
@@ -441,6 +464,7 @@ class Engine:
             buf = self.feed.buffer
             # horizon = trading time left + the settlement candle (settles on that candle's close)
             tau_eff = (tau if tau is not None else 0.0) + self.cfg.trading.settle_lag_s
+            self._vol_context(m, now, elapsed, quotes_fresh)
             pred = self.model.predict(tick.price, m.strike, tau_eff, m.yes_mid if quotes_fresh else None, health.age_s,
                                       buf.price_at(now - 60), buf.price_at(now - 180), buf.price_at(now - 300))
             quotes = Quotes.from_market(m) if quotes_fresh else Quotes()
@@ -450,6 +474,14 @@ class Engine:
                 if bid is not None and (pos.high_bid is None or bid > pos.high_bid):
                     pos.high_bid = bid
                     self.store.update_position_high(pos.id, bid)
+            self._study_step(m, pred, tick.price, now, elapsed, tau)
+            made = self.calls.step(now, m.ticker, pred, tau, elapsed, self._study_len())
+            if made:
+                when = f"{int(made['seconds_left'] // 60)}:{int(made['seconds_left'] % 60):02d} left"
+                text = (f"settlement call: {made['side']} on {m.ticker} · model {round(made['p_side'] * 100)}% "
+                        f"({made['kind']}, {when})")
+                self.log_event("call", text)
+                self.notifier.notify(f"WTI 15m: settles {made['side']}", text, "Glass")
             raw = self.decider.decide(pred, quotes, tick.price, m.strike, tau, elapsed, pos, now)
             if tau is not None and tau > 0 and now - self._last_snapshot >= 15:
                 self._last_snapshot = now
@@ -471,12 +503,111 @@ class Engine:
             self._maybe_notify(sig, now)
             self._paper_step(m, pred, tick.price, tau, elapsed, now, quotes)
         else:
+            self.calls.step(now, m.ticker if m else None, None, None, None, self._study_len())
             event = self.plans.update(now, m.ticker if m else None, None, Quotes(), None, None, None, None, self.position is not None)
             if event:
                 self._on_plan_event(event, now, Quotes())
         self.pred = pred
         self.signal = sig
         self.state = self._build_state(now, m, tick, health, pred, sig, tau, elapsed, quotes_fresh)
+
+    # ------------------------------------------------------------------ v10: study period + learned volatility
+    def _study_len(self) -> float:
+        t = self.cfg.trading
+        return max(t.no_entry_first_s, t.study_s)
+
+    def _window_events(self, open_ts: float, close_ts: float) -> list[tuple[float, str]]:
+        # the settlement candle closes settle_lag_s after trading stops: a report then still moves the result
+        return volcal.events_between(open_ts, close_ts + self.cfg.trading.settle_lag_s, self._extra_events)
+
+    def _refit_vol(self):
+        rows = [volcal.VolRow(r["open_time"], r["sigma_forecast"], r["sigma_realized"], r["event"] or "")
+                for r in self.store.vol_rows() if r.get("open_time")]
+        self.vol_profile.fit(rows)
+
+    def _measure_window(self, ticker: str, open_ts: float, close_ts: float, source: str) -> bool:
+        """After a window closes: how much the price really moved after the study period (σ per √s)."""
+        start = open_ts + self._study_len()
+        ticks = [(tk.ts, tk.price) for tk in self.feed.buffer.since(start) if tk.ts <= close_ts]
+        if len(ticks) < 20:
+            ticks = self.store.ticks_between(start, close_ts, source)
+        sigma, n = volcal.realized_sigma(ticks, start, close_ts)
+        if sigma is None:
+            return False
+        self.store.set_window_realized(ticker, sigma, n)
+        return True
+
+    def _backfill_vol(self, now: float):
+        """Windows recorded before v10 (or while the app was off at a close): rebuild forecast and realized σ from
+        the 15-second snapshots and the stored ticks, as far back as the ticks go (3 days)."""
+        study = self._study_len()
+        for row in self.store.windows_missing_vol(now - 3 * 86400 + 3600, now - 60):
+            open_ts, close_ts = row.get("open_time"), row.get("close_time")
+            if not open_ts or not close_ts:
+                continue
+            if not row.get("sigma_forecast"):
+                left = (close_ts - open_ts) - study
+                fc = self.store.snapshot_sigma_near(row["ticker"], left - 25, left + 25)
+                if not fc:
+                    continue
+                events = self._window_events(open_ts, close_ts)
+                self.store.set_window_forecast(row["ticker"], fc, events[0][1] if events else "")
+            source = self.feed.active_name
+            for src in (source, "kalshi-live", "hyperliquid", "sim"):
+                ticks = self.store.ticks_between(open_ts + study, close_ts, src)
+                sigma, n = volcal.realized_sigma(ticks, open_ts + study, close_ts)
+                if sigma is not None:
+                    self.store.set_window_realized(row["ticker"], sigma, n)
+                    break
+
+    def _vol_context(self, m: Market, now: float, elapsed, quotes_fresh: bool):
+        """Before predicting: the learned multiplier for this window's hour (or report), and what the decider needs
+        to know (study period left, reports inside the window)."""
+        t = self.cfg.trading
+        open_ts = m.open_time.timestamp() if m.open_time else now
+        close_ts = m.close_time.timestamp() if m.close_time else now
+        events = self._window_events(open_ts, close_ts)
+        if t.vol_profile:
+            mult, note, n = self.vol_profile.mult(open_ts, events)
+        else:
+            mult, note, n = 1.0, "learned correction off", 0
+        self.model.vol_mult, self.model.vol_note = mult, note
+        st = self._study
+        if st.get("ticker") != m.ticker:
+            st.clear()
+            st.update({"ticker": m.ticker, "odds_lo": None, "odds_hi": None})
+            self._forecast_done.discard(m.ticker)
+        study = self._study_len()
+        if quotes_fresh and m.yes_mid is not None and elapsed is not None and 0 <= elapsed <= study:
+            st["odds_lo"] = m.yes_mid if st["odds_lo"] is None else min(st["odds_lo"], m.yes_mid)
+            st["odds_hi"] = m.yes_mid if st["odds_hi"] is None else max(st["odds_hi"], m.yes_mid)
+        ev = [{"name": name, "at": clock.et_label(dt.datetime.fromtimestamp(ts, clock.UTC))} for ts, name in events]
+        self.decider.context = {"events": ev, "study": st, "study_s": study}
+        self._vol_info = {"mult": round(mult, 3), "note": note, "n": n, "events": ev, "study_s": study,
+                          "studying": elapsed is not None and elapsed < study,
+                          "study_left_s": None if elapsed is None else max(0, round(study - elapsed)),
+                          "study": {k: v for k, v in st.items() if k != "ticker"}}
+
+    def _study_step(self, m: Market, pred: Prediction, price: float, now: float, elapsed, tau):
+        """During the study period: what this window is doing; at its end: record the forecast to learn from."""
+        st = self._study
+        if m.open_time is None or elapsed is None:
+            return
+        open_ts = m.open_time.timestamp()
+        study = self._study_len()
+        if elapsed <= study + 1:
+            ticks = [(tk.ts, tk.price) for tk in self.feed.buffer.since(open_ts)]
+            so_far, n = volcal.realized_sigma(ticks, open_ts, now, min_returns=6)
+            if so_far and pred.sigma > 0:
+                st["moves_x"] = round(so_far / pred.sigma, 2)  # vs the corrected forecast
+            if m.strike:
+                st["drift"] = round(price - m.strike, 3)
+            st["sigma_per_window"] = round(pred.sigma * math.sqrt(max(tau or 0, 0) + self.cfg.trading.settle_lag_s), 3)
+        if (elapsed >= study and m.ticker not in self._forecast_done and elapsed <= study + 120 and tau and tau > 0
+                and pred.sigma_raw > 0 and pred.confidence not in ("warming_up", "stale")):
+            self._forecast_done.add(m.ticker)
+            events = self._window_events(open_ts, m.close_time.timestamp() if m.close_time else now)
+            self.store.set_window_forecast(m.ticker, pred.sigma_raw, events[0][1] if events else "")
 
     def _quick_step(self, pred: Prediction, quotes: Quotes, price: float, strike, tau, now: float):
         """The quick-scalps card: recomputed every second, but the shown call is held for 5 s unless its side
@@ -625,6 +756,7 @@ class Engine:
                              "consistent": self.store.get_state(f"basis_consistent:{src}") == "1",
                              "min_windows": self.cfg.trading.basis_min_windows}
             data["plans"] = self.store.plan_stats()
+            data["vol_profile"] = self.vol_profile.summary()
             self._stats_cache = (time.time(), data)
             return data
         return cached
@@ -674,10 +806,13 @@ class Engine:
                         "quote_source": self.tracker.quote_source, "orderbook_errors": self.tracker.orderbook_errors,
                         "quote_age_s": None if self.tracker.last_quote_ts is None else round(now - self.tracker.last_quote_ts, 1)},
             "events": list(self.events)[:25],
+            "vol": self._vol_info,
+            "call": self.calls.state(),
             "config": {"bankroll": self.cfg.trading.bankroll, "edge_min": self.cfg.trading.edge_min,
                        "min_warmup_minutes": self.cfg.trading.min_warmup_minutes, "feed": self.cfg.feed.source,
                        "settle_lag_s": self.cfg.trading.settle_lag_s, "unit_dollars": self.cfg.trading.unit_dollars,
-                       "max_trade_dollars": self.cfg.trading.max_trade_dollars},
+                       "max_trade_dollars": self.cfg.trading.max_trade_dollars,
+                       "tradingview_symbol": self.cfg.feed.tradingview_symbol, "study_s": self._study_len()},
         }
 
     def chart(self, minutes: float = 20) -> dict:

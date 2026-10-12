@@ -167,6 +167,7 @@ class DecisionEngine:
     def __init__(self, cfg: TradingCfg, fees: FeeSchedule | None = None):
         self.cfg = cfg
         self.fees = fees or FeeSchedule()
+        self.context: dict = {}  # set by the engine each second: study period readings, reports inside the window
 
     # ------------------------------------------------------------------ helpers
     def _size(self, p: float, ask: float) -> int:
@@ -235,10 +236,27 @@ class DecisionEngine:
             return wait("no_quotes", "WAIT · no fresh Kalshi quotes")
         if seconds_elapsed is not None and seconds_elapsed < 0:
             return wait("not_open_yet", f"WAIT · next window opens in {mmss(-seconds_elapsed)}")
-        if seconds_elapsed is not None and seconds_elapsed < cfg.no_entry_first_s:
-            return wait("window_just_opened",
-                        f"WAIT · window just opened ({mmss(seconds_elapsed)} in); let the target and odds settle",
-                        [f"Entries open after {int(cfg.no_entry_first_s)} s."])
+        ctx = self.context or {}
+        study = max(cfg.no_entry_first_s, cfg.study_s)
+        if seconds_elapsed is not None and seconds_elapsed < study:
+            st = ctx.get("study") or {}
+            lines = [f"No calls in the first {mmss(study)} of a window: the app studies it first (the target was just "
+                     f"set and the odds swing most right after the open)."]
+            if st.get("moves_x") is not None:
+                speed = "faster than" if st["moves_x"] > 1.15 else "slower than" if st["moves_x"] < 0.85 else "about as fast as"
+                lines.append(f"So far this window moves {st['moves_x']:.1f}× the forecast ({speed} expected).")
+            if st.get("drift") is not None:
+                lines.append(f"Price is {abs(st['drift']) * 100:.0f}¢ {'above' if st['drift'] >= 0 else 'below'} the target; "
+                             f"typical move to the close ≈ ±${st.get('sigma_per_window') or pred.expected_move:.2f}.")
+            if st.get("odds_lo") is not None and st.get("odds_hi") is not None:
+                lines.append(f"Kalshi's Up odds ranged {pct(st['odds_lo'])}–{pct(st['odds_hi'])} so far.")
+            return wait("studying", f"WAIT · studying this window · calls start in {mmss(study - seconds_elapsed)}", lines)
+        events = ctx.get("events") or []
+        if events and cfg.event_entries == "block":
+            names = " and ".join(f"{e['name']} at {e['at']}" for e in events)
+            return wait("report", f"WAIT · {names} lands in this window: oil can jump either way, no new calls",
+                        ["Scheduled oil reports move WTI hard and fast; the odds before them are a guess on the number. "
+                         "Set event_entries = \"allow\" in the config to trade them anyway."])
         spread = quotes.spread
         if spread is not None and spread > cfg.max_spread:
             return wait("spread_wide", f"WAIT · spread too wide ({cents(spread)}) to pay for an entry")

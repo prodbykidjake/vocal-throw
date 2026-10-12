@@ -165,6 +165,11 @@ def main(argv=None) -> int:
         cfg.trading.min_warmup_minutes = args.warmup
         # short simulated windows: scale the entry gates so the demo actually produces signals
         cfg.trading.no_entry_first_s = max(5, args.window // 9)
+        cfg.trading.study_s = max(5, args.window // 6)  # the study period scales with the short demo windows
+        cfg.trading.call_deadline_s = max(8, args.window // 6)  # ... and so do the settlement call's clocks
+        cfg.trading.call_join_min_s = args.window * 0.6
+        cfg.trading.call_min_left_s = 5
+        cfg.trading.call_hold_s = 3
         cfg.trading.late_entry_s = max(5, args.window // 15)
         cfg.feed.source = "sim"
         cfg.notify.desktop = False

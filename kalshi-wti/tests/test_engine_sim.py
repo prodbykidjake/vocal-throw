@@ -15,6 +15,7 @@ async def test_engine_builds_live_state_on_simulated_market(tmp_path):
     cfg = Config()
     cfg.trading.min_warmup_minutes = 1
     cfg.trading.no_entry_first_s = 0
+    cfg.trading.study_s = 0
     feed = SimFeed(start_price=90.0, sigma_per_sqrt_s=0.005, warmup_minutes=5, seed=1)
     client = SimKalshi(feed, window_s=120)
     store = Store(str(tmp_path / "e.db"))
@@ -216,4 +217,48 @@ def test_quick_scalp_target_becomes_the_zone_low(tmp_path):
     side = "DOWN" if m.no_ask and m.no_ask <= 0.5 else "UP"
     pos = engine.open_position(side, 5.0, target=0.80)
     assert pos.target is not None and pos.target >= 0.80 - 1e-9 and pos.target_high > pos.target
+    store.close()
+
+
+def test_volatility_forecast_is_backfilled_measured_and_learned(tmp_path):
+    """A window recorded before v10: the forecast comes from its 15-second snapshots, the realized move from the
+    stored ticks; a window closing now is measured at its close; both feed the learned profile."""
+    import random
+    import time as _time
+
+    from wti15m.kalshi import Market
+    from wti15m.model import Prediction
+
+    cfg = Config()
+    store = Store(str(tmp_path / "v.db"))
+    now = _time.time()
+    rng = random.Random(7)
+
+    def window(ticker, open_ts, true_sigma):
+        store.upsert_window(Market.from_api({"ticker": ticker, "status": "closed", "floor_strike": 70.0,
+                                             "open_time": open_ts, "close_time": open_ts + 900}))
+        px = 70.0
+        for i in range(900):
+            px += rng.gauss(0, true_sigma)
+            store.add_tick(open_ts + i, "sim", px)
+        return open_ts + 900
+
+    old_open = now - 86400
+    window("OLD", old_open, 0.006)  # really moved 0.006 $/sqrt(s)
+    pred = Prediction(0.5, 0.5, 0.5, None, 0.0, 0.004, None, None, 720, 0.0, 0.1, "lean", 0.0, sigma_raw=0.004)
+    store.add_snapshot(old_open + 180, "OLD", 720, 70.0, 70.0, pred)  # the model forecast 0.004 at the end of the study
+    feed = SimFeed(start_price=70.0, warmup_minutes=5, seed=3)
+    engine = Engine(cfg, store, SimKalshi(feed, window_s=900), feed, Notifier(desktop=False, sound=False))
+    row = store.window("OLD")
+    assert row["sigma_forecast"] == pytest.approx(0.004) and row["sigma_realized"] == pytest.approx(0.006, rel=0.25)
+    assert engine.vol_profile.n_total == 1 and engine.vol_profile.mult(old_open)[0] > 1.0  # learned: moves more than forecast
+    # a window closing now: its forecast was recorded at the end of its study period, the close measures it
+    new_open = now - 950
+    close = window("NEW", new_open, 0.003)
+    store.set_window_forecast("NEW", 0.004)
+    m = Market.from_api({"ticker": "NEW", "status": "closed", "floor_strike": 70.0, "open_time": new_open, "close_time": close})
+    asyncio.run(engine.on_market_event("window_close", m))
+    assert store.window("NEW")["sigma_realized"] == pytest.approx(0.003, rel=0.25)
+    assert engine.vol_profile.n_total == 2
+    assert "vol_profile" in engine.stats() and engine.stats()["vol_profile"]["n"] == 2
     store.close()
