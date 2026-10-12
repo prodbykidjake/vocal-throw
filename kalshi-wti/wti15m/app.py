@@ -98,34 +98,8 @@ def create_app(engine: Engine) -> FastAPI:
             "config": {
                 "kalshi": vars(engine.cfg.kalshi), "feed": {k: v for k, v in vars(engine.cfg.feed).items() if "key" not in k},
                 "trading": vars(engine.cfg.trading), "config_path": engine.cfg.path,
-                "auto": {k: v for k, v in vars(engine.cfg.auto).items() if k not in ("api_key_id", "private_key_path")},
             },
         })
-
-    @app.post("/api/auto/pause", dependencies=[Depends(from_dashboard)])
-    async def auto_pause():
-        if engine.auto is None:
-            raise HTTPException(400, "auto trading is not enabled")
-        engine.auto.pause("paused by you")
-        return {"ok": True}
-
-    @app.post("/api/auto/resume", dependencies=[Depends(from_dashboard)])
-    async def auto_resume():
-        if engine.auto is None:
-            raise HTTPException(400, "auto trading is not enabled")
-        engine.auto.resume()
-        return {"ok": True}
-
-    @app.post("/api/auto/stop", dependencies=[Depends(from_dashboard)])
-    async def auto_stop():
-        if engine.auto is None:
-            raise HTTPException(400, "auto trading is not enabled")
-        await engine.auto.stop_all()
-        return {"ok": True}
-
-    @app.get("/api/auto/orders")
-    async def auto_orders(limit: int = 100):
-        return JSONResponse({"orders": engine.store.orders(limit)})
 
     @app.post("/api/position", dependencies=[Depends(from_dashboard)])
     async def open_position(body: PositionIn):

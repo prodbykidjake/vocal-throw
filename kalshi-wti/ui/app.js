@@ -88,8 +88,6 @@
       $("signal-headline").textContent = m ? "waiting for data…" : "no live window right now";
       $("signal-details").innerHTML = "";
     }
-    // auto trading
-    renderAuto(s);
     // position
     renderPosition(s);
     const paper = s.paper;
@@ -106,44 +104,6 @@
       if (s.tick.ts > last[0]) { chartData.ticks.push([s.tick.ts, s.tick.price]); drawChart(); }
     }
   }
-
-  // ---------------------------------------------------------------- auto trading card
-  function renderAuto(s) {
-    const a = s.auto, card = $("auto-card");
-    if (!a) { card.classList.add("hidden"); badge($("auto-badge"), "auto: off", ""); return; }
-    card.classList.remove("hidden");
-    const modeLabel = a.mode === "live" ? "LIVE" : a.mode === "sim" ? "SIM" : "DRY RUN";
-    const pill = $("auto-mode");
-    pill.textContent = a.paused ? modeLabel + " · PAUSED" : modeLabel;
-    pill.className = "pill " + (a.paused ? "PAUSED" : a.mode === "live" ? "LIVE" : a.mode === "sim" ? "SIM" : "DRY");
-    card.className = "card" + (a.mode === "live" ? " live" : "") + (a.paused ? " paused" : "");
-    badge($("auto-badge"), "auto: " + (a.paused ? "paused" : modeLabel.toLowerCase()) + (a.sync_error ? " · sync error" : ""),
-      a.sync_error ? "bad" : a.paused ? "warn" : a.mode === "live" ? "bad" : "ok");
-    $("auto-note").textContent = a.mode === "live" ? "(real orders on your Kalshi account)" : a.mode === "sim" ? "(simulated account on the demo market)" : "(dry run: real quotes, simulated fills · nothing is sent to Kalshi)";
-    $("auto-text").textContent = a.last_text || "";
-    const d = a.day || {}, lim = a.limits || {};
-    const shards = a.shard_cash || {}, ms = a.market_shard;
-    const wtiCash = ms != null && shards[String(ms)] != null ? ` (on WTI's exchange ${ms}: $${Number(shards[String(ms)]).toFixed(2)})` : "";
-    $("auto-line").textContent = `balance ${a.balance == null ? "--" : "$" + Number(a.balance).toFixed(2)}${wtiCash} ·today bought $${Number(d.bought || 0).toFixed(2)} of $${lim.day} · today P&L ${fmtUsd(d.pnl || 0)} (stop at -$${lim.day_loss}) · this window $${Number(a.window_bought || 0).toFixed(2)} of $${lim.window} · max $${lim.order}/order · ${lim.take_plans ? "buys the signal card's plans" : "buying off"}` +
-      (d.losses_row ? ` · ${d.losses_row} loss${d.losses_row > 1 ? "es" : ""} in a row` : "") + (a.sync_age_s != null ? ` · account synced ${a.sync_age_s.toFixed(0)}s ago` : "") + (a.api ? ` · ${a.api}` : "");
-    const o = a.order, kp = a.kalshi_position;
-    let line = "";
-    if (o) line = `open order: ${o.action.toUpperCase()} ${o.side} ${o.count} shares at ${fmtC(o.price)} ($${o.amount}) · filled ${o.filled} · ${o.age_s}s · ${o.reason}`;
-    else if (a.paused) line = `paused: ${a.pause_reason}`;
-    else if (a.blocked) line = `not buying: ${a.blocked}`;
-    else line = s.position ? "position open · will sell when the card says SELL NOW" : "watching for a plan on the signal card";
-    if (kp) line += ` · Kalshi shows ${kp.qty} ${kp.side} ($${kp.exposure} in)`;
-    if (a.sync_error) line += ` · sync error: ${a.sync_error}`;
-    $("auto-order").textContent = line;
-    $("auto-pause").classList.toggle("hidden", a.paused);
-    $("auto-resume").classList.toggle("hidden", !a.paused);
-    $("auto-orders").innerHTML = (a.orders || []).map((r) => `<li><span class="k">${new Date(r.ts * 1000).toLocaleTimeString()} ${esc(r.mode)}</span>` +
-      `<b class="${r.side === "UP" ? "up" : "down"}">${esc(r.action.toUpperCase())} ${esc(r.side)}</b> ${Number(r.count).toFixed(2)} at ${fmtC(r.price)} · ${esc(r.status)}` +
-      (r.filled ? ` · filled ${Number(r.filled).toFixed(2)} @ ${fmtC(r.avg_price)} (fee $${Number(r.fees || 0).toFixed(2)})` : "") + ` · ${esc(r.reason)}${r.text ? " · " + esc(r.text) : ""}</li>`).join("");
-  }
-  $("auto-pause").addEventListener("click", () => post("/api/auto/pause", {}));
-  $("auto-resume").addEventListener("click", () => post("/api/auto/resume", {}));
-  $("auto-stop").addEventListener("click", () => { if (confirm("Cancel the open order and pause auto trading?")) post("/api/auto/stop", {}); });
 
   // ---------------------------------------------------------------- position card
   let pendingSide = null;

@@ -97,7 +97,7 @@ class Position:
     last_reason: str | None = None  # the rule SHOWN last second (in memory only): the latches key on it
     last_raw_reason: str | None = None  # the rule that FIRED last second, before the two-second debounce
     rollover_ref: float | None = None  # high bid when a rollover SELL was last shown (in memory): it re-arms only on a new high
-    realized: float = 0.0  # P&L already banked by partial sells (auto trading)
+    realized: float = 0.0  # P&L already banked by an earlier partial sale (kept for older databases)
 
     @property
     def cost(self) -> float:

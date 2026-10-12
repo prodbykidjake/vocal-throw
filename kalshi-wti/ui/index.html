@@ -24,7 +24,6 @@
     <span class="badge" id="feed-badge">feed</span>
     <span class="badge" id="kalshi-badge">kalshi</span>
     <span class="badge" id="warm-badge">warm-up</span>
-    <span class="badge" id="auto-badge">auto: off</span>
   </div>
 </header>
 
@@ -59,22 +58,6 @@
         <div class="odds"><span class="up" id="model-up">Up --</span><span class="down" id="model-down">Down --</span></div>
         <div class="sub" id="model-sub"></div>
       </div>
-    </div>
-
-    <div class="card hidden" id="auto-card">
-      <div class="card-title">Auto trading <span class="muted" id="auto-note"></span></div>
-      <div class="signal-head">
-        <span class="pill" id="auto-mode">OFF</span>
-        <span id="auto-text" class="headline">not enabled</span>
-      </div>
-      <div class="sub" id="auto-line"></div>
-      <div class="sub" id="auto-order"></div>
-      <div class="row">
-        <button type="button" id="auto-pause">PAUSE buying</button>
-        <button type="button" id="auto-resume" class="ghost">RESUME</button>
-        <button type="button" id="auto-stop" class="danger">STOP: cancel order + pause</button>
-      </div>
-      <ul id="auto-orders" class="events"></ul>
     </div>
 
     <div class="card" id="signal-card">

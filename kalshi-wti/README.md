@@ -5,10 +5,8 @@ against the window's target, estimates the chance of Up/Down with an honest conf
 you in plain English when to **BUY** (which side, limit price, size), **SELL**, **HOLD**, or **WAIT**
 and what would change the answer. It records every window and learns from settled outcomes.
 
-By default it is a coach, not a bot: **you** place trades in the Kalshi app and tell the dashboard what you did,
-and nothing needs a Kalshi API key. Since v9 it can also **trade for you** (`[auto]` in the config, see below):
-with an API key it buys the card's calls and sells when the position card says SELL NOW, with hard dollar limits
-and a PAUSE/STOP button, after a dry run that shows every order it would have sent.
+It is a coach, not a bot: **you** place trades in the Kalshi app and tell the dashboard what you did.
+Nothing here needs a Kalshi API key, and it never places orders (the v9 auto trader was removed in v9.5).
 
 > Reality check: 15-minute markets are close to efficient and fees are steep for coin-flip contracts.
 > Expect WAIT most of the time. The point is discipline, exact fee/edge math, and a running record of
@@ -98,8 +96,7 @@ automatically; nothing to click.
   model and Kalshi's odds too far apart). A refusal is held on the card instead of being reworded every
   second, and a setup refused in the last minute does not start a new countdown.
 - The **quick-scalps card** of v8.4–v9 (cheap sides, a few cents within minutes) is retired: it lost in live use.
-  The code stays behind `quick_scalps` / `take_quick`, both off; the dashboard no longer shows it and the auto
-  trader never buys from it.
+  The code stays behind `quick_scalps`, which is off; the dashboard no longer shows it.
 - **Your position** (built for scalping): tap **UP** or **DOWN**, the price box fills with the live ask
   (edit it if your fill differed), type the dollars you spent, press Enter. The card then tracks it like
   Kalshi's sell sheet: shares, live sell price, **cash out** after fees and P&L, updating every second.
@@ -130,64 +127,6 @@ automatically; nothing to click.
 
 Treat the coach as untested until Stats shows a model Brier score at least as good as the market's over
 100+ windows and paper P&L after fees is positive.
-
-## Auto trading (v9)
-
-The app can place the orders itself, no button presses. Setup, in this order:
-
-1. At `kalshi.com/account/profile` → **API Keys → Create API key**. Key type: Ed25519 (the default) or RSA, both
-   work. Permissions: tick **Read all data**, and under granular access **Trade** (`write::trade`) and **Transfers**
-   (`write::transfer`); leave **Full access** off. Kalshi keeps your cash per exchange (WTI trades on the
-   "Crypto & Commodities" one) and an order only spends the cash on its market's exchange; Transfers lets the app
-   move your cash between your own Kalshi exchanges (the API has no way to withdraw to a bank). Note the key id and keep the private-key file Kalshi
-   downloads (a `.txt`) somewhere outside this folder, e.g. `~/kalshi-key.txt`. Never commit or share it
-   (`config.toml`, `*.pem` and `*.key` are git-ignored). Anyone with the file can trade your account.
-2. In `config.toml`:
-   ```toml
-   [auto]
-   enabled = true
-   dry_run = true
-   api_key_id = "xxxxxxxx-xxxx-..."
-   private_key_path = "~/kalshi-key.txt"
-   ```
-   For Kalshi's play-money **demo exchange** (separate account and keys at `demo.kalshi.co`), also set
-   `[kalshi] base_url = "https://external-api.demo.kalshi.co/trade-api/v2"`.
-3. `python -m wti15m auth` prints your balance and open positions. If it says 401/403, the key id or file is wrong
-   (or the Mac's clock is off).
-4. `python -m wti15m serve` as usual. With `dry_run = true` the **Auto trading** card runs the whole thing against a
-   simulated account on the real quotes: it "buys" plans, "sells" on SELL NOW, keeps a P&L. Nothing
-   is sent to Kalshi. Watch it for a day. When the log looks right, set `dry_run = false` and restart: the card turns
-   red and says LIVE.
-
-What it does every second (`wti15m/autotrader.py`):
-
-- **Buys** one order when the signal card has a valid plan (ask at or a hair over the limit): a limit order at the
-  plan's limit for the plan's dollars, capped by `max_order_dollars`. It rests for `buy_ttl_s` (20 s) and is
-  cancelled if unfilled, if the plan dies, or if the window ends. A fill opens the position card at the real fill
-  price and fee, with the plan's sell zone. Nothing else is bought.
-- **Cash per exchange**: Kalshi keeps a separate balance for each exchange shard. Orders are sized to the cash on
-  the WTI market's shard (fee included); when it is short, the trader moves cash over from your richest other shard
-  (`move_cash = true`, needs the Transfers permission) and buys once it lands. Without that permission it pauses
-  and says so. `python -m wti15m auth` prints the cash on each exchange and which one WTI trades on.
-- **Sells** when the position card says SELL NOW: one immediate-or-cancel, reduce-only order down to
-  `bid − sell_slip_cents` (3¢), so it takes whatever is on the book. A partial fill takes part of the position off and
-  the next SELL NOW sells the rest. A position the card wants to hold to settlement is left alone; Kalshi pays it out.
-- **Syncs** your balance and Kalshi position on the live window every `sync_s`. A position you opened in the Kalshi
-  app is adopted (so the sell rules apply to it); one you sold there is closed here. It never buys while Kalshi
-  already shows a position on the window, and never while an order is open.
-- **Limits** (all in `[auto]`): `max_order_dollars` (20), `max_window_dollars` (50), `max_day_dollars` (300),
-  `max_day_loss` (40: realized loss in a day that stops buying until tomorrow), `max_losses_in_a_row` (4: stops
-  buying until you press RESUME). `take_plans = false` turns buying off while sells keep running.
-- **PAUSE** stops new buys (sells still run, so an open position is still managed). **STOP** cancels the open order
-  and pauses. The card shows the balance, today's buys and P&L, the open order, the last fills, and the exact reason
-  when it is not buying. Live mode refuses to start unless the dashboard is bound to `127.0.0.1`.
-
-Orders go to Kalshi's v2 order endpoint (`/portfolio/events/orders`, bid/ask on the Yes price, fixed-point
-strings, checked against Kalshi's OpenAPI spec 3.34.0); if that endpoint is unavailable the client falls back to
-the legacy `/portfolio/orders` by itself. Fractional contracts are used (`fractional = true`); if Kalshi rejects
-the count it switches to whole contracts. Fill prices and fees come from the fills ledger, which states both the
-Yes and the No price of every fill. Every order, fill and error is logged (History tab and the card). The first
-live orders still deserve watching.
 
 ## Configuration (`config.toml`)
 
@@ -231,8 +170,6 @@ wti15m/feeds/        PriceFeed interface, Hyperliquid adapter, simulated feed
 wti15m/model.py      volatility estimator, digital-option probability, online calibrator, confidence
 wti15m/decision.py   edge/fee/Kelly logic and the plain-English BUY/SELL/HOLD/WAIT coaching
 wti15m/engine.py     1 Hz loop joining everything, recording, paper trades, learning at settlement
-wti15m/broker.py     your Kalshi account: signed requests (RSA-PSS), orders, fills, positions, balance; SimBroker for dry runs
-wti15m/autotrader.py places the cards' calls automatically, with the risk limits and the PAUSE/STOP switch
 wti15m/app.py        FastAPI server (JSON + Server-Sent Events) ; ui/ is the dashboard
 wti15m/store.py      SQLite schema and queries ; wti15m/replay.py offline evaluation
 wti15m/probe.py      raw API dump for the first live run ; wti15m/sim.py simulated Kalshi for demo/tests
