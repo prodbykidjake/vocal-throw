@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS paper_trades (id INTEGER PRIMARY KEY, ticker TEXT, si
 CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, ticker TEXT, side TEXT, qty REAL, avg_price REAL,
   opened_ts REAL, closed_ts REAL, exit_price REAL, pnl REAL, note TEXT, amount REAL, entry_fee REAL, high_bid REAL);
 CREATE TABLE IF NOT EXISTS model_state (key TEXT PRIMARY KEY, value TEXT, updated_ts REAL);
+CREATE TABLE IF NOT EXISTS quick_calls (id INTEGER PRIMARY KEY, ticker TEXT, side TEXT, ts REAL, ask REAL, target REAL,
+  stop REAL, horizon_end REAL, p_win REAL, ev REAL, amount REAL, status TEXT DEFAULT 'open', exit_price REAL, pnl REAL,
+  ended_ts REAL, reason TEXT);
 CREATE TABLE IF NOT EXISTS calls (id INTEGER PRIMARY KEY, ticker TEXT UNIQUE, side TEXT, p_side REAL, p_market_side REAL,
   ts REAL, seconds_left REAL, kind TEXT, result TEXT, correct INTEGER, settled_ts REAL);
 CREATE TABLE IF NOT EXISTS plans (id INTEGER PRIMARY KEY, ticker TEXT, side TEXT, limit_price REAL, amount REAL, shares REAL,
@@ -156,6 +159,33 @@ class Store:
             "SELECT sigma FROM snapshots WHERE ticker=? AND seconds_left BETWEEN ? AND ? AND sigma > 0 ORDER BY seconds_left DESC LIMIT 1",
             (ticker, seconds_left_lo, seconds_left_hi)).fetchone()
         return float(row[0]) if row else None
+
+    # ------------------------------------------------------------------ quick scalps (paper-scored)
+    def add_quick(self, ticker: str, side: str, ts: float, ask: float, target: float, stop: float, horizon_end: float,
+                  p_win: float, ev: float, amount: float):
+        self.conn.execute("INSERT INTO quick_calls (ticker, side, ts, ask, target, stop, horizon_end, p_win, ev, amount) "
+                          "VALUES (?,?,?,?,?,?,?,?,?,?)", (ticker, side, ts, ask, target, stop, horizon_end, p_win, ev, amount))
+
+    def quick_open(self, ticker: str, side: str) -> dict | None:
+        row = self.conn.execute("SELECT * FROM quick_calls WHERE ticker=? AND side=? AND status='open' ORDER BY id DESC LIMIT 1",
+                                (ticker, side)).fetchone()
+        return dict(row) if row else None
+
+    def quick_open_rows(self, ticker: str) -> list[dict]:
+        return [dict(r) for r in self.conn.execute("SELECT * FROM quick_calls WHERE ticker=? AND status='open'", (ticker,)).fetchall()]
+
+    def close_quick(self, row_id: int, ts: float, exit_price: float, pnl: float, status: str, reason: str):
+        self.conn.execute("UPDATE quick_calls SET status=?, exit_price=?, pnl=?, ended_ts=?, reason=? WHERE id=? AND status='open'",
+                          (status, exit_price, pnl, ts, reason, row_id))
+
+    def quick_record(self, recent: int = 20) -> dict:
+        rows = [dict(r) for r in self.conn.execute("SELECT * FROM quick_calls WHERE status IN ('win','loss') ORDER BY ended_ts DESC").fetchall()]
+        wins = sum(1 for r in rows if r["status"] == "win")
+        return {"wins": wins, "losses": len(rows) - wins, "pnl": round(sum(r["pnl"] or 0.0 for r in rows), 2),
+                "expected_wins": round(sum(r["p_win"] or 0.0 for r in rows), 1),
+                "by_reason": {k: sum(1 for r in rows if r["reason"] == k) for k in ("target", "stop", "time", "window ended")},
+                "recent": [{"side": r["side"], "ask": r["ask"], "win": r["status"] == "win", "pnl": r["pnl"], "reason": r["reason"]}
+                           for r in rows[:recent]]}
 
     # ------------------------------------------------------------------ settlement calls
     def add_call(self, ticker: str, side: str, p_side: float, p_market_side: float | None, ts: float, seconds_left: float,

@@ -90,14 +90,18 @@ class TradingCfg:
     scalp_max_ask: float = 0.55  # only contracts at or under this price get scalp calls
     scalp_min_chance: float = 0.40  # the sell level must have at least this simulated chance of being reached
     scalp_min_score: float = 0.50  # chance + tilt (model vs market, momentum) must reach this
-    # --- quick scalps card: cheap contracts, a few cents of profit, within a few minutes (riskier, less confident) ---
-    quick_scalps: bool = False  # retired: the quick-scalps card lost money; plans only
-    quick_max_ask: float = 0.35  # only contracts at or under this price
-    quick_target_cents: float = 3.0  # sell at least this much above the limit ...
-    quick_target_pct: float = 0.15  # ... or this fraction of the price, whichever is more
-    quick_horizon_s: float = 180.0  # the pop must be likely within this many seconds
-    quick_min_chance: float = 0.35  # minimum simulated chance of the pop
-    quick_dollars: float = 5.0  # suggested size
+    # --- quick scalps (v11): cheap sides, a few cents within two minutes, judged by first passage, scored on paper ---
+    quick_scalps: bool = True
+    quick_min_ask: float = 0.03  # contracts priced from ...
+    quick_max_ask: float = 0.35  # ... up to this
+    quick_targets_cents: list = field(default_factory=lambda: [3, 4, 5, 6, 8, 10, 12])  # sell targets tried (above the buy)
+    quick_stops_cents: list = field(default_factory=lambda: [4, 6, 8, 10, 15])  # stops tried (below the buy); also "no stop"
+    quick_horizon_s: float = 120.0  # the target must come within this many seconds (else sold at the bid)
+    quick_min_win: float = 0.55  # call only when the target comes BEFORE the stop in at least this share of paths
+    quick_min_edge: float = 0.02  # ... and the best target/stop pair's expected value after fees is at least this share of the stake
+    quick_converge_s: float = 300.0  # Kalshi's gap to the model's fair value fades with this time constant
+    quick_min_left_s: float = 75.0  # no quick calls with less than this left in the window
+    quick_dollars: float = 5.0  # stake used for sizing, the expected value and the paper record
     mc_paths: int = 2000  # simulated price paths per evaluation
     # --- feed basis correction ---
     basis_min_windows: int = 6  # apply a signed feed shift only after this many measured windows ...

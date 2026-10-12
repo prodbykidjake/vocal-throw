@@ -436,30 +436,3 @@ def test_scalp_call_on_a_cheap_contract_the_model_slightly_favours():
     tr.update(1000.0, "W1", pred, q, px, 90.21, 480, sig, False)
     ev = tr.update(1000.5, "W1", pred, q, px, 90.21, 480, sig, False)
     assert ev and ev.kind == "created" and tr.plan.tier == "scalp" and tr.plan.target >= tr.plan.limit + 0.08
-
-
-def test_quick_scalps_list_cheap_sides_with_a_pop_chance():
-    m = warmed_model()
-    eng = engine()
-    pred = m.predict(90.23, 90.21, 540, p_market=0.70, feed_age_s=0.3)
-    opts = eng.quick_scalps(pred, Quotes(0.69, 0.71, 0.29, 0.31), 90.23, 90.21, 480)
-    assert len(opts) == 1 and opts[0]["side"] == "DOWN" and opts[0]["ask"] == 0.31
-    o = opts[0]
-    assert o["target"] >= o["limit"] + 0.03 and 0 <= o["p_pop"] <= 1 and o["horizon_s"] == 180 and o["amount"] == 5.0
-    # nothing under 35c: no options; too late in the window: none either
-    assert eng.quick_scalps(pred, Quotes(0.49, 0.51, 0.49, 0.51), 90.23, 90.21, 480) == []
-    assert eng.quick_scalps(pred, Quotes(0.69, 0.71, 0.29, 0.31), 90.23, 90.21, 30) == []
-
-
-def test_quick_scalps_call_a_cheap_side_after_a_sharp_move_away():
-    """User's trade: Down fell to 12c with 12 min left after the price ran 15c above the target; he bought,
-    it hit 36c. The quick card must call that (no veto on the price action being against the side)."""
-    m = warmed_model()
-    px = 90.06
-    for t in range(2401, 2521):  # two minutes rallying 15c
-        px += 0.00125
-        m.vol.update(t, px)
-    pred = m.predict(px, 90.06, 780, p_market=0.88, feed_age_s=0.3, price_60=px - 0.07, price_180=px - 0.15)
-    opts = engine().quick_scalps(pred, Quotes(0.87, 0.89, 0.11, 0.12), px, 90.06, 720)
-    assert opts and opts[0]["side"] == "DOWN" and opts[0]["call"] and opts[0]["mom"] < 0
-    assert opts[0]["big"] >= 0.24 and 0 < opts[0]["p_big"] < 1

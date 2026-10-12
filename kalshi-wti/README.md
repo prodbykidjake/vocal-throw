@@ -95,35 +95,19 @@ automatically; nothing to click.
   confirmed setup cannot become a plan (not enough room to scalp, too little chance of reaching the target,
   model and Kalshi's odds too far apart). A refusal is held on the card instead of being reworded every
   second, and a setup refused in the last minute does not start a new countdown.
-- The **quick-scalps card** of v8.4–v9 (cheap sides, a few cents within minutes) is retired: it lost in live use.
-  The code stays behind `quick_scalps`, which is off; the dashboard no longer shows it.
-- **Settlement call** (v10, the card under the signal card): one prediction per window of where it will settle,
-  Up or Down, made once and never changed. It waits out the study period, then calls as soon as the model gives one
-  side at least 70% for 10 seconds in a row (while the model and Kalshi's odds are not far apart); if that never
-  happens it calls its best lean at 2:00 left, marked as a late call. No call for a window the app joined with under
-  5 minutes left, and never in the last minute: those would be free wins. The card keeps the record,
-  **Wins | Losses**, with the last 20 results and, next to it, how many wins Kalshi's own odds expected at the
-  moments of the calls. A record of 30-10 when Kalshi expected 31 means the calls only agreed with the market; a
-  record well above what Kalshi expected is real skill. The record survives restarts, and windows that settled
-  while the app was off are scored when it starts.
-- **Study period** (v10): for the first 3 minutes of every window the card says `WAIT · studying this window ·
-  calls start in 1:42` and shows what it is measuring instead: how fast this window moves compared with the
-  forecast, how far the price is from the target, and the range of Kalshi's odds so far. The target was just set
-  and the odds swing most right after the open; no plan is made until the study period ends.
-- **Learned volatility** (v10): the odds depend mostly on how far WTI can move before the close. The live estimate
-  lags oil's daily rhythm (busy from the 9:00 ET open through the 2:30 ET settle, quiet overnight), so every window
-  records the forecast at the end of its study period and the movement that really followed. The app learns a
-  correction per ET hour, shrunk toward "no correction" until an hour has evidence (it counts half after 8 windows
-  at that hour), and applies it to the odds and the sell zones. The model line shows it (`vol ×1.30`, hover for
-  why); the Stats tab shows the learned table and how much it cut the typical forecast miss, measured out of
-  sample. Windows recorded before v10 are back-filled from the stored snapshots and ticks (the last 3 days).
-- **Oil reports** (v10): the EIA inventory report (Wednesday 10:30 ET), the API report (Tuesday 4:30 PM ET) and the
-  Baker Hughes rig count (Friday 1 PM ET) make WTI jump. A window whose trading or settlement candle holds one shows
-  a `report:` badge and gets no new calls (`event_entries = "allow"` to trade them anyway); their extra movement
-  is learned separately (starting from ×1.5). Holiday-shifted dates go in `extra_events`.
-- **TradingView tab** (v10): TradingView's chart (`TVC:USOIL` by default, `tradingview_symbol` to change it) with its
-  drawing tools and indicators, for looking at. TradingView offers no data feed to apps, and the market settles on
-  Kalshi's own Pyth price anyway, so it does not feed the model.
+- **Quick scalps** (v11, rebuilt): for each side priced 3–35¢, the card simulates the next 2 minutes of the bid and
+  asks the scalper's question: does the bid reach the sell target *before* it falls to the stop (or the 2 minutes run
+  out)? The underlying starts from the settlement feed's own price, and Kalshi's premium or discount to the model's
+  fair value fades over a few minutes (the market catching up). It tries targets 3–12¢ above the buy and stops
+  4–15¢ below (or no stop, out at 2:00) and keeps the pair with the best expected dollars after Kalshi's fees: the
+  buy takes the ask (taker fee), the target sell rests as a limit order (no fee on this series), a stop or timeout
+  sells into the bid (taker fee). It calls a side only when that pair still wins at least 55% of the time, makes
+  money on average after fees, the model rates the side at least as high as Kalshi does, there is no oil report in
+  the window, and a confident settlement call does not point the other way. Contracts this cheap swing ~15–20¢ in
+  two minutes, so a small model-vs-market disagreement does not survive the noise and the fees: the card stays
+  quiet most of the time and says why for each side. Every call is scored on paper ($5, from the ask it was called
+  at): **Wins | Losses**, paper P&L, and how many wins the simulations expected. "I bought this" fills the position
+  form and makes the target the low end of your sell zone. The signal card and the settlement call are unaffected.
 - **Your position** (built for scalping): tap **UP** or **DOWN**, the price box fills with the live ask
   (edit it if your fill differed), type the dollars you spent, press Enter. The card then tracks it like
   Kalshi's sell sheet: shares, live sell price, **cash out** after fees and P&L, updating every second.

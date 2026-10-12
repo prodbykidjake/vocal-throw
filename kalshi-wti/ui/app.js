@@ -98,6 +98,8 @@
     else { eb.className = "badge hidden"; }
     // settlement call
     renderCall(s);
+    // quick scalps
+    renderQuick(s);
     // position
     renderPosition(s);
     const paper = s.paper;
@@ -146,6 +148,44 @@
     $("call-recent").innerHTML = (r.recent || []).slice().reverse().map((x) =>
       `<span class="chip ${x.correct ? "win" : "loss"}" title="${esc(x.ticker)} · ${esc(x.kind)} · ${fmtP(x.p)}">${x.side === "UP" ? "▲" : "▼"}${x.correct ? "✓" : "✗"}</span>`).join("");
   }
+
+  // ---------------------------------------------------------------- quick scalps card
+  function renderQuick(s) {
+    const q = s.quick || {}, call = q.call, r = q.record || {}, box = $("quick-box"), sub = $("quick-sub");
+    const usd = (x) => (x == null ? "--" : (x < 0 ? "-$" : "+$") + Math.abs(x).toFixed(2));
+    if (call) {
+      box.textContent = `BUY ${call.side} up to ${fmtC(call.limit)} → SELL ${fmtC(call.target)} · ` + (call.stop != null ? `stop ${fmtC(call.stop)}` : `no stop, out at ${mmss(call.horizon_s)}`);
+      box.className = "quick-box call " + call.side.toLowerCase();
+      sub.textContent = `${Math.round(call.p_win * 100)}% reach ${fmtC(call.target)} ` + (call.stop != null ? `before ${fmtC(call.stop)} ` : "") + `within ${mmss(call.horizon_s)}` +
+        (call.t_win != null ? ` (typically in ${mmss(call.t_win)})` : "") + ` · expected ${usd(call.ev)} on $${call.amount} after fees` +
+        ` (win ${usd(call.win_pnl)}, ` + (call.stop != null ? `stop ${usd(call.loss_pnl)})` : `otherwise sold at the bid, ≈ ${usd(call.loss_pnl)} on average)`) +
+        ` · model ${fmtP(call.p_side)} vs Kalshi ${fmtP(call.p_market)}` +
+        (call.maker_free ? " · place the sell as a resting limit order right after the fill: no fee on resting orders here" : "");
+      $("quick-actions").classList.remove("hidden");
+    } else {
+      box.textContent = q.note ? q.note : "no quick scalp right now"; box.className = "quick-box"; sub.textContent = "";
+      $("quick-actions").classList.add("hidden");
+    }
+    const n = (r.wins || 0) + (r.losses || 0);
+    $("quick-record").textContent = `Wins: ${r.wins || 0} | Losses: ${r.losses || 0}` + (n ? ` (${Math.round(100 * r.wins / n)}%)` : "");
+    const br = r.by_reason || {};
+    $("quick-bench").textContent = n ? `paper P&L ${usd(r.pnl)} on $${(q.rules || {}).dollars || 5} per call · the simulations expected ${r.expected_wins} wins · targets ${br.target || 0}, stops ${br.stop || 0}, timeouts ${br.time || 0}` :
+      "No scored scalps yet. Every call is scored on paper: a win when the bid reaches the target before the stop or the 2-minute limit.";
+    $("quick-recent").innerHTML = (r.recent || []).slice().reverse().map((x) =>
+      `<span class="chip ${x.win ? "win" : "loss"}" title="${esc(x.side)} @ ${fmtC(x.ask)} · ${esc(x.reason)} · ${usd(x.pnl)}">${x.side === "UP" ? "▲" : "▼"}${x.win ? "✓" : "✗"}</span>`).join("");
+    const open = (q.open || []).map((o) => `scoring ${o.side} @ ${fmtC(o.ask)} → ${fmtC(o.target)}` + (o.stop ? ` / stop ${fmtC(o.stop)}` : "") + ` · bid ${fmtC(o.bid)} · ${mmss(o.left_s)} left`);
+    const others = (q.options || []).filter((o) => !o.call).map((o) => `${o.side} @ ${fmtC(o.ask)}: ${o.why_not}`);
+    $("quick-options").textContent = open.concat(others).join("   ·   ");
+  }
+  $("quick-buy").addEventListener("click", () => {
+    const call = state && state.quick && state.quick.call; if (!call) return;
+    pendingSide = call.side;
+    const f = $("pos-form"); f.dataset.touched = "1"; f.dataset.target = String(call.target);
+    $("pos-side-label").textContent = call.side; $("pos-side-label").className = "pill " + (call.side === "UP" ? "BUY-UP" : "BUY-DOWN");
+    f.price_cents.value = (call.limit * 100).toFixed(1); f.amount.value = Number(call.amount).toFixed(2);
+    $("side-buttons").classList.add("hidden"); f.classList.remove("hidden"); f.amount.focus();
+    $("position-card").scrollIntoView({ behavior: "smooth", block: "center" });
+  });
 
   // ---------------------------------------------------------------- position card
   let pendingSide = null;
