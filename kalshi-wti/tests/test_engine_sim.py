@@ -90,7 +90,7 @@ async def test_next_target_resolves_previous_settlement(tmp_path):
         w = store.window("PREV")
         assert w["settle_price"] == 90.05
         assert w["feed_error_lag0"] is not None and w["feed_error_lag60"] is not None
-        assert w["feed_error"] == w["feed_error_lag60"]  # settle_lag_s = 60 by default
+        assert w["feed_error"] == w["feed_error_lag0"]  # v12: settles on the price at the close (settle_lag_s = 0)
         assert engine._close_capture["PREV"]["settle_price"] == 90.05
         # settlement result arrives later: uses the known settle price, labels snapshots
         settled = Market.from_api({"ticker": "PREV", "status": "finalized", "result": "yes", "floor_strike": 90.00,
@@ -261,4 +261,41 @@ def test_volatility_forecast_is_backfilled_measured_and_learned(tmp_path):
     assert store.window("NEW")["sigma_realized"] == pytest.approx(0.003, rel=0.25)
     assert engine.vol_profile.n_total == 2
     assert "vol_profile" in engine.stats() and engine.stats()["vol_profile"]["n"] == 2
+    store.close()
+
+
+def test_outdated_settle_lag_in_an_old_config_is_replaced(tmp_path):
+    from wti15m import config
+
+    p = tmp_path / "config.toml"
+    p.write_text("[trading]\nbankroll = 150.0\nsettle_lag_s = 60\ncall_hold_s = 12\n")
+    cfg = config.load(str(p))
+    assert cfg.trading.settle_lag_s == 0 and cfg.trading.bankroll == 150.0 and cfg.trading.call_hold_s == 12
+    assert any("settle_lag_s" in n for n in cfg.notes)
+    p.write_text("[trading]\nsettle_lag_s = 30\n")  # a deliberate, non-default value is kept
+    cfg = config.load(str(p))
+    assert cfg.trading.settle_lag_s == 30 and cfg.notes == []
+
+
+def test_stored_feed_errors_are_remeasured_at_the_close(tmp_path):
+    from wti15m.kalshi import Market
+
+    store = Store(str(tmp_path / "m.db"))
+    for i, (e0, e60) in enumerate([(0.002, 0.06), (-0.001, 0.05), (0.003, 0.07), (0.0, 0.04), (0.001, 0.06), (-0.002, 0.08), (0.001, 0.05)]):
+        t = 1_000_000.0 + i * 900
+        store.upsert_window(Market.from_api({"ticker": f"W{i}", "status": "closed", "floor_strike": 90.0,
+                                             "open_time": t - 900, "close_time": t}))
+        store.set_settle_price(f"W{i}", 90.0, 90.0 + e0, e0, e60, e60, "sim")  # recorded by v11: a minute later
+        store.settle_window(f"W{i}", "yes", 90.0 + e0, None, t + 60, 90.0)
+    store.set_state("basis_n:sim", "7")
+    store.set_state("basis_error:sim", "0.07")
+    store.set_state("basis_signed:sim", "0.055")  # the spurious shift a trending minute after the close produces
+    feed = SimFeed(start_price=90.0, sigma_per_sqrt_s=0.005, warmup_minutes=10, seed=2)
+    engine = Engine(Config(), store, SimKalshi(feed, window_s=120), feed, Notifier(desktop=False, sound=False))
+    assert store.feed_errors("sim", 10)[0] == 0.001  # newest first, now the error at the close
+    assert engine.model.basis_signed == 0.0 and engine.model.basis_error < 0.005
+    assert store.get_state("settle_timing") == "close"
+    assert engine.model.cal.n_windows == 0 and float(store.get_state("learner_since")) > 0  # learner restarted
+    again = Engine(Config(), store, SimKalshi(feed, window_s=120), feed, Notifier(desktop=False, sound=False))
+    assert again.model.basis_error == engine.model.basis_error  # migrates once
     store.close()

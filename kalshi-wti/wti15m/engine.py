@@ -70,6 +70,9 @@ class Engine:
         self._stats_cache: tuple[float, dict] = (0.0, {})
         self.feed.subscribe(self.on_tick)
         self.feed.subscribe_warmup(self.on_warmup)
+        for note in cfg.notes:
+            self.log_event("config", note)
+        self._migrate_settle_timing()
         self._load_basis(self.feed.active_name)
         self._recover()
         # v10: learned volatility by ET hour / report, from every window's forecast vs what really happened
@@ -85,8 +88,33 @@ class Engine:
         self.quick = QuickScalper(t, store)  # v11: quick scalps judged by first passage, scored on paper
         for row in store.unsettled_calls():  # windows that settled while the app was off
             self.calls.settle(row["ticker"], row["result"] == "yes")
+        self.calls.backfill_prices()  # v12: Kalshi's price at the moment of calls made before prices were recorded
 
     # ------------------------------------------------------------------ per-feed basis
+    def _migrate_settle_timing(self):
+        """The feed's error vs settlement is measured at the close and one candle later; the one that counts is the
+        moment the app settles on (settle_lag_s). When that changes (v12: a minute later -> at the close), every stored
+        error and each feed's basis is re-derived, so the old moment's noise (several cents of price movement in
+        the minute after the close) stops widening the odds and shifting the feed."""
+        at_close = self.cfg.trading.settle_lag_s <= 0
+        want = "close" if at_close else "candle"
+        if self.store.get_state("settle_timing") == want:
+            return
+        changed = self.store.rechoose_feed_errors(at_close)
+        for source in self.store.feed_sources():
+            self.store.set_state(f"basis_n:{source}", None)  # _load_basis re-derives it (and its gate) from the errors
+        if self.store.settled_window_count() > 0:
+            # the learner's main input (the base odds) was recorded with the other timing: start it over from the
+            # base model and let it learn again from windows recorded from now on
+            self.model.cal = Calibrator()
+            self.store.set_state("calibrator", self.model.cal.to_json())
+            self.store.set_state("learner_since", str(time.time()))
+            self.log_event("model", "learner restarted: its past inputs were recorded with the old settlement timing")
+        self.store.set_state("settle_timing", want)
+        if changed:
+            self.log_event("feed", f"settlement timing: {'at the close' if at_close else 'one candle after the close'}; "
+                                   f"{changed} stored feed errors re-measured at that moment")
+
     def _load_basis(self, source: str):
         """The feed's measured bias vs settlement is per source: Hyperliquid's 6¢ must never be applied to Kalshi's."""
         if source == self._basis_source:
@@ -167,6 +195,7 @@ class Engine:
                 self.fees = FeeSchedule.from_series(self.tracker.series.fee_type, self.tracker.series.fee_multiplier)
                 self.decider.fees = self.fees
                 self.plans.fees = self.fees
+                self.calls.fees = self.fees
         elif kind == "window_open":
             self.store.upsert_window(m)
             self._last_signal_key = None
@@ -198,6 +227,7 @@ class Engine:
         works whether Kalshi's result, the next target, or the feed data arrives first."""
         self._note_strike(self.tracker.current)
         lag = self.cfg.trading.settle_lag_s
+        later = 60.0  # the price is checked at the close AND one candle later, whichever the app settles on
         for ticker, cap in list(self._close_capture.items()):
             close_ts = cap.get("close_ts", 0)
             if now - close_ts > 90 * 60:
@@ -209,11 +239,12 @@ class Engine:
             if settle is None or settle <= 0:
                 continue  # next window's target not published yet
             latest = self.feed.latest()
-            if latest is None or (latest.ts < close_ts + lag and now < close_ts + lag + 30):
-                continue  # wait until the feed covers the settlement candle (or give up after 30 s grace)
+            wait = max(lag, later)
+            if latest is None or (latest.ts < close_ts + wait and now < close_ts + wait + 30):
+                continue  # wait until the feed covers both moments (or give up after 30 s grace)
             source = cap.get("source") or self.feed.active_name
             p0 = self._feed_price_near(close_ts, source=source)
-            p_lag = self._feed_price_near(close_ts + max(lag - 1, 0), source=source)
+            p_lag = self._feed_price_near(close_ts + later - 1, source=source)
             err0 = None if p0 is None else round(p0 - settle, 4)
             err_lag = None if p_lag is None else round(p_lag - settle, 4)
             chosen = err_lag if lag > 0 else err0
@@ -246,10 +277,11 @@ class Engine:
         self.store.label_snapshots(m.ticker, label)
         self.store.settle_window(m.ticker, m.result or "", feed_px, feed_error, now, settle)
         # learn on a pooled batch of recent windows (both outcomes present) instead of one window at a time;
-        # the learner's weight grows with ALL settled windows, not just the pooled batch
-        X, y, _ = self.store.training_rows_recent(50)
+        # the learner's weight grows with every settled window since its features last changed meaning
+        since = _float(self.store.get_state("learner_since"), 0.0)
+        X, y, _ = self.store.training_rows_recent(50, since)
         if len(X) >= 20 and len(set(y.tolist())) == 2:
-            self.model.cal.fit_pooled(X, y, self.store.settled_window_count())
+            self.model.cal.fit_pooled(X, y, self.store.settled_window_count(since))
             self.store.set_state("calibrator", self.model.cal.to_json())
         self.model.prev_outcome = 1.0 if label else -1.0
         self.store.set_state("prev_outcome", str(self.model.prev_outcome))
@@ -476,11 +508,15 @@ class Engine:
                     pos.high_bid = bid
                     self.store.update_position_high(pos.id, bid)
             self._study_step(m, pred, tick.price, now, elapsed, tau)
-            made = self.calls.step(now, m.ticker, pred, tau, elapsed, self._study_len())
+            made = self.calls.step(now, m.ticker, pred, tau, elapsed, self._study_len(), quotes)
             if made:
                 when = f"{int(made['seconds_left'] // 60)}:{int(made['seconds_left'] % 60):02d} left"
                 text = (f"settlement call: {made['side']} on {m.ticker} · model {round(made['p_side'] * 100)}% "
                         f"({made['kind']}, {when})")
+                if made.get("max_price"):
+                    text += f" · worth buying up to {cents(made['max_price'])}"
+                    if made.get("ask") is not None:
+                        text += f" (Kalshi asks {cents(made['ask'])})"
                 self.log_event("call", text)
                 self.notifier.notify(f"WTI 15m: settles {made['side']}", text, "Glass")
             raw = self.decider.decide(pred, quotes, tick.price, m.strike, tau, elapsed, pos, now)
@@ -736,6 +772,7 @@ class Engine:
             data["calibrator"] = {"n_windows": self.model.cal.n_windows, "n_samples": self.model.cal.n_samples,
                                   "shrink": round(self.model.cal.shrink, 3), "weights": self.model.cal.weights()}
             data["basis_error"] = self.model.basis_error
+            data["settle_lag_s"] = self.cfg.trading.settle_lag_s
             src = self._basis_source or ""
             data["basis"] = {"source": src, "applied": self.model.basis_signed,
                              "raw": _float(self.store.get_state(f"basis_raw:{src}"), 0.0),

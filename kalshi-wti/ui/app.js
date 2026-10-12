@@ -130,6 +130,15 @@
         (call.p_market_side != null ? ` · Kalshi had ${fmtP(call.p_market_side)}` : "") +
         (call.kind === "late" ? ` · late call: never reached ${fmtP(rules.prob)}, this is its best lean` : " · confident call") +
         (call.result == null ? " · waiting for settlement" : ` · settled ${call.result}`);
+      const g = c.guide;
+      if (call.result == null && g) {
+        // the side is locked; what it is worth paying moves with the model and the market
+        sub.textContent += g.max_price == null ? ` · now: model ${fmtP(g.p_now)}, not worth buying at any price` :
+          ` · now: model ${fmtP(g.p_now)} · worth buying up to ${fmtC(g.max_price)}` +
+          (g.ask == null ? "" : g.worth_it ? ` · Kalshi asks ${fmtC(g.ask)} ✓` : ` · Kalshi asks ${fmtC(g.ask)}, too expensive now`);
+      } else if (call.max_price != null) {
+        sub.textContent += ` · at the call: worth up to ${fmtC(call.max_price)}` + (call.ask != null ? `, Kalshi asked ${fmtC(call.ask)}` : "");
+      }
     } else if (w.status === "studying" || w.status === "watching") {
       const lean = w.lean ? ` · leaning ${w.lean} ${fmtP(w.p)}` : "";
       box.textContent = (w.status === "studying" ? `STUDYING · ${mmss(w.study_left_s)}` : "WATCHING") + lean +
@@ -143,7 +152,11 @@
     const n = (r.wins || 0) + (r.losses || 0);
     $("call-record").textContent = `Wins: ${r.wins || 0} | Losses: ${r.losses || 0}` + (n ? ` (${Math.round(100 * r.wins / n)}%)` : "");
     const k = r.by_kind || {}, kk = (x) => (k[x] ? `${k[x].wins}-${k[x].losses}` : "0-0");
-    $("call-bench").textContent = n ? `Kalshi's odds at the moments of the calls expected ${r.market_expected} wins over ${r.n_market} calls; the model expected ${r.model_expected} · confident calls ${kk("confident")} · late calls ${kk("late")}` :
+    const usd = (x) => (x < 0 ? "-$" : "+$") + Math.abs(x).toFixed(2);
+    const b = r.bought || {}, v = r.value || {};
+    const money = b.n ? ` · bought at Kalshi's price when called, $${r.stake} each: ${usd(b.pnl)} over ${b.n} calls after fees` +
+      (v.n ? `; only when worth it (at or under the "worth buying up to" price): ${usd(v.pnl)} over ${v.n}` : "; none was under its 'worth buying up to' price") : "";
+    $("call-bench").textContent = n ? `Kalshi's odds at the moments of the calls expected ${r.market_expected} wins over ${r.n_market} calls; the model expected ${r.model_expected} · confident calls ${kk("confident")} · late calls ${kk("late")}` + money :
       "No settled calls yet. The record compares itself with Kalshi's own odds, so it shows whether the calls beat the market.";
     $("call-recent").innerHTML = (r.recent || []).slice().reverse().map((x) =>
       `<span class="chip ${x.correct ? "win" : "loss"}" title="${esc(x.ticker)} · ${esc(x.kind)} · ${fmtP(x.p)}">${x.side === "UP" ? "▲" : "▼"}${x.correct ? "✓" : "✗"}</span>`).join("");
@@ -347,13 +360,24 @@
     $("pos-table").querySelector("tbody").innerHTML = d.positions.map((t) => `<tr><td class="mono">${esc(t.ticker)}</td><td class="${t.side === "UP" ? "up" : "down"}">${esc(t.side)}</td>
       <td>${Number(t.qty).toFixed(2)}${t.amount != null ? ` ($${Number(t.amount).toFixed(2)})` : ""}</td><td>${fmtC(t.avg_price)}</td><td>${t.exit_price == null ? "open" : fmtC(t.exit_price)}</td><td class="${(t.pnl || 0) >= 0 ? "up" : "down"}">${t.pnl == null ? "--" : fmtUsd(t.pnl)}</td></tr>`).join("");
   }
+  function settleTimingText(d) {
+    // which moment's price Kalshi settled on: the close, or one 1-minute candle later (settle_lag_s 0 or 60)
+    const f = d.feed_error, n = f.n_lag, atClose = !(d.settle_lag_s > 0);
+    const used = atClose ? f.lag0_cent : f.lag60_cent, other = atClose ? f.lag60_cent : f.lag0_cent;
+    let txt = ` · settlement timing check: the feed at the close matched the settlement to the cent in ${f.lag0_cent ?? "--"} of ${n} windows, ` +
+      `one minute later in ${f.lag60_cent ?? "--"} of ${n} · the app settles on the price ${atClose ? "at the close" : "one minute after the close"}`;
+    if (n >= 6 && other > used + 2) {
+      txt += ` <span class="down">(the other moment fits better: set settle_lag_s = ${atClose ? 60 : 0} in config.toml)</span>`;
+    }
+    return txt;
+  }
   async function loadStats() {
     const d = await (await fetch("/api/stats")).json();
     const b = d.brier || {};
     $("brier").innerHTML = Object.keys(b).length ? `<table class="table"><thead><tr><th>time left</th><th>n</th><th>model</th><th>market</th></tr></thead><tbody>` +
       Object.entries(b).map(([k, v]) => `<tr><td>${k}</td><td>${v.n}</td><td>${v.model}</td><td>${v.market ?? "--"}</td></tr>`).join("") + "</tbody></table>" +
       `<div class="sub">Settled windows: ${d.settled_windows} · Up share ${fmtP(d.up_share)} · feed vs settlement: mean error ${d.feed_error.mean_abs == null ? "--" : "$" + d.feed_error.mean_abs.toFixed(3)} over ${d.feed_error.n} windows (max $${(d.feed_error.max_abs ?? 0).toFixed(2)})` +
-      (d.feed_error.n_lag ? ` · candle-lag check: feed at the close is off by $${d.feed_error.lag0_mean_abs.toFixed(3)}, one candle later by $${d.feed_error.lag60_mean_abs.toFixed(3)} (the smaller one is the right settle_lag_s)` : "") + `</div>`
+      (d.feed_error.n_lag ? settleTimingText(d) : "") + `</div>`
       : `<div class="sub">No settled windows yet. Leave the app running; this fills in after each 15-minute window settles.</div>`;
     const c = d.calibration || {};
     $("calibration").innerHTML = Object.keys(c).length ? `<table class="table"><thead><tr><th>model said</th><th>n</th><th>actually Up</th></tr></thead><tbody>` +

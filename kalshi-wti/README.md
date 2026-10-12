@@ -40,10 +40,11 @@ cp config.example.toml config.toml     # edit bankroll / edge_min if you like
   (`Commodities.Index.PYTHOIL/USD`).
 - Rules: *"If the close price of the 1-minute candlestick for WTI Oil at 7:00 PM EDT is at least the close
   price of the 1-minute Pyth PYTHOIL candlestick at 6:45 PM EDT, the market resolves to Yes."*
-  So the target is the close of the 1-minute candle at the open time, settlement is the close of the
-  1-minute candle at the close time (about 60 s after trading stops; `settle_lag_s` in the config), a tie
-  pays Up, and **the next window's target is the previous window's settlement price**. The app uses that
-  to measure the feed's error exactly.
+  A tie pays Up, and **the next window's target is the previous window's settlement price**; the app uses
+  that to measure the feed's error exactly. Which moment's price that is was measured in v12 on 16 real
+  windows: Kalshi's live price series **at the close** matched the settlement to the cent in 15 of them, the
+  price one minute later in 2. So the 1-minute candle "at 7:00 PM" is the one that closes at 7:00:00, and the
+  app's horizon is the time left in trading (`settle_lag_s = 0`; up to v11 it wrongly added a minute).
 - Market fields: prices only as dollar strings (`yes_bid_dollars`, …, sub-cent values like `0.012`),
   sizes as `*_fp` strings, `floor_strike` holds the target, `status` is `open` then `finalized`,
   `expiration_value` holds the settlement price, tickers look like `KXWTI15M-26OCT071900-00`.
@@ -95,6 +96,18 @@ automatically; nothing to click.
   confirmed setup cannot become a plan (not enough room to scalp, too little chance of reaching the target,
   model and Kalshi's odds too far apart). A refusal is held on the card instead of being reworded every
   second, and a setup refused in the last minute does not start a new countdown.
+- **Settlement call** (v10): one Up-or-Down prediction per window, made once and never changed, scored when Kalshi
+  settles the window. Nothing is called in the first 3 minutes (`study_s`): the app studies the window. After that
+  it calls a side as soon as the model gives it at least `call_prob` for `call_hold_s` seconds in a row (and model
+  and Kalshi's odds are not wildly apart), otherwise it calls its best lean with `call_deadline_s` (2:00) left. A
+  window the app joined late gets no call. The record (**Wins | Losses**) sits next to the number of wins Kalshi's
+  own odds expected at the moments of the calls, so it shows whether the calls beat the market or only agree with it.
+  Since v12 the card also says what the call is worth paying: **worth buying up to 81¢** is the highest price that
+  still leaves `call_buy_margin` (3¢) of expected profit per contract after Kalshi's taker fee, from the model's
+  chance right now (the side stays locked; the price moves). The record adds what buying `unit_dollars` of every
+  call at Kalshi's ask at the moment it was made would have made after fees, and the same for only the calls whose
+  ask was at or under that price. Being right is not the same as making money: a call that wins 80% of the time
+  loses money bought at 85¢.
 - **Quick scalps** (v11, rebuilt): for each side priced 3–35¢, the card simulates the next 2 minutes of the bid and
   asks the scalper's question: does the bid reach the sell target *before* it falls to the stop (or the 2 minutes run
   out)? The underlying starts from the settlement feed's own price, and Kalshi's premium or discount to the model's
@@ -163,9 +176,15 @@ matter: `bankroll`, `edge_min` (default 5 points), `kelly_fraction`, `max_contra
   from zero, per feed. Until then the Stats tab shows the measured number as "not applied". A 2¢ wobble
   after three windows must not move every call by 2¢.
   `python -m wti15m livedata` prints the Kalshi series next to the Hyperliquid mid for 20 s.
-- **Settlement candle lag.** `settle_lag_s` (default 60) is added to the model's horizon because the
-  settlement candle closes about a minute after trading stops. The Stats tab shows which lag fits the
-  measured errors better; set it to 0 if the 0-second column is clearly smaller.
+- **Settlement timing.** `settle_lag_s` (default 0 since v12) is added to the model's horizon. Up to v11 it
+  was 60, on the belief that the settlement candle closes a minute after trading stops; the recorded windows
+  showed the settlement is the price at the close. That old minute made every probability too timid (most of
+  all late in a window), set the feed's "typical error" from the price movement in the minute after the close
+  (about 4¢ instead of under half a cent), and could shift the feed by a spurious bias (the "feed adjusted by
+  −4.5¢" some users saw). v12 replaces `settle_lag_s = 60` from an old `config.toml` (with a note in the log),
+  re-measures every stored feed error at the close, and restarts the learner, whose stored inputs used the
+  old timing. The Stats tab keeps checking both moments every window ("settlement timing check") and says so
+  if the other one ever fits better.
 - **Fees.** Taker fee = `multiplier × 0.07 × contracts × price × (1 − price)`, rounded up to the cent per
   order. At 99¢ that 1¢ round-up wipes out the gain, which is why the coach says WAIT in the last seconds.
 - **Learning.** The learner is deliberately small (9 weights) and shrunk toward the base model until it

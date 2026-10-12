@@ -76,6 +76,10 @@ class Store:
         for col, typ in (("target_high", "REAL"), ("p_target", "REAL")):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE plans ADD COLUMN {col} {typ}")
+        have = {row[1] for row in self.conn.execute("PRAGMA table_info(calls)")}
+        for col, typ in (("ask", "REAL"), ("bid", "REAL"), ("max_price", "REAL")):  # v12: Kalshi's price at the call
+            if col not in have:
+                self.conn.execute(f"ALTER TABLE calls ADD COLUMN {col} {typ}")
 
     def mark_status(self, ticker: str, status: str):
         self.conn.execute("UPDATE windows SET status=?, updated_ts=? WHERE ticker=? AND result IS NULL",
@@ -124,6 +128,17 @@ class Store:
             "SELECT feed_error FROM windows WHERE feed_error IS NOT NULL AND feed_source=? ORDER BY close_time DESC LIMIT ?",
             (feed_source, limit)).fetchall()
         return [r[0] for r in rows]
+
+    def rechoose_feed_errors(self, at_close: bool) -> int:
+        """Point every window's feed error at the moment the app now settles on (the close, or a candle later);
+        both were stored when they were measured. Returns the number of windows changed."""
+        col = "feed_error_lag0" if at_close else "feed_error_lag60"
+        cur = self.conn.execute(f"UPDATE windows SET feed_error={col} WHERE {col} IS NOT NULL AND "
+                                f"(feed_error IS NULL OR feed_error != {col})")
+        return cur.rowcount or 0
+
+    def feed_sources(self) -> list[str]:
+        return [r[0] for r in self.conn.execute("SELECT DISTINCT feed_source FROM windows WHERE feed_source IS NOT NULL")]
 
     def feed_error_pairs(self, feed_source: str, limit: int = 200) -> list[tuple[float, float]]:
         """(error at the close, error one candle later), newest first, where both were measured."""
@@ -189,9 +204,9 @@ class Store:
 
     # ------------------------------------------------------------------ settlement calls
     def add_call(self, ticker: str, side: str, p_side: float, p_market_side: float | None, ts: float, seconds_left: float,
-                 kind: str):
-        self.conn.execute("INSERT OR IGNORE INTO calls (ticker, side, p_side, p_market_side, ts, seconds_left, kind) VALUES (?,?,?,?,?,?,?)",
-                          (ticker, side, p_side, p_market_side, ts, seconds_left, kind))
+                 kind: str, ask: float | None = None, bid: float | None = None, max_price: float | None = None):
+        self.conn.execute("INSERT OR IGNORE INTO calls (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid, max_price) "
+                          "VALUES (?,?,?,?,?,?,?,?,?,?)", (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid, max_price))
 
     def call_for(self, ticker: str) -> dict | None:
         row = self.conn.execute("SELECT * FROM calls WHERE ticker=?", (ticker,)).fetchone()
@@ -206,9 +221,26 @@ class Store:
                                  "WHERE c.result IS NULL AND w.result IN ('yes','no')").fetchall()
         return [dict(r) for r in rows]
 
-    def call_record(self, recent: int = 20) -> dict:
+    def calls_missing_price(self) -> list[dict]:
+        return [dict(r) for r in self.conn.execute("SELECT * FROM calls WHERE ask IS NULL").fetchall()]
+
+    def quote_near(self, ticker: str, ts: float, within_s: float = 3.0) -> dict | None:
+        row = self.conn.execute("SELECT * FROM quotes WHERE ticker=? AND ts BETWEEN ? AND ? ORDER BY ABS(ts - ?) LIMIT 1",
+                                (ticker, ts - within_s, ts + within_s, ts)).fetchone()
+        return dict(row) if row else None
+
+    def set_call_price(self, ticker: str, ask: float | None, bid: float | None, max_price: float | None):
+        self.conn.execute("UPDATE calls SET ask=?, bid=?, max_price=? WHERE ticker=?", (ask, bid, max_price, ticker))
+
+    def call_record(self, recent: int = 20, stake: float = 10.0, fees=None) -> dict:
+        """Wins and losses, what Kalshi's odds expected, and what buying `stake` dollars of every call at Kalshi's ask
+        (at the moment it was made, taker fee included) would have made, held to settlement: for all calls, and for
+        the ones whose ask was at or under the card's 'worth buying up to' price."""
+        from .fees import taker_fee
+
         rows = [dict(r) for r in self.conn.execute("SELECT * FROM calls WHERE result IS NOT NULL ORDER BY ts DESC").fetchall()]
-        out: dict = {"wins": 0, "losses": 0, "market_expected": 0.0, "model_expected": 0.0, "n_market": 0, "by_kind": {}}
+        out: dict = {"wins": 0, "losses": 0, "market_expected": 0.0, "model_expected": 0.0, "n_market": 0, "by_kind": {},
+                     "stake": stake, "bought": {"n": 0, "wins": 0, "pnl": 0.0}, "value": {"n": 0, "wins": 0, "pnl": 0.0}}
         for r in rows:
             win = bool(r["correct"])
             out["wins" if win else "losses"] += 1
@@ -218,14 +250,29 @@ class Store:
             if r["p_market_side"] is not None:
                 out["market_expected"] += r["p_market_side"]
                 out["n_market"] += 1
+            ask = r.get("ask")
+            if ask is not None and 0 < ask < 1:
+                qty = stake / ask
+                pnl = (qty if win else 0.0) - stake - taker_fee(ask, qty, fees)
+                groups = [out["bought"]]
+                if r.get("max_price") is not None and ask <= r["max_price"] + 1e-9:
+                    groups.append(out["value"])
+                for g in groups:
+                    g["n"] += 1
+                    g["wins"] += int(win)
+                    g["pnl"] += pnl
+        for g in (out["bought"], out["value"]):
+            g["pnl"] = round(g["pnl"], 2)
         out["market_expected"] = round(out["market_expected"], 1)
         out["model_expected"] = round(out["model_expected"], 1)
         out["recent"] = [{"ticker": r["ticker"], "side": r["side"], "correct": bool(r["correct"]), "kind": r["kind"],
-                          "p": r["p_side"], "seconds_left": r["seconds_left"]} for r in rows[:recent]]
+                          "p": r["p_side"], "seconds_left": r["seconds_left"], "ask": r.get("ask"), "max_price": r.get("max_price")}
+                         for r in rows[:recent]]
         return out
 
-    def settled_window_count(self) -> int:
-        row = self.conn.execute("SELECT COUNT(*) FROM windows WHERE result IN ('yes','no')").fetchone()
+    def settled_window_count(self, since_ts: float = 0.0) -> int:
+        row = self.conn.execute("SELECT COUNT(*) FROM windows WHERE result IN ('yes','no') AND COALESCE(open_time, 0) >= ?",
+                                (since_ts,)).fetchone()
         return int(row[0] or 0)
 
     def prune(self, older_than_s: float = 3 * 86400):
@@ -318,10 +365,12 @@ class Store:
         rows = self.conn.execute("SELECT ticker FROM snapshots WHERE label IS NOT NULL GROUP BY ticker ORDER BY MIN(ts)").fetchall()
         return [r[0] for r in rows]
 
-    def training_rows_recent(self, n_windows: int = 50) -> tuple[np.ndarray, np.ndarray, int]:
-        """Labeled snapshots of the last `n_windows` settled windows (pooled batch for the calibrator)."""
+    def training_rows_recent(self, n_windows: int = 50, since_ts: float = 0.0) -> tuple[np.ndarray, np.ndarray, int]:
+        """Labeled snapshots of the last `n_windows` settled windows (pooled batch for the calibrator), only windows
+        that opened at or after `since_ts` (the learner's features changed meaning then)."""
         rows = self.conn.execute(
-            """SELECT ticker FROM windows WHERE result IN ('yes','no') ORDER BY close_time DESC LIMIT ?""", (n_windows,)).fetchall()
+            """SELECT ticker FROM windows WHERE result IN ('yes','no') AND COALESCE(open_time, 0) >= ?
+               ORDER BY close_time DESC LIMIT ?""", (since_ts, n_windows)).fetchall()
         tickers = [r[0] for r in rows]
         if not tickers:
             return np.zeros((0, 9)), np.zeros(0), 0
@@ -452,7 +501,7 @@ class Store:
         row = self.conn.execute("SELECT value FROM model_state WHERE key=?", (key,)).fetchone()
         return row[0] if row else None
 
-    def set_state(self, key: str, value: str):
+    def set_state(self, key: str, value: str | None):
         self.conn.execute("INSERT INTO model_state (key, value, updated_ts) VALUES (?,?,?) "
                           "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_ts=excluded.updated_ts",
                           (key, value, time.time()))
@@ -512,6 +561,9 @@ class Store:
             out["feed_error"]["n_lag"] = len(rows)
             out["feed_error"]["lag0_mean_abs"] = round(sum(abs(r[0]) for r in rows) / len(rows), 4)
             out["feed_error"]["lag60_mean_abs"] = round(sum(abs(r[1]) for r in rows) / len(rows), 4)
+            # settlement rounds to the cent: an error under half a cent means that moment's price IS the settlement
+            out["feed_error"]["lag0_cent"] = sum(1 for r in rows if abs(r[0]) < 0.005)
+            out["feed_error"]["lag60_cent"] = sum(1 for r in rows if abs(r[1]) < 0.005)
         return out
 
 

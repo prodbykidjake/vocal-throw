@@ -34,13 +34,14 @@ call_hold_s = 10                # ... for this many seconds in a row, after the 
 call_deadline_s = 120           # otherwise call its best lean when this many seconds are left
 call_join_min_s = 300           # no call for a window the app first saw with less than this left (no free wins)
 call_min_left_s = 60            # and never a call with less than this left
+call_buy_margin = 0.03           # v12: "worth buying up to" = the model's chance minus the fee minus this (expected profit per contract)
 late_entry_s = 60               # in the last N seconds only very lopsided entries are allowed
 late_entry_min_z = 2.0
 hold_to_settle_prob = 0.90      # with <= 2 min left and p >= this: hold, don't pay to exit
 stop_prob = 0.35                # a plan is cancelled when the model's chance for its side drops to this (or 60% of what it was)
 profit_target = 0.20            # (legacy) fallback sell distance when no price paths can be simulated
 max_spread = 0.10               # yes_ask - yes_bid wider than this = don't trade
-settle_lag_s = 60               # settlement = close of the 1-min Pyth candle AT the close time (~60 s after trading stops)
+settle_lag_s = 0                # v12: Kalshi settles on the price AT the close (measured: 15 of 16 windows to the cent); 60 = a minute later
 
 # committed trade plans and dollar sizing (scalping)
 unit_dollars = 10               # one unit; lean = half a unit, confident = 1, strong = 2, near-certain = 3

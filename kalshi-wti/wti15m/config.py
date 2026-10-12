@@ -55,6 +55,7 @@ class TradingCfg:
     call_deadline_s: float = 120.0  # otherwise call the lean when this many seconds are left
     call_join_min_s: float = 300.0  # no call for a window first seen with less than this left (no free wins)
     call_min_left_s: float = 60.0  # and never a call with less than this left
+    call_buy_margin: float = 0.03  # v12: "worth buying up to" leaves this much expected profit per contract after the fee
     late_entry_s: float = 60.0
     late_entry_min_z: float = 2.0
     hold_to_settle_prob: float = 0.90
@@ -62,9 +63,10 @@ class TradingCfg:
     profit_target: float = 0.20
     max_spread: float = 0.10
     tie_adj: float = 0.005  # settlement rounds to the cent and a tie pays Up
-    # Kalshi settles on the CLOSE of the 1-minute Pyth candle AT the close time (e.g. the 7:00 PM candle,
-    # which ends at 7:00:59), so the price keeps moving ~60 s after trading stops. Added to the horizon.
-    settle_lag_s: float = 60.0
+    # Seconds between the window's close and the price Kalshi settles on, added to the horizon. v12 measured it on
+    # real windows: the settlement equals Kalshi's live Pyth price AT the close (to the cent in 15 of 16 windows;
+    # the price a minute later matched 2 of 16). The Stats tab keeps checking both moments.
+    settle_lag_s: float = 0.0
     # --- committed trade plans and dollar sizing (scalping) ---
     unit_dollars: float = 10.0  # one "unit"; tiers: lean 0.5, confident 1, strong 2, near-certain 3 units
     learn_unit: bool = False  # use the median of your last reported buys as the unit instead
@@ -135,6 +137,25 @@ class Config:
     notify: NotifyCfg = field(default_factory=NotifyCfg)
     storage: StorageCfg = field(default_factory=StorageCfg)
     path: str | None = None
+    notes: list = field(default_factory=list)  # settings from an older config.toml that were replaced (shown at startup)
+
+
+# Values an older config.example.toml shipped that later turned out wrong. A config.toml copied from that example
+# still carries them, so they are replaced by the current default (with a note) instead of silently winning.
+OUTDATED = {
+    ("trading", "settle_lag_s"): (60, "v12 measured that Kalshi settles on the price at the close, not a minute later"),
+}
+
+
+def _upgrade(raw: dict, notes: list) -> dict:
+    for (section, key), (old, why) in OUTDATED.items():
+        sec = raw.get(section)
+        if isinstance(sec, dict) and key in sec and sec[key] == old:
+            sec = dict(sec)
+            del sec[key]
+            raw = {**raw, section: sec}
+            notes.append(f"config.toml: [{section}] {key} = {old} is outdated and was ignored ({why})")
+    return raw
 
 
 def _build(cls, data: dict | None, section: str):
@@ -161,6 +182,8 @@ def load(path: str | None = None) -> Config:
                 raw = tomllib.load(fh)
             used = cand
             break
+    notes: list[str] = []
+    raw = _upgrade(raw, notes)
     cfg = Config(
         kalshi=_build(KalshiCfg, raw.get("kalshi"), "kalshi"),
         feed=_build(FeedCfg, raw.get("feed"), "feed"),
@@ -169,5 +192,6 @@ def load(path: str | None = None) -> Config:
         notify=_build(NotifyCfg, raw.get("notify"), "notify"),
         storage=_build(StorageCfg, raw.get("storage"), "storage"),
         path=used,
+        notes=notes,
     )
     return cfg
