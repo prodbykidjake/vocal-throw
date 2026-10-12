@@ -24,6 +24,7 @@ void ResonanceSuppressor::prepare (double sampleRate, int numChannels)
         filters[(size_t) c].prepare (cfg);
     }
 
+    depthCurve.prepare (cfg);
     linkedPower.assign ((size_t) cfg.numBins, 0.0f);
 
     const auto delaySize = juce::nextPowerOfTwo (cfg.latency + 2);
@@ -94,6 +95,8 @@ void ResonanceSuppressor::setParams (const SuppressorParams& p) noexcept
     rp.releaseHigh = juce::jlimit (-1.0f, 1.0f, p.releaseTiltHigh * 0.01f);
     for (auto& c : curves)
         c.setParams (rp);
+
+    depthCurve.setBands (p.bands);
 
     mixSmoothed.setTargetValue (juce::jlimit (0.0f, 1.0f, p.mix * 0.01f));
     trimSmoothed.setTargetValue (juce::Decibels::decibelsToGain (p.wetTrimDb));
@@ -198,7 +201,7 @@ void ResonanceSuppressor::runAnalysisHop() noexcept
             power = linkedPower.data();
         }
 
-        curves[(size_t) c].process (power);
+        curves[(size_t) c].process (power, depthCurve.getWeights());
         filters[(size_t) c].setCurve (curves[(size_t) c].getReductionDb());
     }
 

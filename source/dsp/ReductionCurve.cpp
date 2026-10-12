@@ -125,7 +125,7 @@ void ReductionCurve::rebuildBallisticsTables()
     }
 }
 
-void ReductionCurve::process (const float* power) noexcept
+void ReductionCurve::process (const float* power, const float* depthWeight) noexcept
 {
     const int nb = cfg.numBins;
 
@@ -164,7 +164,8 @@ void ReductionCurve::process (const float* power) noexcept
         {
             const auto gate = smoothstep (kFloorDb, kFullGateDb, level);
             const auto levelFactor = params.hard ? juce::jlimit (0.0f, 2.0f, (level - kHardLevelRefDb) / kHardLevelRangeDb) : 1.0f;
-            t = std::min (excess * depthScale * levelFactor * gate * freqWeight[(size_t) k], params.maxCutDb);
+            const auto weight = depthWeight != nullptr ? depthWeight[k] : 1.0f;
+            t = std::min (excess * depthScale * levelFactor * gate * freqWeight[(size_t) k] * weight, params.maxCutDb);
         }
         target[(size_t) k] = t;
     }

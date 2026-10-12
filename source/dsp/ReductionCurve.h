@@ -35,8 +35,9 @@ public:
     void reset();
     void setParams (const ReductionParams& p);
 
-    /** @param power numBins linear powers, full-scale sine = 1.0 */
-    void process (const float* power) noexcept;
+    /** @param power numBins linear powers, full-scale sine = 1.0
+        @param depthWeight optional numBins multipliers on detection sensitivity (the depth curve) */
+    void process (const float* power, const float* depthWeight = nullptr) noexcept;
 
     const float* getReductionDb() const noexcept { return reduction.data(); }
 

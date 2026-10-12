@@ -12,6 +12,9 @@ PluginProcessor::PluginProcessor()
                      #endif
                        )
 {
+    for (int b = 0; b < ParamIDs::numBands; ++b)
+        for (int p = 0; p < 6; ++p)
+            bandValues[(size_t) b][(size_t) p] = apvts.getRawParameterValue (ParamIDs::bandParamID (b + 1, (ParamIDs::BandParam) p));
 }
 
 PluginProcessor::~PluginProcessor()
@@ -158,6 +161,18 @@ vs::SuppressorParams PluginProcessor::readParams() const noexcept
     p.attackTiltHigh = get (ParamIDs::attackHigh);
     p.releaseTiltLow = get (ParamIDs::releaseLow);
     p.releaseTiltHigh = get (ParamIDs::releaseHigh);
+
+    for (size_t b = 0; b < p.bands.size(); ++b)
+    {
+        const auto& v = bandValues[b];
+        auto& band = p.bands[b];
+        using ParamIDs::BandParam;
+        band.enabled = v[(size_t) BandParam::active]->load() >= 0.5f && v[(size_t) BandParam::enabled]->load() >= 0.5f;
+        band.shape = (vs::BandShape) juce::jlimit (0, vs::numBandShapes - 1, (int) std::lround (v[(size_t) BandParam::shape]->load()));
+        band.freqHz = v[(size_t) BandParam::freq]->load();
+        band.gainDb = v[(size_t) BandParam::gain]->load();
+        band.q = v[(size_t) BandParam::q]->load();
+    }
     return p;
 }
 

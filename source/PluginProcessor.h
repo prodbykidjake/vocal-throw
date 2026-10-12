@@ -45,6 +45,9 @@ public:
 private:
     vs::SuppressorParams readParams() const noexcept;
 
+    // raw parameter pointers for the depth curve bands, so the audio thread never looks up by name
+    std::array<std::array<std::atomic<float>*, 6>, ParamIDs::numBands> bandValues {};
+
     vs::ResonanceSuppressor suppressor;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)

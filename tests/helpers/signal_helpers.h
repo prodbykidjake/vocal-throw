@@ -9,14 +9,14 @@ namespace testing_helpers
 constexpr double kSampleRate = 48000.0;
 constexpr int kBlockSize = 480;
 
-inline void setParam (PluginProcessor& plugin, const char* id, float plainValue)
+inline void setParam (PluginProcessor& plugin, const juce::String& id, float plainValue)
 {
     auto* p = plugin.apvts.getParameter (id);
     jassert (p != nullptr);
     p->setValueNotifyingHost (p->convertTo0to1 (plainValue));
 }
 
-inline float getParam (PluginProcessor& plugin, const char* id)
+inline float getParam (PluginProcessor& plugin, const juce::String& id)
 {
     auto* p = plugin.apvts.getParameter (id);
     return p->convertFrom0to1 (p->getValue());

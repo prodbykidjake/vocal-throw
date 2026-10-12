@@ -6,7 +6,7 @@ const auto kBackground = juce::Colour (0xff1b1e24);
 const auto kAccent = juce::Colour (0xff4fd1c5);
 constexpr int kMargin = 16;
 constexpr int kHeaderHeight = 40;
-constexpr int kGraphHeight = 190;
+constexpr int kGraphHeight = 240;
 constexpr int kKnobSize = 92;
 constexpr int kKnobGap = 8;
 constexpr int kNumKnobs = 9;
@@ -30,12 +30,14 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     : AudioProcessorEditor (&p),
       processorRef (p),
       graph (p),
+      depthOverlay (p.apvts),
       modeAttachment (p.apvts, ParamIDs::mode, modeBox),
       stereoAttachment (p.apvts, ParamIDs::stereoMode, stereoBox),
       deltaAttachment (p.apvts, ParamIDs::delta, deltaButton),
       bypassAttachment (p.apvts, ParamIDs::bypass, bypassButton)
 {
     addAndMakeVisible (graph);
+    addAndMakeVisible (depthOverlay);
 
     const std::pair<const char*, const char*> knobDefs[] = {
         { ParamIDs::depth, "Depth" },
@@ -88,7 +90,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         inspector->setVisible (true);
     };
 
-    setSize (kMargin * 2 + kNumKnobs * kKnobSize + (kNumKnobs - 1) * kKnobGap, kHeaderHeight + kGraphHeight + 2 * kMargin + 18 + kKnobSize + 20 + 28 + 30 + kMargin + 16 + kTiltRowHeight);
+    setSize (kMargin * 2 + kNumKnobs * kKnobSize + (kNumKnobs - 1) * kKnobGap, kHeaderHeight + kGraphHeight + 2 * kMargin + 18 + kKnobSize + 20 + 28 + 30 + kMargin + 16 + 6 + kTiltRowHeight);
 }
 
 PluginEditor::~PluginEditor()
@@ -115,6 +117,7 @@ void PluginEditor::resized()
     area.removeFromTop (kHeaderHeight);
 
     graph.setBounds (area.removeFromTop (kGraphHeight).reduced (kMargin, 0));
+    depthOverlay.setBounds (graph.getBounds());
     area.removeFromTop (kMargin + 18); // room for knob labels
 
     auto knobRow = area.removeFromTop (kKnobSize + 20).reduced (kMargin, 0);
@@ -138,7 +141,7 @@ void PluginEditor::resized()
 
     area.removeFromTop (kMargin);
     tiltLabel.setBounds (area.removeFromTop (16).reduced (kMargin, 0));
-    area.removeFromTop (18);
+    area.removeFromTop (24);
     auto tiltRow = area.removeFromTop (kTiltKnobSize + 20).reduced (kMargin, 0);
     for (auto& k : tiltKnobs)
     {

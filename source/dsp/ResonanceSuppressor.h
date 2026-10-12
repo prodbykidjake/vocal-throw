@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DepthCurve.h"
 #include "MinPhaseFilter.h"
 #include "ReductionCurve.h"
 #include "SpectralAnalyzer.h"
@@ -28,6 +29,8 @@ struct SuppressorParams
     float detailTiltLow = 0.0f, detailTiltHigh = 0.0f;
     float attackTiltLow = 0.0f, attackTiltHigh = 0.0f;
     float releaseTiltLow = 0.0f, releaseTiltHigh = 0.0f;
+
+    BandArray bands {};
 };
 
 /** The whole effect: (optional M/S) -> analysis -> reduction curve -> minimum-phase dynamic filter ->
@@ -64,6 +67,7 @@ private:
 
     std::array<SpectralAnalyzer, maxChannels> analyzers;
     std::array<ReductionCurve, maxChannels> curves;
+    DepthCurve depthCurve;
     std::array<MinPhaseFilter, maxChannels> filters;
     std::vector<float> linkedPower;
 

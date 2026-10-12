@@ -23,6 +23,20 @@ inline constexpr auto attackLow = "attackLow";
 inline constexpr auto attackHigh = "attackHigh";
 inline constexpr auto releaseLow = "releaseLow";
 inline constexpr auto releaseHigh = "releaseHigh";
+
+inline constexpr int numBands = 8;
+enum class BandParam
+{
+    active, // the node exists
+    enabled, // not bypassed
+    shape,
+    freq,
+    gain,
+    q
+};
+
+/** @param band 1..numBands */
+juce::String bandParamID (int band, BandParam which);
 } // namespace ParamIDs
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();

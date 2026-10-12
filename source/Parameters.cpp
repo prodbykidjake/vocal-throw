@@ -1,4 +1,11 @@
 #include "Parameters.h"
+#include "dsp/DepthCurve.h"
+
+juce::String ParamIDs::bandParamID (int band, BandParam which)
+{
+    static constexpr const char* suffixes[] = { "active", "enabled", "shape", "freq", "gain", "q" };
+    return "band" + juce::String (band) + "_" + suffixes[(int) which];
+}
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
@@ -45,6 +52,48 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (tilt (ParamIDs::attackHigh, "Attack Tilt High"));
     layout.add (tilt (ParamIDs::releaseLow, "Release Tilt Low"));
     layout.add (tilt (ParamIDs::releaseHigh, "Release Tilt High"));
+
+    // Depth curve bands. 1-3 start active (low cut, neutral bell, high cut), the rest are free slots.
+    struct BandDefault
+    {
+        bool active;
+        vs::BandShape shape;
+        float freq, q;
+    };
+    constexpr BandDefault bandDefaults[ParamIDs::numBands] = {
+        { true, vs::BandShape::lowCut, 80.0f, 2.0f },
+        { true, vs::BandShape::bell, 3000.0f, 1.0f },
+        { true, vs::BandShape::highCut, 16000.0f, 2.0f },
+        { false, vs::BandShape::bell, 200.0f, 1.0f },
+        { false, vs::BandShape::bell, 500.0f, 1.0f },
+        { false, vs::BandShape::bell, 1200.0f, 1.0f },
+        { false, vs::BandShape::bell, 6000.0f, 1.0f },
+        { false, vs::BandShape::bell, 10000.0f, 1.0f },
+    };
+
+    for (int i = 0; i < ParamIDs::numBands; ++i)
+    {
+        using ParamIDs::BandParam;
+        const auto n = i + 1;
+        const auto& d = bandDefaults[i];
+        const auto id = [n] (BandParam p) { return ParamIDs::bandParamID (n, p); };
+        const auto name = [n] (const char* what) { return "Band " + String (n) + " " + what; };
+
+        NormalisableRange<float> freqRange (20.0f, 20000.0f, 0.01f);
+        freqRange.setSkewForCentre (1000.0f);
+        NormalisableRange<float> qRange (0.3f, 10.0f, 0.01f);
+        qRange.setSkewForCentre (1.5f);
+
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { id (BandParam::active), version }, name ("Active"), d.active));
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { id (BandParam::enabled), version }, name ("Enabled"), true));
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { id (BandParam::shape), version }, name ("Shape"),
+            StringArray { "Low Cut", "Low Shelf", "High Shelf", "High Cut", "Bell", "Bandpass", "Band Reject", "Tilt" }, (int) d.shape));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id (BandParam::freq), version }, name ("Frequency"), freqRange, d.freq,
+            AudioParameterFloatAttributes().withLabel ("Hz")));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id (BandParam::gain), version }, name ("Depth"),
+            NormalisableRange<float> (-24.0f, 24.0f, 0.1f), 0.0f, AudioParameterFloatAttributes().withLabel ("dB")));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id (BandParam::q), version }, name ("Q"), qRange, d.q));
+    }
 
     return layout;
 }

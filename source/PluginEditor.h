@@ -3,6 +3,7 @@
 #include "BinaryData.h"
 #include "PluginProcessor.h"
 #include "melatonin_inspector/melatonin_inspector.h"
+#include "ui/DepthCurveOverlay.h"
 #include "ui/ReductionGraph.h"
 
 //==============================================================================
@@ -33,6 +34,7 @@ private:
     juce::TextButton inspectButton { "Inspect the UI" };
 
     ReductionGraph graph;
+    DepthCurveOverlay depthOverlay;
 
     std::vector<std::unique_ptr<Knob>> knobs;
     std::vector<std::unique_ptr<Knob>> tiltKnobs;
