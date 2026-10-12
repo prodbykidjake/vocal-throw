@@ -1,0 +1,46 @@
+/* The board: a grid of market cards like Kalshi's 15-minute commodities page, plus a detail panel per market. */
+.hidden { display: none !important; }
+.board-record { text-align: right; }
+.total-record { font: 800 24px/1.2 var(--mono); }
+.lines { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 8px 20px; border-bottom: 1px solid var(--line); font: 600 13px/1.4 var(--mono); color: var(--muted); }
+.lines b { color: var(--text); font-weight: 700; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(370px, 1fr)); gap: 14px; }
+.mkt { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; cursor: pointer; transition: border-color .2s; }
+.mkt:hover { border-color: #3a414d; }
+.mkt.live { border-color: rgba(242,92,92,.35); }
+.mkt-top { display: flex; align-items: center; gap: 10px; }
+.mkt-badge { font: 800 12px/1 var(--mono); padding: 9px 7px; border-radius: 8px; color: #111; min-width: 44px; text-align: center; }
+.mkt-kind { color: var(--muted); font-weight: 700; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; flex: 1; }
+.mute { background: none; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); cursor: pointer; padding: 3px 8px; font-size: 14px; }
+.mkt-title { font-weight: 700; font-size: 18px; margin: 10px 0 2px; }
+.mkt-live { font-size: 13px; color: var(--muted); }
+.mkt-live .dot { color: var(--down); font-weight: 700; }
+.mkt-prices { display: flex; justify-content: space-between; margin: 10px 0 6px; font-family: var(--mono); }
+.mkt-prices .lbl { color: var(--muted); font: 600 11px/1.2 -apple-system, sans-serif; letter-spacing: .06em; text-transform: uppercase; }
+.mkt-prices .val { font-size: 16px; font-weight: 700; }
+.mkt-odds { display: flex; gap: 8px; margin: 6px 0 4px; }
+.odd { flex: 1; text-align: center; border: 1px solid var(--line); border-radius: 999px; padding: 5px 0; font: 700 14px/1.2 var(--mono); }
+.odd.up { color: var(--up); } .odd.down { color: var(--down); }
+.mkt .call-box { font-size: 17px; padding: 10px; margin: 8px 0 2px; }
+.mkt .meter { margin: 6px 0 0; }
+.mkt .meter-read { font-size: 17px; }
+.mkt .meter-track { height: 16px; }
+.mkt-note { color: var(--muted); font-size: 12px; min-height: 2.6em; margin-top: 4px; }
+.mkt-record { font: 700 17px/1.2 var(--mono); text-align: center; margin-top: 8px; }
+.mkt-bench { color: var(--muted); font-size: 12px; text-align: center; }
+.mkt .call-recent { margin-top: 6px; }
+.mkt-status { color: var(--warn); font-size: 12.5px; margin-top: 6px; }
+.detail { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; justify-content: center; align-items: flex-start; overflow-y: auto; z-index: 10; padding: 24px 12px; }
+.detail-panel { background: var(--bg); border: 1px solid var(--line); border-radius: 16px; width: min(1200px, 100%); padding: 16px; }
+.detail-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.close { background: none; border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 16px; }
+.detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.detail-grid > .card:first-child { grid-column: span 2; }
+.chart { min-height: 300px; }
+.log { font: 12px/1.5 var(--mono); color: var(--muted); max-height: 240px; overflow-y: auto; }
+@media (max-width: 800px) {
+  .cards { grid-template-columns: 1fr; }
+  .detail-grid { grid-template-columns: 1fr; }
+  .detail-grid > .card:first-child { grid-column: span 1; }
+  .board-record { text-align: left; }
+}

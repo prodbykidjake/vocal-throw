@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commodities board</title>
+<link rel="stylesheet" href="/ui/vendor/uPlot.min.css?v={{VERSION}}">
+<link rel="stylesheet" href="/ui/style.css?v={{VERSION}}">
+<link rel="stylesheet" href="/ui/board.css?v={{VERSION}}">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="logo">📊</span>
+    <div>
+      <div class="title">15 min Commodities <span class="muted mono version">v{{VERSION}}</span></div>
+      <div class="sub">a settlement call for every market: one Up/Down call per window, locked once made, scored when Kalshi settles it</div>
+    </div>
+  </div>
+  <div class="board-record">
+    <div id="total-record" class="total-record">Wins: 0 | Losses: 0</div>
+    <div id="total-sub" class="sub"></div>
+  </div>
+</header>
+<div id="lines" class="lines"></div>
+
+<main>
+  <div id="cards" class="cards"></div>
+  <div id="board-foot" class="sub center"></div>
+</main>
+
+<div id="detail" class="detail hidden" role="dialog" aria-modal="true">
+  <div class="detail-panel">
+    <div class="detail-head">
+      <div class="brand"><span id="d-badge" class="mkt-badge">--</span><div class="title" id="d-title">--</div></div>
+      <button type="button" id="d-close" class="close" aria-label="Close">✕</button>
+    </div>
+    <div class="detail-grid">
+      <div class="card">
+        <div class="card-title">Price vs target <span class="muted" id="d-chart-note"></span></div>
+        <div id="d-chart" class="chart"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">What the model sees</div>
+        <div id="d-model" class="sub"></div>
+        <div id="d-vol" class="sub"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Call history</div>
+        <table class="table" id="d-calls"><thead><tr><th>window</th><th>call</th><th>model</th><th>Kalshi</th><th>left</th><th>kind</th><th>result</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class="card">
+        <div class="card-title">Stats</div>
+        <div id="d-stats" class="sub"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Log</div>
+        <div id="d-log" class="log"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/ui/vendor/uPlot.iife.min.js?v={{VERSION}}"></script>
+<script src="/ui/board.js?v={{VERSION}}"></script>
+</body>
+</html>

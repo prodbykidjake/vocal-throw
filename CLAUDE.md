@@ -170,3 +170,7 @@ market (`KXNATGAS15M`), rescaled for ~$3 prices with five-decimal targets. See `
 `kalshi-gold/` is the same kind of copy (package `gold15m`, port 8789) for Kalshi's Gold 15-minute market
 (`KXGOLD15M`), rescaled for ~$4,000 prices (dollar moves, gold-sized volatility, U.S. macro calendar).
 See `kalshi-gold/README.md`; tests: `cd kalshi-gold && pytest`.
+
+`kalshi-commodities/` (package `cm15m`, port 8790) is a separate board with a settlement caller for every Kalshi
+15-minute commodity (gold, silver, WTI, copper, natural gas, palladium, platinum), with per-market scale worked out
+automatically and one database per market. See `kalshi-commodities/README.md`; tests: `cd kalshi-commodities && pytest`.

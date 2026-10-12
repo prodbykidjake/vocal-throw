@@ -1,0 +1,35 @@
+# Copy to config.toml (git-ignored). Every key is optional; these are the defaults.
+
+[kalshi]
+max_requests_per_s = 10.0       # shared by every market on the board (Kalshi's public tier allows ~20; the other coaches need some)
+poll_s = 2.0                    # each market's order book and live price, staggered across markets
+discovery_s = 10.0              # how often each market re-reads its window list
+category = "Commodities"        # Kalshi category searched for 15-minute series
+
+[board]
+markets = []                    # empty = every 15-minute commodity; or e.g. ["gold", "silver", "wti"]
+muted = []                      # markets whose calls never notify (each card also has a 🔔 toggle)
+# releases to treat as reports for one market, ET (CPI / jobs / PCE dates are not built in):
+# extra_events = { gold = ["2026-11-13 08:30 CPI"], silver = ["2026-11-13 08:30 CPI"] }
+
+[trading]
+call_prob = 0.72                # call when the model gives one side at least this ...
+call_hold_s = 10                # ... for this many seconds in a row, after the study period
+call_deadline_s = 120           # otherwise call its lean when this many seconds are left
+call_join_min_s = 300           # no call for a window the board first saw with less than this left
+call_min_left_s = 60            # and never a call with less than this left
+study_s = 180                   # no calls in a window's first 3 minutes
+event_entries = "block"         # no new calls in a window holding a scheduled report | "allow"
+min_warmup_minutes = 30
+
+[server]
+host = "127.0.0.1"
+port = 8790                     # WTI 8787, natural gas 8788, gold 8789
+open_browser = true
+
+[notify]
+desktop = true
+sound = true
+
+[storage]
+data_dir = "data"               # one database per market: data/gold.db, data/wti.db, ...
