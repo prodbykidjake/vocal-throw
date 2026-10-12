@@ -37,7 +37,7 @@ class SimKalshi:
         ticker = self._ticker(close_epoch)
         if ticker not in self._strikes:
             px = self.feed.buffer.price_at(open_epoch) or (self.feed.latest().price if self.feed.latest() else 3.2)
-            self._strikes[ticker] = round(px, 3)
+            self._strikes[ticker] = round(px, 5)
         strike = self._strikes[ticker]
         last = self.feed.latest()
         price = last.price if last else strike
@@ -50,15 +50,15 @@ class SimKalshi:
                 self._settle_px[ticker] = self.feed.buffer.price_at(close_epoch) or price
             if at >= close_epoch + self.settle_delay_s:
                 status = "settled"
-                result = "yes" if round(self._settle_px[ticker], 3) >= strike else "no"
-        p, _ = base_probability(quote_price, strike, 0.0005, max(tau, 1.0))
+                result = "yes" if round(self._settle_px[ticker], 5) >= strike else "no"
+        p, _ = base_probability(quote_price, strike, 0.000005, max(tau, 1.0))
         noise = self.rng.gauss(0, 0.02)
         mid = min(0.99, max(0.01, p + noise))
         yes_bid = round(max(0.01, mid - self.spread / 2), 2)
         yes_ask = round(min(0.99, mid + self.spread / 2), 2)
         return {
             "ticker": ticker, "event_ticker": ticker, "status": status,
-            "title": "Natural gas price up or down? (simulated)", "yes_sub_title": f"${strike:.3f} or above",
+            "title": "Natural gas price up or down? (simulated)", "yes_sub_title": f"${strike:.5f} or above",
             "open_time": dt.datetime.fromtimestamp(open_epoch, clock.UTC).isoformat(),
             "close_time": dt.datetime.fromtimestamp(close_epoch, clock.UTC).isoformat(),
             "floor_strike": strike,

@@ -84,7 +84,7 @@ def fair_price(side: str, s: float, strike: float, sigma: float, tau_s: float, t
 
 
 def simulate(side: str, s0: float, strike: float | None, sigma: float, seconds_left: float | None, settle_lag_s: float,
-             tie_adj: float = 0.0005, n_paths: int = 2000, step_s: float = 5.0, exclude_last_s: float = 10.0,
+             tie_adj: float = 0.000005, n_paths: int = 2000, step_s: float = 5.0, exclude_last_s: float = 10.0,
              seed: int = 7, offset: float = 0.0, zone_exclude_last_s: float | None = None) -> TouchCurve | None:
     """Touch curve for `side` from the current state. None when there is nothing to simulate.
     `offset` is subtracted from every simulated fair price: pass half the spread so the curve describes the

@@ -94,7 +94,7 @@ async def run_watch(cfg, sim: bool):
                 parts.append(f"no live market ({(st.get('tracker') or {}).get('last_error') or 'waiting'})")
             tick = st.get("tick")
             if tick:
-                parts.append(f"NG {tick['price']:.3f} ({feed.get('mode')}, age {feed.get('age_s') and round(feed['age_s'], 1)}s)")
+                parts.append(f"NG {tick['price']:.5f} ({feed.get('mode')}, age {feed.get('age_s') and round(feed['age_s'], 1)}s)")
             else:
                 parts.append(f"feed: {feed.get('mode')} {feed.get('last_error') or ''}")
             if pred:

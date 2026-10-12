@@ -21,7 +21,7 @@ class KalshiCfg:
 @dataclass
 class FeedCfg:
     source: str = "kalshi_live"  # kalshi_live (Kalshi's own Pyth series) | hyperliquid | sim
-    fallback: str = "hyperliquid"  # used automatically when the primary is stale; "" for none
+    fallback: str = ""  # "hyperliquid" = use its NATGAS perp when Kalshi's series is stale. Off: it sat ~3¢ (~1%) away from Pyth
     kalshi_live_poll_s: float = 1.0
     hyperliquid_dex: str = "xyz"
     hyperliquid_symbol: str = ""
@@ -61,9 +61,9 @@ class TradingCfg:
     stop_prob: float = 0.35
     profit_target: float = 0.20
     max_spread: float = 0.10
-    # natural gas targets carry three decimals ($3.245): settlement rounds to the tenth of a cent and a tie pays Up,
-    # so Up means price >= target - half a tick. Confirm with `python -m ng15m probe` and the Stats timing check.
-    tie_adj: float = 0.0005
+    # natural gas targets are the raw Pyth price with five decimals ($3.34651, seen with `probe`), so a tie is
+    # practically impossible; half of the fifth decimal keeps "a tie pays Up" without tilting the odds.
+    tie_adj: float = 0.000005
     # Seconds between the window's close and the price Kalshi settles on, added to the horizon. v12 measured it on
     # real windows: the settlement equals Kalshi's live Pyth price AT the close (to the cent in 15 of 16 windows;
     # the price a minute later matched 2 of 16). The Stats tab keeps checking both moments.

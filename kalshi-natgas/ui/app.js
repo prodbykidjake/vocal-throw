@@ -45,15 +45,15 @@
     const seen = feed.seconds_seen || 0, need = (s.config?.min_warmup_minutes || 30) * 60;
     badge($("warm-badge"), seen >= need ? "warmed up" : `warm-up ${Math.floor(seen / 60)}/${Math.round(need / 60)} min`, seen >= need ? "ok" : "warn");
     // prices
-    $("strike").textContent = m && m.strike != null ? "$" + m.strike.toFixed(3) : "--";
+    $("strike").textContent = m && m.strike != null ? "$" + m.strike.toFixed(5) : "--";
     $("strike-source").textContent = m ? `from ${m.strike_source}` : "";
     const px = s.tick ? s.tick.price : null;
-    $("price").textContent = px != null ? "$" + px.toFixed(3) : "--";
+    $("price").textContent = px != null ? "$" + px.toFixed(5) : "--";
     if (px != null && m && m.strike != null) {
       const adj = p && p.price_adj != null ? p.price_adj : px;
       const d = adj - m.strike;
-      $("delta").textContent = `${d >= 0 ? "▲" : "▼"} ${(Math.abs(d) * 100).toFixed(1)}¢ vs target` + (p && Math.abs(p.basis_signed || 0) >= 0.0005 ? ` (feed adj ${(-p.basis_signed * 100).toFixed(1)}¢)` : "")
-        + (p && p.implied_price != null ? ` · Kalshi odds imply ≈ $${p.implied_price.toFixed(3)}` : "");
+      $("delta").textContent = `${d >= 0 ? "▲" : "▼"} ${(Math.abs(d) * 100).toFixed(2)}¢ vs target` + (p && Math.abs(p.basis_signed || 0) >= 0.0001 ? ` (feed adj ${(-p.basis_signed * 100).toFixed(1)}¢)` : "")
+        + (p && p.implied_price != null ? ` · Kalshi odds imply ≈ $${p.implied_price.toFixed(5)}` : "");
       $("delta").className = "sub mono " + (d >= 0 ? "up" : "down");
       $("price").className = "big mono " + (d >= 0 ? "up" : "down");
     } else { $("delta").textContent = ""; $("price").className = "big mono"; }
@@ -67,7 +67,7 @@
       $("model-up").textContent = "Up " + fmtP(p.p_up);
       $("model-down").textContent = "Down " + fmtP(p.p_down);
       const vm = p.vol_mult != null && Math.abs(p.vol_mult - 1) >= 0.05 ? ` · vol ×${p.vol_mult.toFixed(2)}` : "";
-      $("model-sub").textContent = `${p.confidence.replace("_", " ")} · z ${p.z >= 0 ? "+" : ""}${p.z.toFixed(2)} · ±$${p.expected_move.toFixed(3)} expected${vm} · learner weight ${Math.round(p.shrink * 100)}%`;
+      $("model-sub").textContent = `${p.confidence.replace("_", " ")} · z ${p.z >= 0 ? "+" : ""}${p.z.toFixed(2)} · ±$${p.expected_move.toFixed(4)} expected${vm} · learner weight ${Math.round(p.shrink * 100)}%`;
       $("model-sub").title = (s.vol && s.vol.note) || "";
     } else { $("model-up").textContent = "Up --"; $("model-down").textContent = "Down --"; $("model-sub").textContent = ""; }
     if (!m) { $("odds-up").textContent = "Up --"; $("odds-down").textContent = "Down --"; $("book").textContent = ""; }
@@ -277,14 +277,14 @@
       width: el.clientWidth || 700, height: 320,
       scales: { x: { time: true } },
       axes: [{ stroke: "#8b93a1", grid: { stroke: "#262b33" }, values: (u, v) => v.map((x) => new Date(x * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) },
-             { stroke: "#8b93a1", grid: { stroke: "#262b33" }, size: 70, values: (u, v) => v.map((y) => "$" + y.toFixed(3)) }],
+             { stroke: "#8b93a1", grid: { stroke: "#262b33" }, size: 70, values: (u, v) => v.map((y) => "$" + y.toFixed(4)) }],
       series: [{}, { stroke: "#9fb3c8", width: 2, label: "Natural gas" }, { stroke: "#e8eaed", dash: [6, 6], width: 1, label: "target" },
                { stroke: "rgba(90,169,255,.7)", dash: [3, 4], width: 1, label: "+1σ" }, { stroke: "rgba(90,169,255,.7)", dash: [3, 4], width: 1, label: "-1σ" }],
       cursor: { show: true }, legend: { show: false },
     };
     if (chart) { chart.setData(data); chart.setSize({ width: el.clientWidth || 700, height: 320 }); }
     else { el.innerHTML = ""; chart = new uPlot(opts, data, el); }
-    $("chart-note").textContent = strike != null ? `dashed = target $${strike.toFixed(3)}, blue = expected ±1σ range into the close` : "";
+    $("chart-note").textContent = strike != null ? `dashed = target $${strike.toFixed(5)}, blue = expected ±1σ range into the close` : "";
   }
   window.addEventListener("resize", () => chart && chart.setSize({ width: $("chart").clientWidth, height: 320 }));
 
@@ -332,10 +332,10 @@
   async function loadHistory() {
     const d = await (await fetch("/api/history")).json();
     $("history-table").querySelector("tbody").innerHTML = d.windows.map((w) => `<tr>
-      <td>${fmtT(w.close_time)}</td><td class="mono">${w.strike != null ? "$" + w.strike.toFixed(3) : "--"}</td>
+      <td>${fmtT(w.close_time)}</td><td class="mono">${w.strike != null ? "$" + w.strike.toFixed(5) : "--"}</td>
       <td class="${w.result === "yes" ? "up" : w.result === "no" ? "down" : "muted"}">${w.result === "yes" ? "UP" : w.result === "no" ? "DOWN" : esc(w.status || "--")}</td>
       <td>${fmtP(w.p_at_10min)}</td><td>${fmtP(w.p_at_3min)}</td><td>${fmtP(w.p_market_at_close)}</td>
-      <td>${w.settle_price != null ? "$" + w.settle_price.toFixed(3) : ""} ${w.feed_error == null ? "--" : (w.feed_error >= 0 ? "+" : "") + w.feed_error.toFixed(3)}</td>
+      <td>${w.settle_price != null ? "$" + w.settle_price.toFixed(5) : ""} ${w.feed_error == null ? "--" : (w.feed_error >= 0 ? "+" : "") + w.feed_error.toFixed(5)}</td>
       <td>${w.buy_signals || 0}</td><td class="${(w.paper_pnl || 0) >= 0 ? "up" : "down"}">${w.paper_pnl == null ? "--" : fmtUsd(w.paper_pnl)}</td></tr>`).join("");
     $("plans-table").querySelector("tbody").innerHTML = (d.plans || []).map((p) => `<tr><td class="mono">${esc(p.ticker.slice(-9))}</td><td class="${p.side === "UP" ? "up" : "down"}">${esc(p.side)}</td>
       <td>${fmtC(p.limit_price)}</td><td>$${Number(p.amount).toFixed(0)}</td><td>${fmtC(p.target)}</td><td>${esc(p.tier || "")}</td><td>${esc(p.status)}${p.status_text ? " · " + esc(p.status_text) : ""}</td>
@@ -350,7 +350,7 @@
     // which moment's price Kalshi settled on: the close, or one 1-minute candle later (settle_lag_s 0 or 60)
     const f = d.feed_error, n = f.n_lag, atClose = !(d.settle_lag_s > 0);
     const used = atClose ? f.lag0_cent : f.lag60_cent, other = atClose ? f.lag60_cent : f.lag0_cent;
-    let txt = ` · settlement timing check: the feed at the close matched the settlement to the tick in ${f.lag0_cent ?? "--"} of ${n} windows, ` +
+    let txt = ` · settlement timing check: the feed at the close matched the settlement (within 0.01¢) in ${f.lag0_cent ?? "--"} of ${n} windows, ` +
       `one minute later in ${f.lag60_cent ?? "--"} of ${n} · the app settles on the price ${atClose ? "at the close" : "one minute after the close"}`;
     if (n >= 6 && other > used + 2) {
       txt += ` <span class="down">(the other moment fits better: set settle_lag_s = ${atClose ? 60 : 0} in config.toml)</span>`;

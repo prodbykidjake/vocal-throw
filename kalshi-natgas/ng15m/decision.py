@@ -189,12 +189,12 @@ class DecisionEngine:
 
     def _situation(self, pred: Prediction, price: float, strike: float | None, seconds_left: float | None) -> str:
         if strike is None:
-            return f"Price ${price:.3f}; target not published yet."
+            return f"Price ${price:.5f}; target not published yet."
         gap = price - strike
         rel = "above" if gap > 0 else "below" if gap < 0 else "at"
         move = pred.expected_move
-        return (f"Price ${price:.3f} is {abs(gap) * 100:.1f}¢ {rel} the ${strike:.3f} target with {mmss(seconds_left)} of trading left; "
-                f"typical move until the close ≈ ±${move:.3f} (z = {pred.z:+.2f}).")
+        return (f"Price ${price:.5f} is {abs(gap) * 100:.2f}¢ {rel} the ${strike:.5f} target with {mmss(seconds_left)} of trading left; "
+                f"typical move until the close ≈ ±${move:.4f} (z = {pred.z:+.2f}).")
 
     # ------------------------------------------------------------------ main entry
     def decide(self, pred: Prediction, quotes: Quotes, price: float, strike: float | None, seconds_left: float | None,
@@ -246,8 +246,8 @@ class DecisionEngine:
                 speed = "faster than" if st["moves_x"] > 1.15 else "slower than" if st["moves_x"] < 0.85 else "about as fast as"
                 lines.append(f"So far this window moves {st['moves_x']:.1f}× the forecast ({speed} expected).")
             if st.get("drift") is not None:
-                lines.append(f"Price is {abs(st['drift']) * 100:.1f}¢ {'above' if st['drift'] >= 0 else 'below'} the target; "
-                             f"typical move to the close ≈ ±${st.get('sigma_per_window') or pred.expected_move:.3f}.")
+                lines.append(f"Price is {abs(st['drift']) * 100:.2f}¢ {'above' if st['drift'] >= 0 else 'below'} the target; "
+                             f"typical move to the close ≈ ±${st.get('sigma_per_window') or pred.expected_move:.4f}.")
             if st.get("odds_lo") is not None and st.get("odds_hi") is not None:
                 lines.append(f"Kalshi's Up odds ranged {pct(st['odds_lo'])}–{pct(st['odds_hi'])} so far.")
             return wait("studying", f"WAIT · studying this window · calls start in {mmss(study - seconds_elapsed)}", lines)
@@ -294,10 +294,10 @@ class DecisionEngine:
         if max_ask > 0:
             what_for = f"Would buy {side} if its ask were ≤ {cents(max_ask)} (now {cents(ask)})"
             if trig_price is not None and 0 < trig_price < 10_000:
-                what_for += f", or if natural gas moved to about ${trig_price:.3f} with the odds unchanged"
+                what_for += f", or if natural gas moved to about ${trig_price:.4f} with the odds unchanged"
             what_for += "."
         elif trig_price is not None and 0 < trig_price < 10_000:
-            what_for = f"Would consider {side} only if natural gas moved to about ${trig_price:.3f}."
+            what_for = f"Would consider {side} only if natural gas moved to about ${trig_price:.4f}."
         extra = [what_for] if what_for else []
 
         if seconds_left < cfg.late_entry_s and abs(pred.z) < cfg.late_entry_min_z:

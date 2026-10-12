@@ -148,7 +148,7 @@ class VolEstimator:
 
 # ----------------------------------------------------------------------------- base model
 
-def base_probability(price: float, strike: float, sigma: float, tau_s: float, tie_adj: float = 0.0005) -> tuple[float, float]:
+def base_probability(price: float, strike: float, sigma: float, tau_s: float, tie_adj: float = 0.000005) -> tuple[float, float]:
     """P(settle Up) and the z-score. Settlement rounds to the cent and a tie pays Up, hence tie_adj."""
     gap = price - strike + tie_adj
     if tau_s <= 0.5:
@@ -294,7 +294,7 @@ class Prediction:
 
 
 class Model:
-    def __init__(self, calibrator: Calibrator | None = None, tie_adj: float = 0.0005,
+    def __init__(self, calibrator: Calibrator | None = None, tie_adj: float = 0.000005,
                  min_warmup_s: float = 1800.0, confident_margin: float = 0.20, stale_after_s: float = 3.0):
         self.vol = VolEstimator()
         self.cal = calibrator or Calibrator()
@@ -373,11 +373,11 @@ class Model:
             if abs(p_final - p_market) > self.disagreement_cap:
                 disagree = True
                 notes.append(f"model ({round(p_final * 100)}% Up) and market ({round(p_market * 100)}% Up) disagree a lot: "
-                             f"Kalshi's odds imply the Pyth price is near ${implied:.3f}, our feed says ${price:.3f}; "
+                             f"Kalshi's odds imply the Pyth price is near ${implied:.5f}, our feed says ${price:.5f}; "
                              f"trust the market's price for exits")
                 if conf == "confident":
                     conf = "lean"
-        if abs(self.basis_signed) >= 0.0005:
+        if abs(self.basis_signed) >= 0.0001:
             notes.append(f"feed adjusted by {-self.basis_signed * 100:+.2f}¢ (measured vs recent settlements)")
         return Prediction(p_final, p_base, p_learner, p_market, z, sigma, self.vol.sigma_slow(), self.vol.sigma_fast(),
                           tau_s, price_adj - strike, sigma_eff * math.sqrt(max(tau_s, 0)), conf, self.cal.shrink,

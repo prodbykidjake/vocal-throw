@@ -164,5 +164,5 @@ that follows Kalshi's WTI Oil 15-minute market and coaches entries/exits. See `k
 Run its tests with `cd kalshi-wti && pytest`. It never touches the plugin's CMake targets.
 
 `kalshi-natgas/` is a separate copy of that app (package `ng15m`, port 8788) for Kalshi's Natural Gas 15-minute
-market (`KXNATGAS15M`), rescaled for ~$3 prices with three-decimal targets. See `kalshi-natgas/README.md`; tests:
+market (`KXNATGAS15M`), rescaled for ~$3 prices with five-decimal targets. See `kalshi-natgas/README.md`; tests:
 `cd kalshi-natgas && pytest`. Changes to one app are not shared with the other.

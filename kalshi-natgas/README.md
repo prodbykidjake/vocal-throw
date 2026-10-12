@@ -9,7 +9,8 @@ It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 ## What carries over from the WTI coach
 
 - **Kalshi's own live price series** for the window (`/live_data/events/{event}`), the Pyth price Kalshi settles
-  on, as the feed. A Hyperliquid natural gas perp is the fallback only if one exists; it never falls back to oil.
+  on, as the feed. Hyperliquid's NATGAS perp can be turned on as a fallback (`[feed] fallback = "hyperliquid"`), but it is off
+  by default: at the first probe it sat about 3¢ (1%) away from the Pyth price Kalshi settles on.
 - **The model:** `P(Up) = Φ((price − target + tie) / (σ·√time left))`. σ is the realized volatility of recent
   moves, corrected per ET hour by what each hour has really done (learned after each window).
 - **3-minute study period** at the start of each window.
@@ -24,8 +25,8 @@ It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
 ## What is different for natural gas
 
-- **Scale:** gas trades near $3 with three-decimal targets (`$3.245`). Prices show three decimals, moves show
-  tenths of a cent, and a tie is half a tenth of a cent (`tie_adj = 0.0005`). The volatility floor and cap are
+- **Scale:** gas trades near $3 with targets that are the raw Pyth price with five decimals (`$3.34651`). Prices show five decimals,
+  moves show hundredths of a cent, and a tie (which pays Up) is practically impossible (`tie_adj = 0.000005`). The volatility floor and cap are
   sized for gas (0.00002–0.005 $/√s), not for oil.
 - **Calendar:** the **EIA Weekly Natural Gas Storage Report (Thursday 10:30 ET)** and Baker Hughes (Friday
   13:00 ET). Windows holding them get no new calls, and their volatility is learned separately. Holiday shifts

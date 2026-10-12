@@ -504,9 +504,9 @@ class Store:
             out["feed_error"]["n_lag"] = len(rows)
             out["feed_error"]["lag0_mean_abs"] = round(sum(abs(r[0]) for r in rows) / len(rows), 4)
             out["feed_error"]["lag60_mean_abs"] = round(sum(abs(r[1]) for r in rows) / len(rows), 4)
-            # settlement rounds to the tick ($0.001): an error under half a tick means that moment's price IS the settlement
-            out["feed_error"]["lag0_cent"] = sum(1 for r in rows if abs(r[0]) < 0.0005)
-            out["feed_error"]["lag60_cent"] = sum(1 for r in rows if abs(r[1]) < 0.0005)
+            # the settlement is the raw Pyth price: within 0.01¢ means that moment's price IS the settlement
+            out["feed_error"]["lag0_cent"] = sum(1 for r in rows if abs(r[0]) < 0.0001)
+            out["feed_error"]["lag60_cent"] = sum(1 for r in rows if abs(r[1]) < 0.0001)
         return out
 
 

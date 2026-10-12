@@ -86,7 +86,7 @@ async def run(cfg: Config, out_dir: str | None = None) -> int:
             from .feeds.hyperliquid import pick_gas_symbol
             sym = cfg.feed.hyperliquid_symbol or pick_gas_symbol(names)
             print(f"[hyperliquid] dex={cfg.feed.hyperliquid_dex} universe ({len(names)}): {names[:60]}")
-            print(f"[hyperliquid] WTI symbol guess: {sym}")
+            print(f"[hyperliquid] natural gas symbol guess: {sym}")
             mids = (await http.post(cfg.feed.hyperliquid_rest, json={"type": "allMids", "dex": cfg.feed.hyperliquid_dex})).json()
             _dump(folder, "hyperliquid_allmids", mids)
             keys = list(mids.keys())[:20] if isinstance(mids, dict) else type(mids).__name__

@@ -195,7 +195,7 @@ class Engine:
         elif kind == "window_open":
             self.store.upsert_window(m)
             self._last_signal_key = None
-            self.log_event("window", f"new window {m.ticker}: target {('$%.3f' % m.strike) if m.strike else '?'}"
+            self.log_event("window", f"new window {m.ticker}: target {('$%.5f' % m.strike) if m.strike else '?'}"
                                      f" (from {m.strike_source}), closes {clock.et_label(m.close_time)}")
         elif kind == "window_close":
             close_ts = m.close_time.timestamp() if m.close_time else now
@@ -209,7 +209,7 @@ class Engine:
             self.store.upsert_window(m, self.pred.p_final if self.pred else None)
             self.store.mark_status(m.ticker, "closed")
             self.log_event("window", f"window {m.ticker} closed; feed price at close "
-                                     f"{('$%.3f' % price) if price else '?'} vs target {('$%.3f' % m.strike) if m.strike else '?'}")
+                                     f"{('$%.5f' % price) if price else '?'} vs target {('$%.5f' % m.strike) if m.strike else '?'}")
         elif kind == "settled":
             self.handle_settlement(m)
         elif kind == "settlement_timeout":
@@ -246,11 +246,11 @@ class Engine:
             chosen = err_lag if lag > 0 else err0
             cap.update({"settle_price": settle, "err_lag0": err0, "err_lag60": err_lag})
             self.store.set_settle_price(ticker, settle, p0, err0, err_lag, chosen, source)
-            msg = f"{ticker} settlement price ${settle:.3f} (= next target)"
+            msg = f"{ticker} settlement price ${settle:.5f} (= next target)"
             if p0 is not None:
-                msg += f"; feed said ${p0:.3f} at the close"
+                msg += f"; feed said ${p0:.5f} at the close"
             if p_lag is not None:
-                msg += f", ${p_lag:.3f} at the candle close"
+                msg += f", ${p_lag:.5f} at the candle close"
             if p0 is None and p_lag is None:
                 msg += "; no feed data around the close (not counted in the feed error)"
             self.log_event("settle", msg)
@@ -303,9 +303,9 @@ class Engine:
         if p_model is not None:
             msg += f" · model had Up at {pct(p_model)} near the close"
         if settle is not None:
-            msg += f" · settled at ${settle:.3f}"
+            msg += f" · settled at ${settle:.5f}"
         if feed_error:
-            msg += f" · feed off by ${feed_error:+.3f}"
+            msg += f" · feed off by ${feed_error:+.5f}"
         elif direction_ok is False:
             msg += " · feed was on the wrong side of the target at the close"
         self.log_event("settled", msg)

@@ -22,19 +22,19 @@ def test_volatility_is_measured_at_gas_scale_not_clamped_to_an_oil_floor():
     assert VolEstimator().floor < 0.0001
 
 
-def test_tie_is_half_a_tenth_of_a_cent():
-    # a three-decimal target: a price 0.4 thousandths under it still rounds to it, and a tie pays Up
-    p_at, _ = base_probability(3.2496, 3.250, 0.0005, 0.5 + 1e-9)
+def test_tie_is_negligible_with_five_decimal_targets():
+    # targets are the raw Pyth price ($3.34651): a price a hair under the target is a Down, exactly on it is an Up
+    p_at, _ = base_probability(3.34651, 3.34651, 0.0005, 0.6)
     assert p_at > 0.5
-    p_below, _ = base_probability(3.2494, 3.250, 0.0005, 0.6)
+    p_below, _ = base_probability(3.34648, 3.34651, 0.0005, 0.6)
     assert p_below < 0.5
 
 
 def test_odds_and_text_at_gas_scale():
     m, px = warmed()
-    strike = round(px - 0.006, 3)  # 0.6¢ above the target with 5 minutes left
+    strike = round(px - 0.006, 5)  # 0.6¢ above the target with 5 minutes left
     pred = m.predict(px, strike, 300, 0.7, 0.3)
     assert 0.6 < pred.p_final < 0.95
     sig = DecisionEngine(Config().trading).decide(pred, Quotes(0.69, 0.71, 0.29, 0.31), px, strike, 300, 600)
     text = " ".join([sig.headline] + list(sig.details))
-    assert f"${strike:.3f}" in text and "0.6¢ above" in text
+    assert f"${strike:.5f}" in text and "0.60¢ above" in text
