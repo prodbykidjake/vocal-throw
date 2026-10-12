@@ -14,17 +14,20 @@ CI (`.github/workflows/build_and_test.yml`) currently builds Linux only; macOS/W
 
 ### DSP overview (`source/dsp/`)
 
-Signal flow: `in -> [L/R or M/S] -> SpectralAnalyzer -> ReductionCurve -> MinPhaseFilter -> wet trim -> mix -> out gain`. The dry path is delayed by the lookahead (`FrameConfig::latency`, half an analysis window = 1024 samples at 48 kHz, reported to the host) so it lines up with the wet path.
+Signal flow: `in (or sidechain key) -> [L/R or M/S] -> SpectralAnalyzer -> ReductionCurve (+ DepthCurve weights) -> MinPhaseFilter -> wet trim -> mix -> out gain`. The dry path is delayed by the lookahead (`FrameConfig::latency`, half an analysis window = 1024 samples at 48 kHz, reported to the host) so it lines up with the wet path.
 
 - `FrameConfig` - FFT/hop/kernel sizes derived from the sample rate (window is ~43 ms at any rate)
 - `SpectralAnalyzer` - Hann-windowed STFT, power spectrum normalised so a full-scale sine = 1.0
-- `ReductionCurve` - bins that stick out of a log-frequency-smoothed copy of the spectrum become target dB reduction. Soft = relative only (level independent); Hard also scales by absolute level. Per-bin attack/release, faster at high frequencies. Tuning constants are at the top of `ReductionCurve.cpp`
+- `ReductionCurve` - bins that stick out of a log-frequency-smoothed copy of the spectrum become target dB reduction. Soft = relative only (level independent); Hard also scales by absolute level. Per-bin attack/release, faster at high frequencies. The six tilt params (Detail/Attack/Release, low and high) reshape the per-bin envelope width and time constants like gentle shelves. Tuning constants are at the top of `ReductionCurve.cpp`
+- `DepthCurve` - up to 8 EQ-style bands (low/high cut, low/high shelf, bell, bandpass, band reject, tilt) turned into a per-bin multiplier on detection sensitivity. It steers the detector and never touches the audio. Non-bandpass bands multiply; enabled bandpass bands run in parallel and set the base weight. Weights are only recomputed when a band changes
 - `MinPhaseFilter` - turns the reduction curve into a minimum-phase FIR (cepstral method) once per hop, crossfading between kernels
-- `ResonanceSuppressor` - owns the above per channel, stereo mode/link, smoothed mix/trim/gain, delta and bypass, and publishes a reduction snapshot for the editor graph via atomics
+- `ResonanceSuppressor` - owns the above per channel, stereo mode/link, smoothed mix/trim/gain, delta and bypass, the optional sidechain key (detection runs on the key; key listen plays it delayed by the latency), and publishes a reduction snapshot and key level for the editor via atomics
 
-Parameters are defined in `source/Parameters.cpp` (APVTS). The editor (`source/PluginEditor.*`, `source/ui/`) polls the reduction snapshot on a timer.
+Parameters are defined in `source/Parameters.cpp` (APVTS). Each depth-curve band is 6 params (`bandN_active/enabled/shape/freq/gain/q`, see `ParamIDs::bandParamID`); `active` means the node exists, `enabled` means it isn't bypassed. The processor has an optional mono/stereo sidechain input bus (off by default) and caches raw parameter pointers so the audio thread never looks parameters up by name.
 
-Not yet implemented: depth-curve bands, tilts, external sidechain, linear-phase/quality modes, low-latency mode, presets.
+The editor (`source/PluginEditor.*`, `source/ui/`) polls the reduction snapshot on a timer. `DepthCurveOverlay` draws the depth curve over `ReductionGraph` and edits the band params through the host (drag a node = frequency + depth, wheel = Q/slope, double-click empty = add a bell, double-click node = bypass, right-click = shape menu/delete).
+
+Not yet implemented: per-band stereo focus and band listen, linear-phase/quality modes, low-latency mode, presets and A/B, multichannel.
 
 ## Build Commands
 
@@ -46,6 +49,8 @@ ctest --test-dir Builds --verbose --output-on-failure
 
 # Run benchmarks
 ./Builds/Benchmarks
+
+# Tests that open the editor need a display; on a headless box use: xvfb-run -a ./Builds/Tests
 
 # Save a PNG of the editor (from the editor test) to look at the UI
 VOX_SNAPSHOT_PATH=/tmp/editor.png ./Builds/Tests "[editor]"

@@ -4,6 +4,7 @@
 #include "PluginProcessor.h"
 #include "melatonin_inspector/melatonin_inspector.h"
 #include "ui/DepthCurveOverlay.h"
+#include "ui/KeyMeter.h"
 #include "ui/ReductionGraph.h"
 
 //==============================================================================
@@ -42,10 +43,11 @@ private:
 
     juce::ComboBox modeBox, stereoBox;
     juce::Label modeLabel { {}, "Mode" }, stereoLabel { {}, "Stereo" };
-    juce::ToggleButton deltaButton { "Delta" }, bypassButton { "Bypass" };
+    juce::ToggleButton deltaButton { "Delta" }, bypassButton { "Bypass" }, sidechainButton { "Sidechain" }, keyListenButton { "Key Listen" };
+    KeyMeter keyMeter;
 
     juce::AudioProcessorValueTreeState::ComboBoxAttachment modeAttachment, stereoAttachment;
-    juce::AudioProcessorValueTreeState::ButtonAttachment deltaAttachment, bypassAttachment;
+    juce::AudioProcessorValueTreeState::ButtonAttachment deltaAttachment, bypassAttachment, sidechainAttachment, keyListenAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

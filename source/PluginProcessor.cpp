@@ -7,6 +7,7 @@ PluginProcessor::PluginProcessor()
                      #if ! JucePlugin_IsMidiEffect
                       #if ! JucePlugin_IsSynth
                        .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+                       .withInput  ("Sidechain", juce::AudioChannelSet::stereo(), false)
                       #endif
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
                      #endif
@@ -92,7 +93,7 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     juce::ignoreUnused (samplesPerBlock);
 
-    suppressor.prepare (sampleRate, getTotalNumInputChannels());
+    suppressor.prepare (sampleRate, getMainBusNumInputChannels());
     suppressor.setParams (readParams());
     setLatencySamples (suppressor.getLatencySamples());
 }
@@ -119,6 +120,14 @@ bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
         return false;
    #endif
 
+    // The optional sidechain key can be off, mono or stereo
+    if (layouts.inputBuses.size() > 1)
+    {
+        const auto& key = layouts.getChannelSet (true, 1);
+        if (! key.isDisabled() && key != juce::AudioChannelSet::mono() && key != juce::AudioChannelSet::stereo())
+            return false;
+    }
+
     return true;
   #endif
 }
@@ -134,7 +143,23 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         buffer.clear (i, 0, buffer.getNumSamples());
 
     suppressor.setParams (readParams());
-    suppressor.process (buffer);
+
+    // getBusBuffer only builds a view onto the host's channels, nothing is allocated
+    auto main = getBusBuffer (buffer, true, 0);
+    if (isKeyConnected())
+    {
+        auto key = getBusBuffer (buffer, true, 1);
+        suppressor.process (main, &key);
+    }
+    else
+    {
+        suppressor.process (main);
+    }
+}
+
+bool PluginProcessor::isKeyConnected() const
+{
+    return getBusCount (true) > 1 && getBus (true, 1)->isEnabled();
 }
 
 vs::SuppressorParams PluginProcessor::readParams() const noexcept
@@ -155,6 +180,8 @@ vs::SuppressorParams PluginProcessor::readParams() const noexcept
     p.link = get (ParamIDs::link);
     p.delta = get (ParamIDs::delta) >= 0.5f;
     p.bypass = get (ParamIDs::bypass) >= 0.5f;
+    p.sidechain = get (ParamIDs::sidechain) >= 0.5f;
+    p.keyListen = get (ParamIDs::keyListen) >= 0.5f;
     p.detailTiltLow = get (ParamIDs::detailLow);
     p.detailTiltHigh = get (ParamIDs::detailHigh);
     p.attackTiltLow = get (ParamIDs::attackLow);

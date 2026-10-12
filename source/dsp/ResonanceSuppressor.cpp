@@ -31,6 +31,8 @@ void ResonanceSuppressor::prepare (double sampleRate, int numChannels)
     delayMask = delaySize - 1;
     for (auto& d : delayBuf)
         d.assign ((size_t) delaySize, 0.0f);
+    for (auto& d : keyDelayBuf)
+        d.assign ((size_t) delaySize, 0.0f);
 
     // Each display point covers the bins between the geometric midpoints to its neighbours
     for (int i = 0; i < numDisplayPoints; ++i)
@@ -65,7 +67,9 @@ void ResonanceSuppressor::reset()
         curves[(size_t) c].reset();
         filters[(size_t) c].reset();
         std::fill (delayBuf[(size_t) c].begin(), delayBuf[(size_t) c].end(), 0.0f);
+        std::fill (keyDelayBuf[(size_t) c].begin(), keyDelayBuf[(size_t) c].end(), 0.0f);
     }
+    keyLevel.store (0.0f, std::memory_order_relaxed);
 
     delayWrite = 0;
     hopCounter = 0;
@@ -104,7 +108,7 @@ void ResonanceSuppressor::setParams (const SuppressorParams& p) noexcept
     bypassSmoothed.setTargetValue (p.bypass ? 1.0f : 0.0f);
 }
 
-void ResonanceSuppressor::process (juce::AudioBuffer<float>& buffer) noexcept
+void ResonanceSuppressor::process (juce::AudioBuffer<float>& buffer, const juce::AudioBuffer<float>* key) noexcept
 {
     if (! prepared)
         return;
@@ -117,6 +121,16 @@ void ResonanceSuppressor::process (juce::AudioBuffer<float>& buffer) noexcept
     float* data[maxChannels] = {};
     for (int c = 0; c < numCh; ++c)
         data[c] = buffer.getWritePointer (c);
+
+    // External key: a mono key feeds both channels
+    const bool useKey = params.sidechain && key != nullptr && key->getNumChannels() > 0 && key->getNumSamples() >= numSamples;
+    const bool listen = useKey && params.keyListen;
+    const float* keyData[maxChannels] = {};
+    if (useKey)
+        for (int c = 0; c < numCh; ++c)
+            keyData[c] = key->getReadPointer (juce::jmin (c, key->getNumChannels() - 1));
+
+    float keyPeak = 0.0f;
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -132,11 +146,31 @@ void ResonanceSuppressor::process (juce::AudioBuffer<float>& buffer) noexcept
             in[1] = s;
         }
 
+        float keyRaw[maxChannels] = {};
+        float keyIn[maxChannels] = {};
+        if (useKey)
+        {
+            for (int c = 0; c < numCh; ++c)
+            {
+                keyRaw[c] = keyData[c][i];
+                keyIn[c] = keyRaw[c];
+                keyPeak = std::max (keyPeak, std::abs (keyRaw[c]));
+            }
+            if (midSide)
+            {
+                keyIn[0] = 0.5f * (keyRaw[0] + keyRaw[1]);
+                keyIn[1] = 0.5f * (keyRaw[0] - keyRaw[1]);
+            }
+        }
+
         float dry[maxChannels] = {};
         float wet[maxChannels] = {};
         for (int c = 0; c < numCh; ++c)
         {
-            analyzers[(size_t) c].pushSample (in[c]);
+            analyzers[(size_t) c].pushSample (useKey ? keyIn[c] : in[c]);
+
+            if (useKey)
+                keyDelayBuf[(size_t) c][(size_t) delayWrite] = keyRaw[c];
 
             auto& d = delayBuf[(size_t) c];
             d[(size_t) delayWrite] = in[c];
@@ -176,8 +210,16 @@ void ResonanceSuppressor::process (juce::AudioBuffer<float>& buffer) noexcept
         }
 
         for (int c = 0; c < numCh; ++c)
+        {
             data[c][i] = byp <= 0.0f ? proc[c] : (byp >= 1.0f ? dry[c] : proc[c] + byp * (dry[c] - proc[c]));
+
+            // the key, delayed like the audio so it lines up with what you would otherwise hear
+            if (listen)
+                data[c][i] = keyDelayBuf[(size_t) c][(size_t) ((delayWrite - 1 - cfg.latency) & delayMask)];
+        }
     }
+
+    keyLevel.store (keyPeak, std::memory_order_relaxed);
 }
 
 void ResonanceSuppressor::runAnalysisHop() noexcept

@@ -42,6 +42,12 @@ public:
     /** Latest gain reduction at ResonanceSuppressor::numDisplayPoints log-spaced frequencies, for the editor. */
     void getReductionDisplay (float* dest) const noexcept { suppressor.getReductionDisplay (dest); }
 
+    /** Peak of the sidechain key over the last block (0 if there is none). */
+    float getKeyLevel() const noexcept { return suppressor.getKeyLevel(); }
+
+    /** True if the host has the sidechain input enabled. */
+    bool isKeyConnected() const;
+
 private:
     vs::SuppressorParams readParams() const noexcept;
 

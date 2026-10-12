@@ -31,10 +31,13 @@ PluginEditor::PluginEditor (PluginProcessor& p)
       processorRef (p),
       graph (p),
       depthOverlay (p.apvts),
+      keyMeter (p),
       modeAttachment (p.apvts, ParamIDs::mode, modeBox),
       stereoAttachment (p.apvts, ParamIDs::stereoMode, stereoBox),
       deltaAttachment (p.apvts, ParamIDs::delta, deltaButton),
-      bypassAttachment (p.apvts, ParamIDs::bypass, bypassButton)
+      bypassAttachment (p.apvts, ParamIDs::bypass, bypassButton),
+      sidechainAttachment (p.apvts, ParamIDs::sidechain, sidechainButton),
+      keyListenAttachment (p.apvts, ParamIDs::keyListen, keyListenButton)
 {
     addAndMakeVisible (graph);
     addAndMakeVisible (depthOverlay);
@@ -74,7 +77,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     modeBox.setSelectedItemIndex ((int) processorRef.apvts.getRawParameterValue (ParamIDs::mode)->load(), juce::dontSendNotification);
     stereoBox.setSelectedItemIndex ((int) processorRef.apvts.getRawParameterValue (ParamIDs::stereoMode)->load(), juce::dontSendNotification);
 
-    for (auto* c : std::initializer_list<juce::Component*> { &modeBox, &stereoBox, &modeLabel, &stereoLabel, &deltaButton, &bypassButton })
+    for (auto* c : std::initializer_list<juce::Component*> { &modeBox, &stereoBox, &modeLabel, &stereoLabel, &deltaButton, &bypassButton, &sidechainButton, &keyListenButton, &keyMeter })
         addAndMakeVisible (c);
 
     addAndMakeVisible (inspectButton);
@@ -138,6 +141,10 @@ void PluginEditor::resized()
     controls.removeFromLeft (20);
     deltaButton.setBounds (controls.removeFromLeft (80));
     bypassButton.setBounds (controls.removeFromLeft (80));
+    controls.removeFromLeft (20);
+    sidechainButton.setBounds (controls.removeFromLeft (100));
+    keyListenButton.setBounds (controls.removeFromLeft (100));
+    keyMeter.setBounds (controls.removeFromLeft (80).reduced (0, 5));
 
     area.removeFromTop (kMargin);
     tiltLabel.setBounds (area.removeFromTop (16).reduced (kMargin, 0));

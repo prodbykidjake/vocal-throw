@@ -24,6 +24,8 @@ struct SuppressorParams
     float link = 100.0f; // percent
     bool delta = false;
     bool bypass = false;
+    bool sidechain = false;
+    bool keyListen = false;
 
     // -100..+100 %
     float detailTiltLow = 0.0f, detailTiltHigh = 0.0f;
@@ -49,7 +51,12 @@ public:
     const FrameConfig& getFrameConfig() const noexcept { return cfg; }
 
     void setParams (const SuppressorParams& p) noexcept;
-    void process (juce::AudioBuffer<float>& buffer) noexcept;
+    /** @param key optional external key. If sidechain is on and a key is given, detection (and so the
+               reduction) is driven by the key instead of the main signal. */
+    void process (juce::AudioBuffer<float>& buffer, const juce::AudioBuffer<float>* key = nullptr) noexcept;
+
+    /** Peak of the key signal over the last block (0 when there is no key). Safe from any thread. */
+    float getKeyLevel() const noexcept { return keyLevel.load (std::memory_order_relaxed); }
 
     /** Copies the latest max-over-channels reduction (dB, positive) at numDisplayPoints log-spaced
         frequencies (20 Hz..20 kHz). Safe to call from the message thread. */
@@ -71,7 +78,7 @@ private:
     std::array<MinPhaseFilter, maxChannels> filters;
     std::vector<float> linkedPower;
 
-    std::array<std::vector<float>, maxChannels> delayBuf;
+    std::array<std::vector<float>, maxChannels> delayBuf, keyDelayBuf;
     int delayMask = 0;
     int delayWrite = 0;
 
@@ -79,5 +86,6 @@ private:
 
     std::array<int, numDisplayPoints> displayLo {}, displayHi {};
     std::array<std::atomic<float>, numDisplayPoints> display {};
+    std::atomic<float> keyLevel { 0.0f };
 };
 } // namespace vs
