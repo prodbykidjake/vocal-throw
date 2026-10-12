@@ -88,3 +88,16 @@ def test_no_confident_call_without_kalshis_odds():
     for i in range(30):  # 85% but no Kalshi quote: the disagreement check is blind, so no confident call
         ct.step(i, "W9", pred(0.85, None, conf="confident"), 600 - i, 300 + i, 180)
     assert ct.call is None
+
+
+def test_meter_tracks_the_lean_and_its_recent_range_even_after_the_call():
+    ct = CallTracker(TradingCfg(), Store(":memory:"))
+    for i, p in enumerate([0.55, 0.62, 0.58, 0.66]):
+        ct.step(100 + i, "M1", pred(p, 0.6), 700 - i, 100 + i, 180)
+    m = ct.state()["meter"]
+    assert m["p_up"] == 0.66 and m["lo"] == 0.55 and m["hi"] == 0.66 and m["line"] == 0.72 and m["market_up"] == 0.6
+    ct.step(200, "M1", pred(0.40, 0.45), 600, 200, 180)
+    assert ct.state()["meter"]["lo"] == 0.40  # 30-s band: older points dropped
+    assert ct.state()["meter"]["hi"] == 0.40
+    ct.step(201, "M2", pred(0.5, 0.5, conf="stale"), 899, 1, 180)
+    assert ct.state()["meter"] is None

@@ -16,10 +16,14 @@ so it is clear whether the calls beat the market or just agree with it.
 from __future__ import annotations
 
 import time
+from collections import deque
 
 from .config import TradingCfg
 from .decision import Quotes
 from .model import Prediction
+
+
+METER_TRAIL_S = 30.0  # the meter's faint band = where the model's chance moved over this many seconds
 
 
 class CallTracker:
@@ -32,6 +36,8 @@ class CallTracker:
         self.watch: dict = {}  # what it is looking at before the call (for the card)
         self._first_left: float | None = None  # seconds left when the app first saw this window
         self._quotes = Quotes()  # Kalshi's prices this second, recorded with a call
+        self._trail: deque[tuple[float, float]] = deque()  # (ts, model's Up chance) over the last METER_TRAIL_S, for the meter
+        self.meter: dict | None = None  # the confidence meter under the card: where the model stands right now
 
     # ------------------------------------------------------------------ per second
     def step(self, now: float, ticker: str | None, pred: Prediction | None, seconds_left: float | None,
@@ -45,6 +51,8 @@ class CallTracker:
             self.watch = {}
             self._first_left = None
             self.call = self.store.call_for(ticker) if ticker else None
+            self._trail.clear()
+        self._update_meter(now, pred, seconds_left)
         if ticker is None or self.call is not None:
             return None
         if pred is None or seconds_left is None or seconds_left <= 0 or pred.confidence in ("warming_up", "stale", "no_target"):
@@ -79,6 +87,20 @@ class CallTracker:
             return self._make(now, ticker, pred, side, p_side, seconds_left, "late")
         return None
 
+    def _update_meter(self, now: float, pred: Prediction | None, seconds_left: float | None):
+        """The model's Up chance this second plus its range over the last half minute. It only shows what the model
+        sees; the call itself still follows its rules (and, once made, never changes)."""
+        if pred is None or seconds_left is None or seconds_left <= 0 or pred.confidence in ("warming_up", "stale", "no_target"):
+            self.meter = None
+            return
+        self._trail.append((now, pred.p_final))
+        while self._trail and now - self._trail[0][0] > METER_TRAIL_S:
+            self._trail.popleft()
+        ups = [p for _, p in self._trail]
+        self.meter = {"p_up": round(pred.p_final, 3), "lo": round(min(ups), 3), "hi": round(max(ups), 3),
+                      "line": self.cfg.call_prob, "market_up": None if pred.p_market is None else round(pred.p_market, 3),
+                      "disagree": pred.disagree}
+
     def _make(self, now: float, ticker: str, pred: Prediction, side: str, p_side: float, seconds_left: float, kind: str) -> dict:
         pm = None
         if pred.p_market is not None:
@@ -96,5 +118,5 @@ class CallTracker:
             self.call = self.store.call_for(ticker)
 
     def state(self) -> dict:
-        return {"call": self.call, "watch": self.watch, "record": self.store.call_record(),
+        return {"call": self.call, "watch": self.watch, "meter": self.meter, "record": self.store.call_record(),
                 "rules": {"prob": self.cfg.call_prob, "hold_s": self.cfg.call_hold_s, "deadline_s": self.cfg.call_deadline_s}}

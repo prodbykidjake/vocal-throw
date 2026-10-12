@@ -83,6 +83,18 @@
     <div class="card" id="call-card">
       <div class="card-title">Settlement call <span class="muted">(one Up/Down prediction per window, locked once made, scored when Kalshi settles it)</span></div>
       <div class="call-box" id="call-box">waiting for the window…</div>
+      <div class="meter hidden" id="call-meter">
+        <div class="meter-labels"><span class="down">◀ DOWN</span><span id="meter-read" class="meter-read">--</span><span class="up">UP ▶</span></div>
+        <div class="meter-track">
+          <div class="meter-band" id="meter-band"></div>
+          <div class="meter-fill" id="meter-fill"></div>
+          <div class="meter-line" id="meter-line-down"></div>
+          <div class="meter-line" id="meter-line-up"></div>
+          <div class="meter-mid"></div>
+          <div class="meter-mkt" id="meter-mkt" title="Kalshi's odds"></div>
+        </div>
+        <div class="sub center" id="meter-note"></div>
+      </div>
       <div class="sub center" id="call-sub"></div>
       <div class="call-record" id="call-record">Wins: 0 | Losses: 0</div>
       <div class="sub center" id="call-bench"></div>

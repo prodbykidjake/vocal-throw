@@ -93,6 +93,18 @@ input.amount { width: 180px; }
 .call-box.down { background: rgba(242,92,92,.16); color: var(--down); }
 .call-box.win { outline: 2px solid rgba(46,204,143,.6); }
 .call-box.loss { outline: 2px solid rgba(242,92,92,.6); }
+.meter { margin: 8px 2px 2px; }
+.meter-labels { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; font-size: 13px; }
+.meter-read { font: 800 22px/1.2 var(--mono); }
+.meter-track { position: relative; height: 22px; border-radius: 11px; background: var(--card2); overflow: hidden; margin-top: 4px; }
+.meter-fill { position: absolute; top: 0; bottom: 0; transition: left .6s ease, width .6s ease, background .6s; }
+.meter-fill.up { background: rgba(46,204,143,.75); }
+.meter-fill.down { background: rgba(242,92,92,.75); }
+.meter-fill.ready { box-shadow: 0 0 12px currentColor; }
+.meter-band { position: absolute; top: 0; bottom: 0; background: rgba(255,255,255,.12); transition: left .6s ease, width .6s ease; }
+.meter-mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: rgba(255,255,255,.45); }
+.meter-line { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px dashed rgba(255,255,255,.7); }
+.meter-mkt { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1.5px; background: #f5b942; transition: left .6s ease; }
 .call-record { font: 700 26px/1.2 var(--mono); text-align: center; margin: 10px 0 2px; }
 .call-recent { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; margin-top: 8px; }
 .chip { font: 600 12px/1 var(--mono); padding: 4px 6px; border-radius: 6px; background: var(--card2); }

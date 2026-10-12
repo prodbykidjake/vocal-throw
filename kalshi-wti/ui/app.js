@@ -138,6 +138,7 @@
     } else {
       box.textContent = w.status ? w.status.toUpperCase() : "WAITING FOR THE NEXT WINDOW"; box.className = "call-box"; sub.textContent = "";
     }
+    renderMeter(c, call, w, rules);
     const n = (r.wins || 0) + (r.losses || 0);
     $("call-record").textContent = `Wins: ${r.wins || 0} | Losses: ${r.losses || 0}` + (n ? ` (${Math.round(100 * r.wins / n)}%)` : "");
     const k = r.by_kind || {}, kk = (x) => (k[x] ? `${k[x].wins}-${k[x].losses}` : "0-0");
@@ -145,6 +146,44 @@
       "No settled calls yet. The record compares itself with Kalshi's own odds, so it shows whether the calls beat the market.";
     $("call-recent").innerHTML = (r.recent || []).slice().reverse().map((x) =>
       `<span class="chip ${x.correct ? "win" : "loss"}" title="${esc(x.ticker)} · ${esc(x.kind)} · ${fmtP(x.p)}">${x.side === "UP" ? "▲" : "▼"}${x.correct ? "✓" : "✗"}</span>`).join("");
+  }
+
+  // the confidence meter: the model's Up chance on a Down ◀ 50% ▶ Up scale, the call lines at call_prob on each side,
+  // a faint band where it moved in the last 30 s, Kalshi's odds as a gold tick
+  function renderMeter(c, call, w, rules) {
+    const m = c.meter, box = $("call-meter");
+    if (!m) { box.classList.add("hidden"); return; }
+    box.classList.remove("hidden");
+    const pos = (p) => `${(100 * p).toFixed(1)}%`, up = m.p_up >= 0.5, side = up ? "UP" : "DOWN";
+    const pSide = up ? m.p_up : 1 - m.p_up, line = m.line || 0.72;
+    const fill = $("meter-fill");
+    fill.style.left = up ? "50%" : pos(m.p_up);
+    fill.style.width = pos(Math.abs(m.p_up - 0.5));
+    fill.className = "meter-fill " + (up ? "up" : "down") + (pSide >= line ? " ready" : "");
+    $("meter-band").style.left = pos(m.lo); $("meter-band").style.width = pos(Math.max(0.004, m.hi - m.lo));
+    $("meter-line-up").style.left = pos(line); $("meter-line-down").style.left = pos(1 - line);
+    const mk = $("meter-mkt");
+    if (m.market_up == null) mk.classList.add("hidden"); else { mk.classList.remove("hidden"); mk.style.left = pos(m.market_up); }
+    const read = $("meter-read");
+    read.textContent = `${side} ${Math.round(pSide * 100)}%`; read.className = "meter-read " + (up ? "up" : "down");
+    const loSide = up ? m.lo : 1 - m.hi, hiSide = up ? m.hi : 1 - m.lo;
+    const range = (m.lo < 0.5 && m.hi > 0.5) ? "crossing between Up and Down" : `between ${Math.round(Math.min(loSide, hiSide) * 100)}% and ${Math.round(Math.max(loSide, hiSide) * 100)}% ${side}`;
+    let note;
+    if (call) {
+      note = `model now ${side} ${Math.round(pSide * 100)}% · the call stays ${call.side} (locked)`;
+    } else if ((w.status || "").startsWith("no call")) {
+      note = `no call this window · this is only what the model sees right now`;
+    } else if (w.status === "studying") {
+      note = `studying: no call for ${mmss(w.study_left_s)} · last 30 s ${range}`;
+    } else if (w.confirming_s != null) {
+      note = `over the ${Math.round(line * 100)}% line · confirming ${w.confirming_s}/${rules.hold_s} s · last 30 s ${range}`;
+    } else if (m.disagree) {
+      note = `model and Kalshi's odds are far apart: no confident call until they come closer`;
+    } else {
+      note = `needs ${Math.round(line * 100)}% for ${rules.hold_s} s to call · last 30 s ${range}` +
+        (w.deadline_in_s != null ? ` · otherwise calls its lean in ${mmss(w.deadline_in_s)}` : "");
+    }
+    $("meter-note").textContent = note + (m.market_up == null ? "" : ` · gold tick = Kalshi ${Math.round(m.market_up * 100)}% Up`);
   }
 
   // ---------------------------------------------------------------- position card
