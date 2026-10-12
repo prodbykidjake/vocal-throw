@@ -50,12 +50,12 @@ class TradingCfg:
     event_entries: str = "block"  # block = no new calls in a window that holds an oil report | allow
     extra_events: list = field(default_factory=list)  # ["2026-11-27 11:00 EIA inventories (holiday)"], ET
     # --- v10: the settlement call (one Up/Down prediction per window, scored at settlement) ---
-    call_prob: float = 0.70  # call as soon as the model gives one side at least this ...
+    call_prob: float = 0.72  # call as soon as the model gives one side at least this (v12: 0.72 = what 0.70 was before the timing fix) ...
     call_hold_s: float = 10.0  # ... for this many seconds in a row (after the study period)
     call_deadline_s: float = 120.0  # otherwise call the lean when this many seconds are left
     call_join_min_s: float = 300.0  # no call for a window first seen with less than this left (no free wins)
     call_min_left_s: float = 60.0  # and never a call with less than this left
-    call_buy_margin: float = 0.03  # v12: "worth buying up to" leaves this much expected profit per contract after the fee
+    call_buy_margin: float = 0.02  # v12: "worth buying up to" leaves this much expected profit per contract after the fee
     late_entry_s: float = 60.0
     late_entry_min_z: float = 2.0
     hold_to_settle_prob: float = 0.90
@@ -144,6 +144,7 @@ class Config:
 # still carries them, so they are replaced by the current default (with a note) instead of silently winning.
 OUTDATED = {
     ("trading", "settle_lag_s"): (60, "v12 measured that Kalshi settles on the price at the close, not a minute later"),
+    ("trading", "call_prob"): (0.70, "with the settlement timing fixed the model is less timid; 0.72 now makes the same calls 0.70 did"),
 }
 
 

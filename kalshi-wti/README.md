@@ -103,7 +103,7 @@ automatically; nothing to click.
   window the app joined late gets no call. The record (**Wins | Losses**) sits next to the number of wins Kalshi's
   own odds expected at the moments of the calls, so it shows whether the calls beat the market or only agree with it.
   Since v12 the card also says what the call is worth paying: **worth buying up to 81¢** is the highest price that
-  still leaves `call_buy_margin` (3¢) of expected profit per contract after Kalshi's taker fee, from the model's
+  still leaves `call_buy_margin` (2¢) of expected profit per contract after Kalshi's taker fee, from the model's
   chance right now (the side stays locked; the price moves). The record adds what buying `unit_dollars` of every
   call at Kalshi's ask at the moment it was made would have made after fees, and the same for only the calls whose
   ask was at or under that price. Being right is not the same as making money: a call that wins 80% of the time

@@ -311,8 +311,10 @@ class Model:
 
     def features(self, p_base: float, p_market: float | None, price: float, sigma: float, tau_s: float,
                  price_60: float | None, price_180: float | None, price_300: float | None) -> np.ndarray:
+        # v12: the intercept and the previous window's outcome are kept at 0. On real windows they only learned
+        # the night's trend (an Up tilt that grows with the learner's weight and costs accuracy on a down day).
         return np.array([
-            1.0,
+            0.0,
             clamp(logit(p_base), -8.0, 8.0),
             clamp(logit(p_market), -8.0, 8.0) if p_market is not None else 0.0,
             momentum_z(price, price_60, sigma, 60),
@@ -320,7 +322,7 @@ class Model:
             momentum_z(price, price_300, sigma, 300),
             clamp(tau_s / 900.0, 0.0, 1.0),
             self.vol.vol_ratio(),
-            self.prev_outcome,
+            0.0,  # prev_outcome: disabled, see above
         ])
 
     def predict(self, price: float, strike: float | None, tau_s: float, p_market: float | None, feed_age_s: float | None,
@@ -346,6 +348,9 @@ class Model:
         p_base, z = base_probability(price_adj, strike, sigma_eff, tau_s, self.tie_adj)
         x = self.features(p_base, p_market, price, sigma_raw, tau_s, price_60, price_180, price_300)
         p_final, p_learner = self.cal.predict(p_base, x)
+        if 0.5 < tau_s < 60:
+            # over seconds the price jumps more often than a bell curve says: never claim more than 98.5% near the close
+            p_final = clamp(p_final, 0.015, 0.985)
         warm = self.vol.seconds_seen
         if warm < self.min_warmup_s:
             conf = "warming_up"

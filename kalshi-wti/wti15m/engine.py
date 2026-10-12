@@ -279,9 +279,9 @@ class Engine:
         # learn on a pooled batch of recent windows (both outcomes present) instead of one window at a time;
         # the learner's weight grows with every settled window since its features last changed meaning
         since = _float(self.store.get_state("learner_since"), 0.0)
-        X, y, _ = self.store.training_rows_recent(50, since)
+        X, y, n_fit = self.store.training_rows_recent(50, since)
         if len(X) >= 20 and len(set(y.tolist())) == 2:
-            self.model.cal.fit_pooled(X, y, self.store.settled_window_count(since))
+            self.model.cal.fit_pooled(X, y, n_fit)  # its weight counts the windows it learned from (at most 50)
             self.store.set_state("calibrator", self.model.cal.to_json())
         self.model.prev_outcome = 1.0 if label else -1.0
         self.store.set_state("prev_outcome", str(self.model.prev_outcome))

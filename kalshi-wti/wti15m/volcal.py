@@ -151,7 +151,7 @@ class VolProfile:
             src = f"learned from {n} {name} window{'s' if n != 1 else ''}" if n else "starting assumption until report windows are measured"
             return m, f"{name} report in this window: moves ×{m:.2f} ({src})", n
         h = et_hour(open_ts)
-        log_m, n = self.by_hour.get(h, (self.overall, 0))
+        log_m, n = self.by_hour.get(h, (0.0, 0))  # an hour with no windows of its own gets no correction
         m = min(hi, max(lo, math.exp(log_m)))
         label = dt.time(h).strftime("%-I %p").lower()
         if n == 0 and self.n_total == 0:

@@ -88,7 +88,7 @@ class CallTracker:
         if seconds_elapsed is not None and seconds_elapsed < study_s:
             self._hold = None
             return None
-        if p_side >= cfg.call_prob and not pred.disagree:
+        if p_side >= cfg.call_prob and not pred.disagree and pred.p_market is not None:
             if self._hold is None or self._hold[0] != side:
                 self._hold = (side, now)
             self.watch["confirming_s"] = round(now - self._hold[1])

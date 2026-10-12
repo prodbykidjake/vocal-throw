@@ -29,12 +29,12 @@ event_prior = 1.5               # assumed extra movement in oil-report windows u
 event_entries = "block"         # "block" = no new calls in a window holding the EIA / API / Baker Hughes report | "allow"
 extra_events = []               # one-off reports, ET: ["2026-11-27 11:00 EIA inventories (holiday)"]
 # v10: the settlement call card (one Up/Down prediction per window, locked once made, scored at settlement)
-call_prob = 0.70                # call as soon as the model gives one side at least this ...
+call_prob = 0.72                # call as soon as the model gives one side at least this ... (v12: 0.72 = the old 0.70)
 call_hold_s = 10                # ... for this many seconds in a row, after the study period
 call_deadline_s = 120           # otherwise call its best lean when this many seconds are left
 call_join_min_s = 300           # no call for a window the app first saw with less than this left (no free wins)
 call_min_left_s = 60            # and never a call with less than this left
-call_buy_margin = 0.03           # v12: "worth buying up to" = the model's chance minus the fee minus this (expected profit per contract)
+call_buy_margin = 0.02           # v12: "worth buying up to" = the model's chance minus the fee minus this (expected profit per contract)
 late_entry_s = 60               # in the last N seconds only very lopsided entries are allowed
 late_entry_min_z = 2.0
 hold_to_settle_prob = 0.90      # with <= 2 min left and p >= this: hold, don't pay to exit

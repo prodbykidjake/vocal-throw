@@ -135,7 +135,7 @@
         // the side is locked; what it is worth paying moves with the model and the market
         sub.textContent += g.max_price == null ? ` · now: model ${fmtP(g.p_now)}, not worth buying at any price` :
           ` · now: model ${fmtP(g.p_now)} · worth buying up to ${fmtC(g.max_price)}` +
-          (g.ask == null ? "" : g.worth_it ? ` · Kalshi asks ${fmtC(g.ask)} ✓` : ` · Kalshi asks ${fmtC(g.ask)}, too expensive now`);
+          (g.ask == null ? "" : g.worth_it ? ` · Kalshi asks ${fmtC(g.ask)} ✓` : ` · Kalshi asks ${fmtC(g.ask)}: too expensive now, rest a bid at ${fmtC(g.max_price)} instead (no fee on a resting order)`);
       } else if (call.max_price != null) {
         sub.textContent += ` · at the call: worth up to ${fmtC(call.max_price)}` + (call.ask != null ? `, Kalshi asked ${fmtC(call.ask)}` : "");
       }
