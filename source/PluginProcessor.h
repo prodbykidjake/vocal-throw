@@ -1,10 +1,8 @@
 #pragma once
 
+#include "Parameters.h"
+#include "dsp/ResonanceSuppressor.h"
 #include <juce_audio_processors/juce_audio_processors.h>
-
-#if (MSVC)
-#include "ipps.h"
-#endif
 
 class PluginProcessor : public juce::AudioProcessor
 {
@@ -17,6 +15,7 @@ public:
 
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
 
+    using juce::AudioProcessor::processBlock;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
     juce::AudioProcessorEditor* createEditor() override;
@@ -38,6 +37,15 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    juce::AudioProcessorValueTreeState apvts { *this, nullptr, "VoxSmoove", createParameterLayout() };
+
+    /** Latest gain reduction at ResonanceSuppressor::numDisplayPoints log-spaced frequencies, for the editor. */
+    void getReductionDisplay (float* dest) const noexcept { suppressor.getReductionDisplay (dest); }
+
 private:
+    vs::SuppressorParams readParams() const noexcept;
+
+    vs::ResonanceSuppressor suppressor;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)
 };

@@ -1,9 +1,62 @@
 #include "PluginEditor.h"
 
-PluginEditor::PluginEditor (PluginProcessor& p)
-    : AudioProcessorEditor (&p), processorRef (p)
+namespace
 {
-    juce::ignoreUnused (processorRef);
+const auto kBackground = juce::Colour (0xff1b1e24);
+const auto kAccent = juce::Colour (0xff4fd1c5);
+constexpr int kMargin = 16;
+constexpr int kHeaderHeight = 40;
+constexpr int kGraphHeight = 190;
+constexpr int kKnobSize = 92;
+constexpr int kKnobGap = 8;
+constexpr int kNumKnobs = 9;
+} // namespace
+
+PluginEditor::Knob::Knob (juce::AudioProcessorValueTreeState& state, const juce::String& paramID, const juce::String& labelText, juce::Component& parent)
+    : attachment (state, paramID, slider)
+{
+    slider.setColour (juce::Slider::rotarySliderFillColourId, kAccent);
+    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 70, 18);
+    label.setText (labelText, juce::dontSendNotification);
+    label.setJustificationType (juce::Justification::centred);
+    label.attachToComponent (&slider, false);
+    parent.addAndMakeVisible (slider);
+    parent.addAndMakeVisible (label);
+}
+
+PluginEditor::PluginEditor (PluginProcessor& p)
+    : AudioProcessorEditor (&p),
+      processorRef (p),
+      graph (p),
+      modeAttachment (p.apvts, ParamIDs::mode, modeBox),
+      stereoAttachment (p.apvts, ParamIDs::stereoMode, stereoBox),
+      deltaAttachment (p.apvts, ParamIDs::delta, deltaButton),
+      bypassAttachment (p.apvts, ParamIDs::bypass, bypassButton)
+{
+    addAndMakeVisible (graph);
+
+    const std::pair<const char*, const char*> knobDefs[] = {
+        { ParamIDs::depth, "Depth" },
+        { ParamIDs::detail, "Detail" },
+        { ParamIDs::attack, "Attack" },
+        { ParamIDs::release, "Release" },
+        { ParamIDs::maxCut, "Max Cut" },
+        { ParamIDs::link, "Link" },
+        { ParamIDs::wetTrim, "Wet Trim" },
+        { ParamIDs::mix, "Mix" },
+        { ParamIDs::outGain, "Out Gain" },
+    };
+    for (const auto& [id, name] : knobDefs)
+        knobs.push_back (std::make_unique<Knob> (processorRef.apvts, id, name, *this));
+
+    // The choice items must exist before the attachments pick a selection, so add them via the parameter
+    modeBox.addItemList ({ "Soft", "Hard" }, 1);
+    stereoBox.addItemList ({ "L/R", "M/S" }, 1);
+    modeBox.setSelectedItemIndex ((int) processorRef.apvts.getRawParameterValue (ParamIDs::mode)->load(), juce::dontSendNotification);
+    stereoBox.setSelectedItemIndex ((int) processorRef.apvts.getRawParameterValue (ParamIDs::stereoMode)->load(), juce::dontSendNotification);
+
+    for (auto* c : std::initializer_list<juce::Component*> { &modeBox, &stereoBox, &modeLabel, &stereoLabel, &deltaButton, &bypassButton })
+        addAndMakeVisible (c);
 
     addAndMakeVisible (inspectButton);
 
@@ -18,9 +71,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         inspector->setVisible (true);
     };
 
-    // Make sure that before the constructor has finished, you've set the
-    // editor's size to whatever you need it to be.
-    setSize (400, 300);
+    setSize (kMargin * 2 + kNumKnobs * kKnobSize + (kNumKnobs - 1) * kKnobGap, kHeaderHeight + kGraphHeight + 2 * kMargin + 18 + kKnobSize + 20 + 28 + 30);
 }
 
 PluginEditor::~PluginEditor()
@@ -29,20 +80,44 @@ PluginEditor::~PluginEditor()
 
 void PluginEditor::paint (juce::Graphics& g)
 {
-    // (Our component is opaque, so we must completely fill the background with a solid colour)
-    g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
+    g.fillAll (kBackground);
 
-    auto area = getLocalBounds();
+    auto header = getLocalBounds().removeFromTop (kHeaderHeight).reduced (kMargin, 0);
     g.setColour (juce::Colours::white);
-    g.setFont (16.0f);
-    auto helloWorld = juce::String ("Hello from ") + PRODUCT_NAME_WITHOUT_VERSION + " v" VERSION + " running in " + CMAKE_BUILD_TYPE;
-    g.drawText (helloWorld, area.removeFromTop (150), juce::Justification::centred, false);
+    g.setFont (juce::FontOptions (22.0f, juce::Font::bold));
+    g.drawText ("VOX SMOOVE", header, juce::Justification::centredLeft, false);
+
+    g.setColour (juce::Colours::grey);
+    g.setFont (12.0f);
+    g.drawText (juce::String ("v") + VERSION, header, juce::Justification::centredRight, false);
 }
 
 void PluginEditor::resized()
 {
-    // layout the positions of your child components here
     auto area = getLocalBounds();
-    area.removeFromBottom(50);
-    inspectButton.setBounds (getLocalBounds().withSizeKeepingCentre(100, 50));
+    area.removeFromTop (kHeaderHeight);
+
+    graph.setBounds (area.removeFromTop (kGraphHeight).reduced (kMargin, 0));
+    area.removeFromTop (kMargin + 18); // room for knob labels
+
+    auto knobRow = area.removeFromTop (kKnobSize + 20).reduced (kMargin, 0);
+    for (auto& k : knobs)
+    {
+        auto cell = knobRow.removeFromLeft (kKnobSize);
+        k->slider.setBounds (cell);
+        knobRow.removeFromLeft (kKnobGap);
+    }
+
+    area.removeFromTop (kMargin);
+    auto controls = area.removeFromTop (28).reduced (kMargin, 0);
+    modeLabel.setBounds (controls.removeFromLeft (44));
+    modeBox.setBounds (controls.removeFromLeft (90));
+    controls.removeFromLeft (20);
+    stereoLabel.setBounds (controls.removeFromLeft (52));
+    stereoBox.setBounds (controls.removeFromLeft (90));
+    controls.removeFromLeft (20);
+    deltaButton.setBounds (controls.removeFromLeft (80));
+    bypassButton.setBounds (controls.removeFromLeft (80));
+
+    inspectButton.setBounds (getLocalBounds().removeFromBottom (30).removeFromRight (120).reduced (4));
 }

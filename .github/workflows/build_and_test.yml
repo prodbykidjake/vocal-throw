@@ -1,4 +1,4 @@
-name: Pamplejuce
+name: Vox Smoove
 
 on:
   workflow_dispatch: # lets you run a build from the UI
@@ -40,14 +40,16 @@ jobs:
             os: ubuntu-22.04
             pluginval-binary: ./pluginval
             extra-flags: -G Ninja -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld
-          - name: macOS
-            os: macos-14
-            pluginval-binary: pluginval.app/Contents/MacOS/pluginval
-            extra-flags: -G Ninja -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
-          - name: Windows
-            os: windows-latest
-            pluginval-binary: ./pluginval.exe
-            extra-flags: -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+          # macOS and Windows are disabled during early development to save CI minutes.
+          # Re-enable them (and the macOS/Windows signing steps below) when preparing a release.
+          # - name: macOS
+          #   os: macos-14
+          #   pluginval-binary: pluginval.app/Contents/MacOS/pluginval
+          #   extra-flags: -G Ninja -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          # - name: Windows
+          #   os: windows-latest
+          #   pluginval-binary: ./pluginval.exe
+          #   extra-flags: -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
 
     steps:
       # Setup MSVC toolchain and developer command prompt (Windows)
@@ -63,17 +65,16 @@ jobs:
         if: runner.os == 'Linux'
         # Thanks to McMartin & co https://forum.juce.com/t/list-of-juce-dependencies-under-linux/15121/44
         run: |
-          # IPP stuff
-          wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
-          echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
-          
-          sudo apt-get update && sudo apt install libasound2-dev libx11-dev libxi-dev libxinerama-dev libxext-dev libfreetype6-dev libwebkit2gtk-4.1-dev libglu1-mesa-dev xvfb ninja-build intel-oneapi-ipp-devel
+          # IPP is disabled (see CMakeLists.txt). To re-enable, add the Intel oneAPI apt repo
+          # and install intel-oneapi-ipp-devel here.
+          sudo apt-get update && sudo apt install libasound2-dev libx11-dev libxi-dev libxinerama-dev libxext-dev libfreetype6-dev libwebkit2gtk-4.1-dev libglu1-mesa-dev xvfb ninja-build
           sudo /usr/bin/Xvfb $DISPLAY & 
 
-      - name: Install IPP (Windows)
-        if: (runner.os == 'Windows')
-        run: |
-          nuget install intelipp.static.win-x64 -Version 2026.0.0.712
+      # IPP is disabled (see CMakeLists.txt)
+      # - name: Install IPP (Windows)
+      #   if: (runner.os == 'Windows')
+      #   run: |
+      #     nuget install intelipp.static.win-x64 -Version 2026.0.0.712
 
       - name: Install Ninja (Windows)
         if: runner.os == 'Windows'

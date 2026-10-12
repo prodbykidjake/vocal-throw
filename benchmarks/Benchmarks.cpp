@@ -30,3 +30,23 @@ TEST_CASE ("Boot performance")
         });
     };
 }
+
+TEST_CASE ("Processing performance")
+{
+    PluginProcessor plugin;
+    plugin.setPlayConfigDetails (2, 2, 48000.0, 512);
+    plugin.prepareToPlay (48000.0, 512);
+
+    juce::AudioBuffer<float> buffer (2, 512);
+    juce::MidiBuffer midi;
+    juce::Random rng (1);
+    for (int c = 0; c < 2; ++c)
+        for (int i = 0; i < 512; ++i)
+            buffer.setSample (c, i, 0.1f * (rng.nextFloat() * 2.0f - 1.0f));
+
+    BENCHMARK ("processBlock, stereo, 512 samples @ 48 kHz")
+    {
+        plugin.processBlock (buffer, midi);
+        return buffer.getSample (0, 0);
+    };
+}
