@@ -166,3 +166,7 @@ Run its tests with `cd kalshi-wti && pytest`. It never touches the plugin's CMak
 `kalshi-natgas/` is a separate copy of that app (package `ng15m`, port 8788) for Kalshi's Natural Gas 15-minute
 market (`KXNATGAS15M`), rescaled for ~$3 prices with five-decimal targets. See `kalshi-natgas/README.md`; tests:
 `cd kalshi-natgas && pytest`. Changes to one app are not shared with the other.
+
+`kalshi-gold/` is the same kind of copy (package `gold15m`, port 8789) for Kalshi's Gold 15-minute market
+(`KXGOLD15M`), rescaled for ~$4,000 prices (dollar moves, gold-sized volatility, U.S. macro calendar).
+See `kalshi-gold/README.md`; tests: `cd kalshi-gold && pytest`.
