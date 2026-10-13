@@ -1,4 +1,4 @@
-"""CLI: python -m wti15m {probe|watch|serve|demo|replay}"""
+"""CLI: python -m wti15m {probe|watch|serve|demo|replay|export}"""
 from __future__ import annotations
 
 import argparse
@@ -37,6 +37,10 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--no-browser", action="store_true")
     d.add_argument("--db", default="data/demo.db")
     d.add_argument("--phone", action="store_true", help="also open the demo to your phone (private link)")
+    e = sub.add_parser("export", help="write a compact zipped copy of the database to send for analysis")
+    e.add_argument("--days", type=float, default=7, help="keep this many days of second-by-second data (0 = all)")
+    e.add_argument("--out", help="zip file to write (default: data/export-<date>.zip)")
+    e.add_argument("--db", help="database to export (default: the configured one)")
     r = sub.add_parser("replay", help="re-score recorded windows")
     r.add_argument("--since", help="ISO date, e.g. 2026-10-08")
     r.add_argument("--retrain", action="store_true", help="walk-forward retrain the calibrator from scratch")
@@ -195,6 +199,13 @@ def main(argv=None) -> int:
             run_server(cfg, engine, cfg.server.open_browser and not args.no_browser, args.phone)
         except KeyboardInterrupt:
             pass
+        return 0
+    if args.cmd == "export":
+        import os
+
+        from .export import export
+        path = export(args.db or cfg.storage.db_path, args.days or None, args.out)
+        print(f"wrote {path} ({os.path.getsize(path) / 1e6:.1f} MB): send this file")
         return 0
     if args.cmd == "replay":
         from . import replay

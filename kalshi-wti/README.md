@@ -63,8 +63,18 @@ python -m wti15m watch        # terminal-only live view
 python -m wti15m demo         # offline demo on a simulated market (90-second windows)
 python -m wti15m replay       # re-score recorded windows (Brier model vs base vs market)
 python -m wti15m replay --retrain --save   # walk-forward retrain the learner from scratch
+python -m wti15m export       # zip the last 7 days (all calls and windows) to data/export-<date>.zip, to send for analysis
+python3 tools/backfill.py --probe          # check what history Kalshi serves (about 20 requests)
+python3 tools/backfill.py --days 30        # download 30 days of settled windows + 1-minute odds to data/history.db
 pytest                        # unit tests (offline, fixtures)
 ```
+
+Second-by-second prices and quotes are kept for `keep_raw_days` (30 days, about 11 MB a day; it was 3 days before
+v12.4). They are the only data that can test the call's threshold, hold and timing: Kalshi's own history has
+1-minute candles at best, and replaying the call rule on minute data moved results by more than the edge being
+looked for. `tools/backfill.py` (standard library only, never touches the app's database) pulls Kalshi's free
+history of every settled window (target, settlement, result) and its 1-minute odds, so the call can be checked
+on up, down and flat days instead of one night.
 
 ### On your phone
 
@@ -121,6 +131,13 @@ automatically; nothing to click.
   window the app joined late gets no call. The record (**Wins | Losses**) sits next to the number of wins Kalshi's
   own odds expected at the moments of the calls, so it shows whether the calls beat the market or only agree with it.
   The calls themselves never weigh prices or stakes: the card answers only "where will this settle?".
+  Since v12.4 the app **never calls on the backup price**: while Kalshi's price series is out and the app reads
+  Hyperliquid (which sat 3-17¢ off the settlement price on Oct 11-12, and once turned a 70% DOWN reading into a 78%
+  DOWN call that lost), or the price is more than `call_feed_max_age_s` (5 s) old, the card shows **PAUSED · backup
+  price**, a confirmation in progress starts over, and the 2:00 deadline call waits for Kalshi's price to come back.
+  Under the record, the card also shows what the calls would have made bought at Kalshi's price at the moment of the
+  call (fees of a 100-contract order) and held, and the record split by UP/DOWN calls and by app version: a trending
+  day makes one side look brilliant, and only the comparison with Kalshi's expected wins says whether there is an edge.
 - **Your position** (built for scalping): tap **UP** or **DOWN**, the price box fills with the live ask
   (edit it if your fill differed), type the dollars you spent, press Enter. The card then tracks it like
   Kalshi's sell sheet: shares, live sell price, **cash out** after fees and P&L, updating every second.
@@ -203,4 +220,6 @@ wti15m/engine.py     1 Hz loop joining everything, recording, paper trades, lear
 wti15m/app.py        FastAPI server (JSON + Server-Sent Events) ; ui/ is the dashboard
 wti15m/store.py      SQLite schema and queries ; wti15m/replay.py offline evaluation
 wti15m/probe.py      raw API dump for the first live run ; wti15m/sim.py simulated Kalshi for demo/tests
+wti15m/export.py     compact zipped copy of the database ; wti15m/phone.py private phone link
+tools/backfill.py    Kalshi history download (standalone; writes data/history.db)
 ```

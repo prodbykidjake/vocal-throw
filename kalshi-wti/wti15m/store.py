@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 
+from .fees import taker_fee
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS windows (
   ticker TEXT PRIMARY KEY, event_ticker TEXT, title TEXT, open_time REAL, close_time REAL,
@@ -77,7 +79,8 @@ class Store:
             if col not in have:
                 self.conn.execute(f"ALTER TABLE plans ADD COLUMN {col} {typ}")
         have = {row[1] for row in self.conn.execute("PRAGMA table_info(calls)")}
-        for col, typ in (("ask", "REAL"), ("bid", "REAL")):  # v12: Kalshi's price at the moment of the call
+        for col, typ in (("ask", "REAL"), ("bid", "REAL"),  # v12: Kalshi's price at the moment of the call
+                         ("version", "TEXT"), ("source", "TEXT")):  # v12.4: the app version and price feed that made it
             if col not in have:
                 self.conn.execute(f"ALTER TABLE calls ADD COLUMN {col} {typ}")
 
@@ -177,9 +180,11 @@ class Store:
 
     # ------------------------------------------------------------------ settlement calls
     def add_call(self, ticker: str, side: str, p_side: float, p_market_side: float | None, ts: float, seconds_left: float,
-                 kind: str, ask: float | None = None, bid: float | None = None):
-        self.conn.execute("INSERT OR IGNORE INTO calls (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid) "
-                          "VALUES (?,?,?,?,?,?,?,?,?)", (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid))
+                 kind: str, ask: float | None = None, bid: float | None = None, version: str | None = None,
+                 source: str | None = None):
+        self.conn.execute("INSERT OR IGNORE INTO calls (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid, "
+                          "version, source) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                          (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid, version, source))
 
     def call_for(self, ticker: str) -> dict | None:
         row = self.conn.execute("SELECT * FROM calls WHERE ticker=?", (ticker,)).fetchone()
@@ -195,18 +200,38 @@ class Store:
         return [dict(r) for r in rows]
 
     def call_record(self, recent: int = 20) -> dict:
+        """Wins and losses next to what Kalshi's odds expected, plus what the calls would have made: one contract of the
+        called side bought at Kalshi's ask at the moment of the call, as part of a 100-contract order (the fee rounds up
+        per order, so that is close to the per-contract fee of a real-sized order), held to settlement. Split by side
+        (a trending day makes one side look brilliant) and by app version (old versions behaved differently)."""
         rows = [dict(r) for r in self.conn.execute("SELECT * FROM calls WHERE result IS NOT NULL ORDER BY ts DESC").fetchall()]
-        out: dict = {"wins": 0, "losses": 0, "market_expected": 0.0, "model_expected": 0.0, "n_market": 0, "by_kind": {}}
+        out: dict = {"wins": 0, "losses": 0, "market_expected": 0.0, "model_expected": 0.0, "n_market": 0, "by_kind": {},
+                     "pnl": 0.0, "n_pnl": 0, "by_side": {}, "by_version": {}}
+
+        def group() -> dict:
+            return {"wins": 0, "losses": 0, "market_expected": 0.0, "n_market": 0, "pnl": 0.0, "n_pnl": 0}
+
         for r in rows:
             win = bool(r["correct"])
-            out["wins" if win else "losses"] += 1
+            pnl = None
+            if r.get("ask") is not None and 0 < r["ask"] < 1:
+                pnl = (1.0 if win else 0.0) - r["ask"] - taker_fee(r["ask"], 100) / 100
+            groups = [out, out["by_side"].setdefault(r["side"] or "?", group()),
+                      out["by_version"].setdefault(r.get("version") or "before 0.12.4", group())]
+            for g in groups:
+                g["wins" if win else "losses"] += 1
+                if r["p_market_side"] is not None:
+                    g["market_expected"] += r["p_market_side"]
+                    g["n_market"] += 1
+                if pnl is not None:
+                    g["pnl"] += pnl
+                    g["n_pnl"] += 1
             k = out["by_kind"].setdefault(r["kind"] or "?", {"wins": 0, "losses": 0})
             k["wins" if win else "losses"] += 1
             out["model_expected"] += r["p_side"] or 0.0
-            if r["p_market_side"] is not None:
-                out["market_expected"] += r["p_market_side"]
-                out["n_market"] += 1
-        out["market_expected"] = round(out["market_expected"], 1)
+        for g in [out, *out["by_side"].values(), *out["by_version"].values()]:
+            g["market_expected"] = round(g["market_expected"], 1)
+            g["pnl"] = round(g["pnl"], 2)
         out["model_expected"] = round(out["model_expected"], 1)
         out["recent"] = [{"ticker": r["ticker"], "side": r["side"], "correct": bool(r["correct"]), "kind": r["kind"],
                           "p": r["p_side"], "seconds_left": r["seconds_left"]}

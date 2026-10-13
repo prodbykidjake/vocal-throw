@@ -55,6 +55,7 @@ class TradingCfg:
     call_deadline_s: float = 120.0  # otherwise call the lean when this many seconds are left
     call_join_min_s: float = 300.0  # no call for a window first seen with less than this left (no free wins)
     call_min_left_s: float = 60.0  # and never a call with less than this left
+    call_feed_max_age_s: float = 5.0  # no call (the hold restarts) while the price is the backup feed or older than this
     late_entry_s: float = 60.0
     late_entry_min_z: float = 2.0
     hold_to_settle_prob: float = 0.90
@@ -114,6 +115,7 @@ class NotifyCfg:
 @dataclass
 class StorageCfg:
     db_path: str = "data/wti15m.db"
+    keep_raw_days: float = 30.0  # second-by-second prices and quotes kept this long (~11 MB a day; was 3 days before v12.4)
 
 
 @dataclass

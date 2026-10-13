@@ -84,3 +84,4 @@ sound = true                    # afplay system sound on BUY/SELL
 
 [storage]
 db_path = "data/wti15m.db"
+keep_raw_days = 30   # second-by-second prices and quotes kept this long (~11 MB a day): the data that tests call rules

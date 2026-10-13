@@ -481,7 +481,7 @@ class Engine:
             self.store.add_tick(tick.ts, self.feed.active_name, tick.price)
         if now - self._last_prune > 600:
             self._last_prune = now
-            self.store.prune()
+            self.store.prune(self.cfg.storage.keep_raw_days * 86400)
         pred = sig = None
         tau = elapsed = None
         quotes_fresh = self.tracker.quotes_fresh(QUOTE_MAX_AGE_S, now)
@@ -504,7 +504,11 @@ class Engine:
                     pos.high_bid = bid
                     self.store.update_position_high(pos.id, bid)
             self._study_step(m, pred, tick.price, now, elapsed, tau)
-            made = self.calls.step(now, m.ticker, pred, tau, elapsed, self._study_len(), quotes)
+            # calls only on Kalshi's own price: never on the backup feed, never on a price more than a few seconds old
+            feed_ok = (getattr(self.feed, "active", "primary") == "primary" and health.age_s is not None
+                       and health.age_s <= self.cfg.trading.call_feed_max_age_s)
+            made = self.calls.step(now, m.ticker, pred, tau, elapsed, self._study_len(), quotes, feed_ok,
+                                   self.feed.active_name)
             if made:
                 when = f"{int(made['seconds_left'] // 60)}:{int(made['seconds_left'] % 60):02d} left"
                 text = (f"settlement call: {made['side']} on {m.ticker} · model {round(made['p_side'] * 100)}% "

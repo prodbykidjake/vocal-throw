@@ -8,7 +8,10 @@ record:
     seconds, while the model and Kalshi's odds are not far apart;
   * otherwise a LATE call with whatever the model leans to at `call_deadline_s` before the close;
   * no call for a window the app first saw with under `call_join_min_s` to go, and never in the last `call_min_left_s`
-    (late joins and last-second calls would be near-free wins).
+    (late joins and last-second calls would be near-free wins);
+  * no call while the price comes from the backup feed (or is older than `call_feed_max_age_s`): the backup sat 3-17c
+    off the price Kalshi settles on, and on Oct 12 it turned a 70% DOWN reading into a 78% DOWN call that lost. The
+    hold restarts and a deadline call waits until Kalshi's own price is back.
 
 The record shows wins and losses next to the number of wins Kalshi's own odds expected at the moments of the calls,
 so it is clear whether the calls beat the market or just agree with it.
@@ -18,6 +21,7 @@ from __future__ import annotations
 import time
 from collections import deque
 
+from . import __version__
 from .config import TradingCfg
 from .decision import Quotes
 from .model import Prediction
@@ -36,15 +40,19 @@ class CallTracker:
         self.watch: dict = {}  # what it is looking at before the call (for the card)
         self._first_left: float | None = None  # seconds left when the app first saw this window
         self._quotes = Quotes()  # Kalshi's prices this second, recorded with a call
+        self._source: str | None = None  # the price feed this second, recorded with a call
         self._trail: deque[tuple[float, float]] = deque()  # (ts, model's Up chance) over the last METER_TRAIL_S, for the meter
         self.meter: dict | None = None  # the confidence meter under the card: where the model stands right now
 
     # ------------------------------------------------------------------ per second
     def step(self, now: float, ticker: str | None, pred: Prediction | None, seconds_left: float | None,
-             seconds_elapsed: float | None, study_s: float, quotes: Quotes | None = None) -> dict | None:
-        """Returns the call the second it is made, else None."""
+             seconds_elapsed: float | None, study_s: float, quotes: Quotes | None = None, feed_ok: bool = True,
+             source: str | None = None) -> dict | None:
+        """Returns the call the second it is made, else None. `feed_ok` is False while the price is the backup feed or
+        too old: then no call is made and a confirmation in progress starts over."""
         cfg = self.cfg
         self._quotes = quotes if quotes is not None else Quotes()
+        self._source = source
         if ticker != self._ticker:
             self._ticker = ticker
             self._hold = None
@@ -74,6 +82,10 @@ class CallTracker:
                       "study_left_s": None if seconds_elapsed is None else max(0, round(study_s - seconds_elapsed))}
         if seconds_elapsed is not None and seconds_elapsed < study_s:
             self._hold = None
+            return None
+        if not feed_ok:
+            self._hold = None
+            self.watch["feed_paused"] = True
             return None
         if p_side >= cfg.call_prob and not pred.disagree and pred.p_market is not None:
             if self._hold is None or self._hold[0] != side:
@@ -106,7 +118,8 @@ class CallTracker:
         if pred.p_market is not None:
             pm = pred.p_market if side == "UP" else 1.0 - pred.p_market
         q = self._quotes
-        self.store.add_call(ticker, side, p_side, pm, now, seconds_left, kind, q.ask(side), q.bid(side))
+        self.store.add_call(ticker, side, p_side, pm, now, seconds_left, kind, q.ask(side), q.bid(side),
+                            version=__version__, source=self._source)
         self.call = self.store.call_for(ticker)
         self._hold = None
         return self.call

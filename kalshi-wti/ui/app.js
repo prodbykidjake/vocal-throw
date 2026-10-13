@@ -128,6 +128,11 @@
         (call.p_market_side != null ? ` · Kalshi had ${fmtP(call.p_market_side)}` : "") +
         (call.kind === "late" ? ` · late call: never reached ${fmtP(rules.prob)}, this is its best lean` : " · confident call") +
         (call.result == null ? " · waiting for settlement" : ` · settled ${call.result}`);
+    } else if (w.feed_paused) {
+      box.textContent = `PAUSED · backup price` + (w.lean ? ` · leaning ${w.lean} ${fmtP(w.p)}` : "");
+      box.className = "call-box";
+      sub.textContent = "Kalshi's price feed dropped out and the app is reading the backup feed, which runs a few cents off the price Kalshi settles on. No call until Kalshi's price is back" +
+        (w.deadline_in_s === 0 ? " (the deadline call waits for it too)." : ".");
     } else if (w.status === "studying" || w.status === "watching") {
       const lean = w.lean ? ` · leaning ${w.lean} ${fmtP(w.p)}` : "";
       box.textContent = (w.status === "studying" ? `STUDYING · ${mmss(w.study_left_s)}` : "WATCHING") + lean +
@@ -142,7 +147,17 @@
     const n = (r.wins || 0) + (r.losses || 0);
     $("call-record").textContent = `Wins: ${r.wins || 0} | Losses: ${r.losses || 0}` + (n ? ` (${Math.round(100 * r.wins / n)}%)` : "");
     const k = r.by_kind || {}, kk = (x) => (k[x] ? `${k[x].wins}-${k[x].losses}` : "0-0");
-    $("call-bench").textContent = n ? `Kalshi's odds at the moments of the calls expected ${r.market_expected} wins over ${r.n_market} calls; the model expected ${r.model_expected} · confident calls ${kk("confident")} · late calls ${kk("late")}` :
+    const money = (x) => (x < 0 ? "−$" : "+$") + Math.abs(x).toFixed(2);
+    const grp = (g) => `${g.wins}-${g.losses} (Kalshi expected ${g.market_expected})`;
+    const sides = r.by_side || {}, vers = r.by_version || {}, vkeys = Object.keys(vers);
+    const lines = [];
+    if (n) {
+      lines.push(`Kalshi's odds at the moments of the calls expected ${r.market_expected} wins over ${r.n_market} calls; the model expected ${r.model_expected} · confident calls ${kk("confident")} · late calls ${kk("late")}`);
+      if (r.n_pnl) lines.push(`bought at Kalshi's price when called and held, after fees: ${money(r.pnl)} per contract over ${r.n_pnl} calls`);
+      lines.push(["UP", "DOWN"].filter((x) => sides[x]).map((x) => `${x} calls ${grp(sides[x])}`).join(" · "));
+      if (vkeys.length > 1) lines.push(vkeys.map((v) => `v${v.replace(/^0\./, "")}: ${grp(vers[v])}${vers[v].n_pnl ? ", " + money(vers[v].pnl) : ""}`).join(" · "));
+    }
+    $("call-bench").textContent = n ? lines.join("\n") :
       "No settled calls yet. The record compares itself with Kalshi's own odds, so it shows whether the calls beat the market.";
     $("call-recent").innerHTML = (r.recent || []).slice().reverse().map((x) =>
       `<span class="chip ${x.correct ? "win" : "loss"}" title="${esc(x.ticker)} · ${esc(x.kind)} · ${fmtP(x.p)}">${x.side === "UP" ? "▲" : "▼"}${x.correct ? "✓" : "✗"}</span>`).join("");
@@ -175,6 +190,8 @@
       note = `no call this window · this is only what the model sees right now`;
     } else if (w.status === "studying") {
       note = `studying: no call for ${mmss(w.study_left_s)} · last 30 s ${range}`;
+    } else if (w.feed_paused) {
+      note = `backup price: this reading may be a few cents off · no call until Kalshi's price is back`;
     } else if (w.confirming_s != null) {
       note = `over the ${Math.round(line * 100)}% line · confirming ${w.confirming_s}/${rules.hold_s} s · last 30 s ${range}`;
     } else if (m.disagree) {

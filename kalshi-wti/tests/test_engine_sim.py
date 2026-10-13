@@ -298,3 +298,27 @@ def test_stored_feed_errors_are_remeasured_at_the_close(tmp_path):
     again = Engine(Config(), store, SimKalshi(feed, window_s=120), feed, Notifier(desktop=False, sound=False))
     assert again.model.basis_error == engine.model.basis_error  # migrates once
     store.close()
+
+
+@pytest.mark.asyncio
+async def test_the_engine_tells_the_caller_when_the_price_is_the_backup_feed(tmp_path):
+    cfg = Config()
+    cfg.trading.min_warmup_minutes = 1
+    feed = SimFeed(start_price=90.0, sigma_per_sqrt_s=0.005, warmup_minutes=5, seed=2)
+    store = Store(str(tmp_path / "f.db"))
+    engine = Engine(cfg, store, SimKalshi(feed, window_s=120), feed, Notifier(desktop=False, sound=False))
+    seen = []
+    real = engine.calls.step
+    engine.calls.step = lambda *a, **k: seen.append(a[7:9]) or real(*a, **k)
+    await feed.start()
+    try:
+        await asyncio.sleep(0.7)
+        await engine.tracker.poll_once()
+        engine.step()
+        feed.active = "fallback"  # what CompositeFeed reports while it republishes the backup feed
+        engine.step()
+        assert seen[0][0] is True and seen[0][1] == feed.name
+        assert seen[1][0] is False
+    finally:
+        await feed.stop()
+        store.close()

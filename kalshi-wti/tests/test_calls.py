@@ -101,3 +101,52 @@ def test_meter_tracks_the_lean_and_its_recent_range_even_after_the_call():
     assert ct.state()["meter"]["hi"] == 0.40
     ct.step(201, "M2", pred(0.5, 0.5, conf="stale"), 899, 1, 180)
     assert ct.state()["meter"] is None
+
+
+def test_no_call_on_the_backup_price_and_the_confirmation_restarts():
+    # v12.4: on Oct 12 the backup feed sat ~13c low and turned a 70% DOWN reading into a 78% DOWN call that lost
+    ct = tracker()
+    for i in range(9):
+        ct.step(100 + i, "W5", pred(0.22, 0.3), 600 - i, 300 + i, 180)  # Down 78% for 9 s on Kalshi's price
+    for i in range(20):  # the price feed drops to the backup: no call however long it holds, and it says so
+        assert ct.step(110 + i, "W5", pred(0.15, 0.3), 590 - i, 310 + i, 180, feed_ok=False) is None
+    assert ct.call is None and ct.watch.get("feed_paused") and "confirming_s" not in ct.watch
+    # back on Kalshi's price: the 10 s confirmation starts over
+    assert ct.step(130, "W5", pred(0.22, 0.3), 570, 330, 180) is None
+    assert ct.watch["confirming_s"] == 0 and not ct.watch.get("feed_paused")
+    made = None
+    for i in range(1, 11):
+        made = ct.step(130 + i, "W5", pred(0.22, 0.3), 570 - i, 330 + i, 180, source="kalshi-live") or made
+    assert made and made["side"] == "DOWN" and made["source"] == "kalshi-live" and made["version"]
+
+
+def test_the_deadline_call_waits_for_kalshis_price():
+    ct = tracker()
+    assert ct.step(100, "W6", pred(0.42), 600, 300, 180) is None  # watching since 10:00 left, never confident
+    assert ct.step(500, "W6", pred(0.42), 120, 780, 180, feed_ok=False) is None  # at the deadline, on the backup
+    assert ct.step(510, "W6", pred(0.42), 110, 790, 180, feed_ok=False) is None and ct.call is None
+    made = ct.step(515, "W6", pred(0.42), 105, 795, 180)  # Kalshi's price is back with 1:45 left: it calls now
+    assert made["side"] == "DOWN" and made["kind"] == "late"
+    ct2 = tracker()
+    ct2.step(100, "W7", pred(0.42), 600, 300, 180)
+    for i in range(70):  # the backup lasts past the last minute: no call at all this window
+        ct2.step(600 + i, "W7", pred(0.42), 120 - i * 1.0, 780 + i, 180, feed_ok=False)
+    assert ct2.call is None
+
+
+def test_record_shows_profit_at_the_ask_and_splits_by_side_and_version():
+    from wti15m.fees import taker_fee
+    st = Store(":memory:")
+    st.add_call("A", "UP", 0.75, 0.74, 1.0, 500, "confident", ask=0.75, bid=0.73)  # an old call: no version
+    st.add_call("B", "DOWN", 0.75, 0.76, 2.0, 500, "confident", ask=0.77, bid=0.75, version="0.12.4", source="kalshi-live")
+    st.add_call("C", "UP", 0.80, 0.80, 3.0, 400, "confident", ask=0.81, bid=0.79, version="0.12.4", source="kalshi-live")
+    st.settle_call("A", "UP", 10.0)
+    st.settle_call("B", "UP", 11.0)  # the DOWN call lost
+    st.settle_call("C", "UP", 12.0)
+    r = st.call_record()
+    fee = lambda a: taker_fee(a, 100) / 100  # noqa: E731
+    expect = (1 - 0.75 - fee(0.75)) + (-0.77 - fee(0.77)) + (1 - 0.81 - fee(0.81))
+    assert r["n_pnl"] == 3 and abs(r["pnl"] - round(expect, 2)) < 1e-9
+    assert r["by_side"]["UP"]["wins"] == 2 and r["by_side"]["DOWN"]["losses"] == 1
+    assert abs(r["by_side"]["UP"]["market_expected"] - 1.5) < 1e-9
+    assert r["by_version"]["before 0.12.4"]["wins"] == 1 and r["by_version"]["0.12.4"]["losses"] == 1
