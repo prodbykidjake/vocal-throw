@@ -29,6 +29,8 @@
           <div class="meter-mkt" data-f="mkt" title="Kalshi's odds"></div></div>
       </div>
       <div class="note" data-f="note"></div>
+      <div class="edge"><div class="edge-box" data-f="edge-box">EDGE · waiting</div><div class="edge-note" data-f="edge-note"></div>
+        <div class="edge-rec" data-f="edge-rec"></div></div>
       <div class="warn" data-f="status"></div>
       <div class="rec"><div><div class="rec-v" data-f="record">0–0</div><div class="rec-k" data-f="bench">no settled calls yet</div></div>
         <div class="chips" data-f="recent"></div></div>
@@ -77,6 +79,7 @@
       box.textContent = (w.status || "waiting for the next window").toUpperCase(); box.className = "callbox";
     }
     renderMeter(card, c, call, w, rules);
+    renderEdge(card, m);
     const st = f(card, "status");
     st.textContent = m.status === "no_series" ? `Kalshi has no ${m.series} series right now` :
       m.status === "no_feed" ? "waiting for Kalshi's live price…" : m.status === "no_market" ? "no window trading right now" :
@@ -86,6 +89,32 @@
     f(card, "bench").textContent = n ? `Kalshi expected ${r.market_expected} of ${r.n_market}` : "no settled calls yet";
     f(card, "recent").innerHTML = (r.recent || []).slice(0, 12).reverse().map((x) =>
       `<span class="c ${x.correct ? "w" : "l"}" title="${esc(x.ticker)} · ${esc(x.side)} · ${pct(x.p)}">${x.correct ? "✓" : "✗"}</span>`).join("");
+  }
+
+  // EDGE: the buy signal. Only when the model beats Kalshi's ask by the rule's margin at a minute check (see cm15m/edge.py)
+  const money = (x) => (x == null ? "--" : (x < 0 ? "−$" : "+$") + Math.abs(x).toFixed(2));
+  const cents = (x) => (x == null ? "--" : `${Math.round(x * 100)}¢`);
+  function renderEdge(card, m) {
+    const e = m.edge || {}, w = e.watch || {}, r = e.record || {}, sig = w.signal;
+    const box = f(card, "edge-box"), note = f(card, "edge-note");
+    if (sig) {
+      const res = sig.result == null ? "" : sig.correct ? " · WIN ✓" : " · LOSS ✗";
+      box.textContent = `EDGE · BUY ${sig.side} at ${cents(sig.ask)} or less${res}`;
+      box.className = "edge-box sig " + (sig.side === "UP" ? "up" : "down") + (sig.result == null ? "" : sig.correct ? " win" : " loss");
+      note.textContent = `model ${pct(sig.p)} vs ask ${cents(sig.ask)} (+${Math.round(sig.gap * 100)} pts) at minute ${sig.minute} · hold to settlement` +
+        (sig.result != null ? ` · ${money(sig.pnl)} per contract` : "");
+    } else if (w.side) {
+      const gp = w.gap == null ? "--" : `${w.gap >= 0 ? "+" : ""}${Math.round(w.gap * 100)} pts`;
+      box.textContent = w.window_over ? "EDGE · none this window" : `EDGE · watching · ${w.side} ${pct(w.p)} vs ask ${cents(w.ask)} (${gp})`;
+      box.className = "edge-box";
+      note.textContent = w.window_over ? "no edge at any minute check this window: skipping is the right trade" :
+        `buys only at +${Math.round((w.need || 0.06) * 100)} pts at a minute check` + (w.next_check_in_s != null ? ` · next check in ${mmss(w.next_check_in_s)}` : "") +
+        (w.usable ? "" : " · waiting for fresh quotes");
+    } else {
+      box.textContent = "EDGE · waiting for a window"; box.className = "edge-box"; note.textContent = "";
+    }
+    const n = (r.wins || 0) + (r.losses || 0);
+    f(card, "edge-rec").textContent = n ? `Edge ${r.wins}–${r.losses} · ${money(r.pnl)} per contract in total` : "Edge: no settled signals yet";
   }
 
   function renderMeter(card, c, call, w, rules) {
@@ -125,11 +154,14 @@
     $("total-record").textContent = `${r.wins || 0}–${r.losses || 0}`;
     $("total-rate").textContent = n ? `${Math.round(100 * r.wins / n)}%` : "--";
     $("total-exp").textContent = n ? `${r.market_expected} / ${r.n_market}` : "--";
+    const er = s.edge || {}, en = (er.wins || 0) + (er.losses || 0);
+    $("edge-record").textContent = `${er.wins || 0}–${er.losses || 0}`;
+    $("edge-pnl").textContent = en ? money(er.pnl) : "--";
     const live = markets.find((m) => m.countdown && m.seconds_left != null);
     $("clock").textContent = live ? live.countdown : "--:--";
     const colors = Object.fromEntries(markets.map((m) => [m.key, m.color]));
     $("lines").innerHTML = (s.lines || []).map((l) => `<span class="pill" data-key="${esc(l.key)}"><span class="dot" style="background:${esc(colors[l.key] || "#888")}"></span>${esc(l.name)} <b>${l.wins}–${l.losses}</b></span>`).join("");
-    $("board-foot").textContent = `${markets.length} markets · WTI, Natural Gas and Gold run their own coach engines · ` +
+    $("board-foot").textContent = `${markets.length} markets · settlement calls are forecasts (in two months of history they won about as often as they said, so bought at the ask they broke even); EDGE is the buy signal · ` +
       (s.requests != null ? `${s.requests} Kalshi requests so far` : "simulated markets") + (s.throttled ? ` · slowed down by Kalshi ${s.throttled}×` : "");
     if (openKey) renderDetailLive();
   }

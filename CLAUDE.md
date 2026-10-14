@@ -176,4 +176,5 @@ See `kalshi-gold/README.md`; tests: `cd kalshi-gold && pytest`.
 
 `kalshi-commodities/` (package `cm15m`, port 8790) is a separate board with a settlement caller for every Kalshi
 15-minute commodity (gold, silver, WTI, copper, natural gas, palladium, platinum), with per-market scale worked out
-automatically and one database per market. See `kalshi-commodities/README.md`; tests: `cd kalshi-commodities && pytest`.
+automatically and one database per market, plus an EDGE buy signal (model beats Kalshi's ask by 6 points at a minute check,
+validated on two months of history). See `kalshi-commodities/README.md`; tests: `cd kalshi-commodities && pytest`.

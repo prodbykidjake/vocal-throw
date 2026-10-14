@@ -22,6 +22,30 @@ records with the WTI, natural gas or gold coaches, and they keep running as they
 
 It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
+## EDGE: the buy signal (v1.2)
+
+Two months of Kalshi history (Aug 14 - Oct 13 2026, pulled with `kalshi-wti/tools/backfill.py`; second-by-second
+settlement prices for 1,600-4,100 windows per market) replayed through each card's own engine said:
+
+- **The settlement calls are honest but not a money edge.** Over ~17,000 replayed calls they won about as often as
+  they said (WTI 78.5% vs 78.0% expected), but by the time a call fires Kalshi's price already says the same thing.
+  Bought at the ask about a minute after the call (the price real fills got), every market came out between -0.9c and
+  +0.6c a contract after fees: break-even. The calls stay on the cards as forecasts.
+- **What made money: buying only when the model is clearly more confident than Kalshi's price.** At each whole
+  minute from 3:00 to 13:00 into a window, if the model's chance for its side is at least 55% and at least
+  **6 points above that side's ask**, the card shows **EDGE · BUY UP/DOWN at N¢ or less** and notifies. Chosen on WTI's
+  first 19 days, it made +6.2c a contract on WTI's last 12 days, and, never tuned on them, gold +5.5c, silver +6.4c,
+  platinum +3.6c, palladium +3.5c, copper +3.3c, natural gas +2.2c (fills a full minute later, fees included). It
+  fires in about one window in six. History is not a promise: the EDGE record on the board keeps the honest count.
+- **Hold to settlement.** Stop-losses, take-profits and "cash out when it turns" all lost money in history; so did
+  resting a bid below the ask (the orders that fill are the ones going wrong), buying the cheap side, and clicking
+  faster (the ask barely moves in the minute after a signal).
+
+The EDGE box under each card's meter shows what it is watching (model vs ask, the gap, the next minute check), a
+signal when one fires (one per window), and its result; the top strip shows the EDGE record and profit per contract
+across all markets. Signals are kept in `data/edges.db`. The margin and minimum are `[board] edge_gap` (0.06) and
+`edge_min_p` (0.55).
+
 ## The page
 
 - **The cards**, in Kalshi's order. Each shows:
@@ -30,7 +54,8 @@ It is a coach, not a bot: it never places orders and needs no Kalshi API key.
   - the **call box**: STUDYING, then WATCHING, then e.g. **UP AT SETTLEMENT**, locked;
   - the **meter**: the model's chance on a Down ◀ 50% ▶ Up bar, with dashed lines at the 72% call line, a faint band
     for the last 30 seconds, and Kalshi's odds as a gold tick;
-  - the market's record and its last 10 calls.
+  - the market's record and its last 10 calls;
+  - the **EDGE box** (above).
 - **The top strip**: the combined record across all markets and each market's line, so it is clear which markets
   the caller reads best.
 - **Click a card** for its detail view:

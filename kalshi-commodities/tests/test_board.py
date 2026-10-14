@@ -96,7 +96,9 @@ async def test_seven_simulated_markets_each_get_a_card_with_its_own_scale(tmp_pa
     assert all(m["status"] == "live" and m["prediction"] for m in st["markets"])
     assert by["natgas"]["scale"]["decimals"] == 5 and by["gold"]["scale"]["cents"] is False and by["wti"]["scale"]["cents"] is True
     # every market keeps its own database
-    assert sorted(p.name for p in tmp_path.glob("*.db")) == sorted(f"{m.key}.db" for m in KNOWN)
+    assert sorted(p.name for p in tmp_path.glob("*.db")) == sorted([f"{m.key}.db" for m in KNOWN] + ["edges.db"])
+    assert all("edge" in m and "watch" in m["edge"] and "record" in m["edge"] for m in st["markets"])
+    assert st["edge"]["wins"] + st["edge"]["losses"] >= 0
     board.set_muted("gold", True)
     assert Board(cfg).muted == {"gold"}  # remembered across restarts
 

@@ -14,6 +14,7 @@ import time
 
 from .config import Config
 from .desk import Desk
+from .edge import EdgeStore, EdgeTracker
 from .engines import ENGINES, EngineDesk
 from .feeds.kalshi_live import KalshiLiveFeed, event_ticker_for
 from .kalshi import KalshiClient, RateLimiter
@@ -38,6 +39,9 @@ class Board:
         self.muted: set[str] = set(cfg.board.muted) | self._load_mutes()
         self.state: dict = {"status": "starting", "markets": []}
         self.started_ts = time.time()
+        self.edge_store = EdgeStore(os.path.join(cfg.storage.data_dir, "edges.db"))
+        self.edges: dict[str, EdgeTracker] = {}
+        self._last_edge_settle = 0.0
 
     # ------------------------------------------------------------------ mutes (per card, remembered)
     def _load_mutes(self) -> set[str]:
@@ -65,6 +69,7 @@ class Board:
             specs = [s for s in specs if s.key in wanted or s.series.lower() in wanted]
         for spec in specs:
             self.desks.append(self._make_desk(spec))
+            self.edges[spec.key] = EdgeTracker(spec.key, self.edge_store, self.cfg.board.edge_gap, self.cfg.board.edge_min_p)
         log.info("board: %d markets: %s", len(self.desks), ", ".join(d.spec.name for d in self.desks))
 
     def _make_desk(self, spec: MarketSpec):
@@ -127,12 +132,36 @@ class Board:
         await d.tracker.run(stop)
 
     def step(self):
+        now = time.time()
+        settle = now - self._last_edge_settle >= 10
+        if settle:
+            self._last_edge_settle = now
         for d in self.desks:
             try:
                 d.step()
             except Exception:
                 log.exception("desk %s step failed", d.spec.key)
+            try:
+                self._edge_step(d, now, settle)
+            except Exception:
+                log.exception("desk %s edge step failed", d.spec.key)
         self.state = self._build_state()
+
+    def _edge_step(self, d, now: float, settle: bool):
+        tr = self.edges.get(d.spec.key)
+        if tr is None:
+            tr = self.edges[d.spec.key] = EdgeTracker(d.spec.key, self.edge_store, self.cfg.board.edge_gap, self.cfg.board.edge_min_p)
+        sig = tr.step(now, d.state)
+        if sig and not self.is_muted(d.spec.key):
+            ask_c = round(sig["ask"] * 100)
+            self.notifier.notify(f"{d.spec.name.upper()} EDGE: BUY {sig['side']}",
+                                 f"model {round(sig['p'] * 100)}% vs ask {ask_c}¢ (+{round(sig['gap'] * 100)} pts) · "
+                                 f"buy at {ask_c}¢ or less, hold to settlement", "Glass")
+        if settle:
+            store = getattr(d, "store", None) or getattr(getattr(d, "engine", None), "store", None)
+            if store is not None:
+                tr.settle_from(store.window, now)
+        d.state["edge"] = tr.state()
 
     def _build_state(self) -> dict:
         markets = [d.state for d in self.desks]
@@ -146,7 +175,7 @@ class Board:
             lines.append({"key": d.spec.key, "name": d.spec.name, "wins": r.get("wins", 0), "losses": r.get("losses", 0)})
         total["market_expected"] = round(total["market_expected"], 1)
         return {"now": time.time(), "status": "live", "uptime_s": round(time.time() - self.started_ts),
-                "markets": markets, "record": total, "lines": lines,
+                "markets": markets, "record": total, "lines": lines, "edge": self.edge_store.record(recent=0),
                 "requests": None if self.sim is not None else (getattr(self.client, "requests", 0) or 0)
                 + sum(d.requests for d in self.desks if isinstance(d, EngineDesk)),
                 "throttled": self.limiter.throttled}

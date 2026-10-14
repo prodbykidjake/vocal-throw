@@ -50,6 +50,8 @@ class BoardCfg:
     markets: list = field(default_factory=list)  # keys to show, e.g. ["gold", "wti"]; empty = every 15-minute commodity
     extra_events: dict = field(default_factory=dict)  # {"gold": ["2026-11-13 08:30 CPI"], ...}, ET
     muted: list = field(default_factory=list)  # markets whose calls do not notify (also switchable on each card)
+    edge_gap: float = 0.06  # EDGE: buy only when the model's chance for its side beats that side's ask by this much ...
+    edge_min_p: float = 0.55  # ... and is at least this (checked at each whole minute 3:00-13:00; see cm15m/edge.py)
 
 
 @dataclass
