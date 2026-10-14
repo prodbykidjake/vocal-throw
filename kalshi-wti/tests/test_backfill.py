@@ -33,6 +33,10 @@ class FakeKalshi:
         self.cutoff = self.W[3][3] + 1
         self.calls = []
         self.fail_next_429 = 1
+        self.live_since = 0
+
+    def price(self, t):
+        return round(90 + 0.3 * ((t * 7919) % 1000) / 1000 + (t - T0) * 1e-5, 5)
 
     def market(self, w, archived):
         tk, ev, o, cl, k, s, r = w
@@ -82,7 +86,13 @@ class FakeKalshi:
             t = path.split("/")[3]
             return ok({"candlesticks": self.candles(t, int(q["start_ts"]), int(q["end_ts"]), True)})
         if path.startswith("/live_data/events/"):
-            return ok({"live_data": {"details": {"timeseries": []}}})
+            ev = path.split("/")[3]
+            w = next(x for x in self.W if x[1] == ev)
+            if w[3] <= self.live_since:  # older than what Kalshi keeps
+                return ok({"live_data": {"details": {"timeseries": []}}})
+            # a past event serves the hour that ended at its close, one point a second (ms timestamps)
+            pts = [{"t": int(t * 1000), "v": self.price(t)} for t in range(int(w[3]) - 3600, int(w[3]))]
+            return ok({"live_data": {"type": "commodity", "details": {"timeseries": pts}}})
         return 404, {}, b"not found"
 
 
@@ -95,6 +105,7 @@ class Args:
     trades = False
     livedata = False
     hyperliquid = False
+    zip = False
 
 
 def test_backfill_stores_every_window_its_candles_and_resumes(tmp_path):
@@ -133,3 +144,34 @@ def test_probe_runs_and_reports():
     lines = []
     bf.probe(Args(), bf.Http(rps=1000.0, opener=fake, sleep=lambda s: None), log=lines.append)
     assert any("cutoff" in x for x in lines) and any("requests used" in x for x in lines)
+
+
+def test_second_by_second_prices_cover_four_windows_per_request_and_stop_when_kalshi_has_none(tmp_path):
+    fake = FakeKalshi()
+    fake.fail_next_429 = 0
+    args = Args()
+    args.out, args.livedata, args.zip = str(tmp_path / "history.db"), True, True
+    args.now = fake.W[-1][3] + 600
+    lines = []
+    db = bf.run(args, bf.Http(rps=1000.0, opener=fake, sleep=lambda s: None), log=lines.append)
+    got = dict(db.execute("SELECT event_ticker, data FROM price_paths").fetchall())
+    assert set(got) == {w[1] for w in fake.W}
+    assert sum(1 for c in fake.calls if c.startswith("/live_data/")) == 3  # each hour of prices covers four windows
+    w = fake.W[7]
+    path = bf.decode_path(got[w[1]])
+    assert path[0][0] == w[2] - 60 and path[-1][0] == w[3] - 1 and len(path) == 960  # the hour ends at the close
+    assert all(abs(p - fake.price(t)) < 1e-9 for t, p in path)
+    assert (tmp_path / "history.zip").exists() and any("send this file" in x for x in lines)
+
+    # Kalshi keeps the series only for recent windows: older events come back empty and the run stops after a few
+    fake2 = FakeKalshi()
+    fake2.fail_next_429 = 0
+    fake2.live_since = fake2.W[7][3]
+    args2 = Args()
+    args2.out, args2.now = str(tmp_path / "h2.db"), fake2.W[-1][3] + 600
+    db2 = bf.run(args2, bf.Http(rps=1000.0, opener=fake2, sleep=lambda s: None), log=lambda *a: None)
+    fake2.calls.clear()
+    bf.fetch_livedata(bf.Http(rps=1000.0, opener=fake2, sleep=lambda s: None), db2, "KXWTI15M", log=lambda *a: None,
+                      stop_after_empty=3)
+    assert {r[0] for r in db2.execute("SELECT event_ticker FROM price_paths")} == {w[1] for w in fake2.W[8:]}
+    assert sum(1 for c in fake2.calls if c.startswith("/live_data/")) == 1 + 3

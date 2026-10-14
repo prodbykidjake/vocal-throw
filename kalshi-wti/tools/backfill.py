@@ -2,12 +2,12 @@
 
 Run from the kalshi-wti folder:
     python3 tools/backfill.py --probe            # ~20 requests: answers the open questions below, paste the output
-    python3 tools/backfill.py --days 30          # writes data/history.db (a few minutes; safe to stop and re-run)
+    python3 tools/backfill.py                    # 60 days -> data/history.db and data/history.zip (safe to stop and re-run)
 
 Pulls the free, unauthenticated Kalshi history for a 15-minute series into a separate SQLite file:
   * every settled window: target (floor_strike), settlement (expiration_value), result, open/close, volume
   * 1-minute Kalshi candlesticks per window: yes_bid / yes_ask OHLC, trade-price OHLC, volume, open interest
-  * optional: Kalshi's live_data series per event (only kept if Kalshi serves the window's own frozen path)
+  * Kalshi's second-by-second settlement price per window (live_data; served for past windows: confirmed 2026-10-13)
   * optional: every public trade per window
   * optional: Hyperliquid xyz:CL 1-minute candles (independent WTI path; only recent history is served)
   * optional (--pyth, needs a Pyth API key in $PYTH_API_KEY): 1-minute Pyth candles of the settlement feed
@@ -18,7 +18,7 @@ Pulls the free, unauthenticated Kalshi history for a 15-minute series into a sep
 Endpoints and parameters were taken from Kalshi's official Python SDK (kalshi_python_sync 3.33.0, 2026-10-07), in
 which every endpoint used here has no auth settings. Items marked UNCONFIRMED must be checked with `--probe`.
 
-Usage:  python3 tools/backfill.py --days 30 [--out data/history.db] [--trades] [--livedata] [--hyperliquid] [--pyth]
+Usage:  python3 tools/backfill.py [--days 60] [--out data/history.db] [--trades] [--no-livedata] [--hyperliquid] [--pyth]
         python3 tools/backfill.py --probe
 """
 from __future__ import annotations
@@ -33,6 +33,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
+import zlib
 
 KALSHI = "https://api.elections.kalshi.com/trade-api/v2"
 HL_INFO = "https://api.hyperliquid.xyz/info"
@@ -58,6 +60,7 @@ CREATE TABLE IF NOT EXISTS kalshi_candles (
 CREATE TABLE IF NOT EXISTS candles_done (ticker TEXT PRIMARY KEY, n INTEGER, fetched_ts REAL);
 CREATE TABLE IF NOT EXISTS pyth_points (event_ticker TEXT, ts REAL, price REAL, PRIMARY KEY (event_ticker, ts));
 CREATE TABLE IF NOT EXISTS livedata_done (event_ticker TEXT PRIMARY KEY, n_total INTEGER, n_in_window INTEGER, fetched_ts REAL);
+CREATE TABLE IF NOT EXISTS price_paths (event_ticker TEXT PRIMARY KEY, n INTEGER, first_ts REAL, last_ts REAL, data BLOB);
 CREATE TABLE IF NOT EXISTS trades (trade_id TEXT PRIMARY KEY, ticker TEXT, ts REAL, yes_price REAL, count REAL, taker_side TEXT);
 CREATE TABLE IF NOT EXISTS trades_done (ticker TEXT PRIMARY KEY, n INTEGER, fetched_ts REAL);
 CREATE TABLE IF NOT EXISTS pyth_candles (symbol TEXT, t INTEGER, o REAL, h REAL, l REAL, c REAL,
@@ -173,7 +176,8 @@ def window_row(series: str, m: dict, tier: str):
     return (m.get("ticker"), series, m.get("event_ticker"), ts_of(m.get("open_time")), ts_of(m.get("close_time")),
             target, fnum(m.get("expiration_value")), (m.get("result") or "").lower() or None, m.get("status"),
             ts_of(m.get("settlement_ts")), fnum(m.get("volume_fp", m.get("volume"))),
-            fnum(m.get("open_interest_fp", m.get("open_interest"))), m.get("rules_primary"), tier, json.dumps(m))
+            fnum(m.get("open_interest_fp", m.get("open_interest"))), None, tier,
+            json.dumps({k: v for k, v in m.items() if not k.startswith("rules")}))  # the rules text is in meta once
 
 
 # ----------------------------------------------------------------------------- steps
@@ -252,26 +256,71 @@ def fetch_candles(http: Http, db: sqlite3.Connection, series: str, log=print):
     db.commit()
 
 
-def fetch_livedata(http: Http, db: sqlite3.Connection, series: str, log=print):
-    """UNCONFIRMED: whether /live_data/events/{event} for a past event returns that window's frozen path (the SDK says so
-    for crypto events: `is_historical`). Points are kept only when they fall inside the window."""
-    done = {r[0] for r in db.execute("SELECT event_ticker FROM livedata_done")}
-    rows = db.execute("SELECT DISTINCT event_ticker, open_ts, close_ts FROM hist_windows WHERE series=? ORDER BY close_ts", (series,)).fetchall()
-    for k, (ev, o, c) in enumerate(r for r in rows if r[0] and r[0] not in done):
-        data = http.get(f"/live_data/events/{ev}", {"range": "15min"}) or {}
-        pts = parse_live(data)
-        inside = [(t, p) for t, p in pts if o - 60 <= t <= c + 60]
-        db.executemany("INSERT OR IGNORE INTO pyth_points VALUES (?,?,?)", [(ev, t, p) for t, p in inside])
-        db.execute("INSERT OR REPLACE INTO livedata_done VALUES (?,?,?,?)", (ev, len(pts), len(inside), time.time()))
-        if k == 4:
-            n_in = db.execute("SELECT SUM(n_in_window) FROM livedata_done").fetchone()[0] or 0
-            if n_in == 0:
-                log("  live_data: the first 5 past events returned no in-window points -> Kalshi does not serve history here; stopping")
-                db.commit()
-                return
-        if k % 100 == 0:
+PATH_SCALE = 100000  # prices stored to 1e-5 (Kalshi's live series carries 5 decimals)
+
+
+def encode_path(pts: list[tuple[float, float]]) -> bytes:
+    """Second-by-second points as zlib-compressed integer deltas (~1-2 KB per 15-minute window)."""
+    t = [round(x * 1000) for x, _ in pts]
+    p = [round(y * PATH_SCALE) for _, y in pts]
+    body = {"t0": t[0], "p0": p[0], "dt": [b - a for a, b in zip(t, t[1:])], "dp": [b - a for a, b in zip(p, p[1:])]}
+    return zlib.compress(json.dumps(body, separators=(",", ":")).encode(), 9)
+
+
+def decode_path(blob: bytes) -> list[tuple[float, float]]:
+    d = json.loads(zlib.decompress(blob))
+    t, p = [d["t0"]], [d["p0"]]
+    for a in d["dt"]:
+        t.append(t[-1] + a)
+    for b in d["dp"]:
+        p.append(p[-1] + b)
+    return [(x / 1000.0, y / PATH_SCALE) for x, y in zip(t, p)]
+
+
+def fetch_livedata(http: Http, db: sqlite3.Connection, series: str, log=print, stop_after_empty: int = 12):
+    """Kalshi's second-by-second settlement price (the Pyth series) for each window, from /live_data/events/{event}.
+    For a past event Kalshi returns the hour that ended at its close (probe of 2026-10-13: 3,600 points, still served
+    for a week-old window), so one request covers that window and the three before it: windows are fetched newest
+    first, each fetch fills every window it fully covers, and the run stops after `stop_after_empty` events in a row
+    come back empty (the end of what Kalshi keeps)."""
+    have = {r[0] for r in db.execute("SELECT event_ticker FROM price_paths")}
+    rows = db.execute("SELECT DISTINCT event_ticker, open_ts, close_ts FROM hist_windows WHERE series=? AND event_ticker IS NOT NULL "
+                      "AND open_ts IS NOT NULL AND close_ts IS NOT NULL ORDER BY close_ts DESC", (series,)).fetchall()
+    todo = [r for r in rows if r[0] not in have]
+    empty = fetched = 0
+    oldest = None
+    for k, (ev, o, c) in enumerate(todo):
+        if ev in have:
+            continue
+        pts = parse_live(http.get(f"/live_data/events/{ev}", {"range": "1h"}))
+        fetched += 1
+        if not pts:
+            empty += 1
+            db.execute("INSERT OR REPLACE INTO livedata_done VALUES (?,?,?,?)", (ev, 0, 0, time.time()))
+            if empty >= stop_after_empty:
+                log(f"  live prices: {empty} windows in a row came back empty -> Kalshi keeps them back to about {oldest}; stopping")
+                break
+            continue
+        empty = 0
+        lo, hi = pts[0][0], pts[-1][0]
+        for ev2, o2, c2 in todo[k:]:  # this window and the older ones this hour of prices fully covers
+            if c2 < lo:
+                break
+            if ev2 in have or not (lo <= o2 + 1 and hi >= c2 - 3):
+                continue
+            inside = [(t, p) for t, p in pts if o2 - 60 <= t <= c2 + 60]
+            if len(inside) < 0.8 * (c2 - o2):
+                continue
+            db.execute("INSERT OR REPLACE INTO price_paths VALUES (?,?,?,?,?)",
+                       (ev2, len(inside), inside[0][0], inside[-1][0], encode_path(inside)))
+            have.add(ev2)
+            oldest = dt.datetime.fromtimestamp(o2).strftime("%Y-%m-%d")
+        db.execute("INSERT OR REPLACE INTO livedata_done VALUES (?,?,?,?)", (ev, len(pts), 0, time.time()))
+        if fetched % 50 == 0:
             db.commit()
+            log(f"  live prices: {len(have)}/{len(rows)} windows (back to {oldest}), {fetched} requests")
     db.commit()
+    log(f"  live prices: {len(have)}/{len(rows)} windows have their second-by-second price ({fetched} requests)")
 
 
 def parse_live(data) -> list[tuple[float, float]]:
@@ -419,6 +468,8 @@ def run(args, http: Http | None = None, log=print) -> sqlite3.Connection:
     log(f"{series}: archive cutoff {cut.get('market_settled_ts')}; listing settled windows since {dt.datetime.fromtimestamp(start)}")
     ms = list_markets(http, series, start, cutoff_ts)
     db.executemany("INSERT OR REPLACE INTO hist_windows VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [window_row(series, m, tier) for m, tier in ms])
+    if ms:
+        db.execute("INSERT OR REPLACE INTO meta VALUES ('rules_primary_sample', ?)", (ms[0][0].get("rules_primary") or "",))
     db.commit()
     pairs, ok = chain_check(db, series)
     db.execute("INSERT OR REPLACE INTO meta VALUES ('chain_check', ?)", (json.dumps({"pairs": pairs, "target_eq_prev_settle": ok}),))
@@ -438,6 +489,12 @@ def run(args, http: Http | None = None, log=print) -> sqlite3.Connection:
                                                                                  "retries": http.retries}),))
     db.commit()
     log(f"done: {http.count} requests, {http.retries} retries")
+    if getattr(args, "zip", True):
+        db.commit()
+        zpath = os.path.splitext(args.out)[0] + ".zip"
+        with zipfile.ZipFile(zpath, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+            z.write(args.out, arcname=os.path.basename(args.out))
+        log(f"send this file: {os.path.abspath(zpath)} ({os.path.getsize(zpath) / 1e6:.1f} MB)")
     return db
 
 
@@ -509,12 +566,13 @@ def probe(args, http: Http | None = None, log=print):
 
 def main(argv=None):
     p = argparse.ArgumentParser()
-    p.add_argument("--days", type=float, default=30)
+    p.add_argument("--days", type=float, default=60)
     p.add_argument("--series", default="KXWTI15M")
     p.add_argument("--out", default="data/history.db")
     p.add_argument("--rps", type=float, default=8.0)
     p.add_argument("--trades", action="store_true")
-    p.add_argument("--livedata", action="store_true")
+    p.add_argument("--no-livedata", dest="livedata", action="store_false",
+                   help="skip the second-by-second settlement prices (on by default)")
     p.add_argument("--hyperliquid", action="store_true")
     p.add_argument("--pyth", action="store_true", help="1-minute Pyth candles of the settlement feed (needs $PYTH_API_KEY)")
     p.add_argument("--probe", action="store_true")
