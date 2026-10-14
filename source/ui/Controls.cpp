@@ -43,6 +43,12 @@ namespace fmt
     }
 
     juce::String number (double v) { return juce::String (v, 1); }
+
+    juce::String signedPercent (double v)
+    {
+        const auto n = juce::roundToInt (v);
+        return (n > 0 ? "+" : juce::String()) + juce::String (n) + "%";
+    }
 } // namespace fmt
 
 void drawPill (juce::Graphics& g, juce::Rectangle<float> area, const juce::String& text, float fontPx)
@@ -61,10 +67,10 @@ Knob::Knob (Theme& t, juce::AudioProcessorValueTreeState& state, const juce::Str
       caption (captionText),
       format (std::move (formatToUse)),
       large (isLarge),
+      deepRail (onDeepRail),
       attachment (*state.getParameter (paramID), slider, state.undoManager)
 {
     prepareParameterSlider (slider);
-    slider.getProperties().set ("bg", (int) (onDeepRail ? theme.p().railDeep : theme.p().rail).getARGB());
     slider.setDoubleClickReturnValue (true, state.getParameter (paramID)->convertFrom0to1 (state.getParameter (paramID)->getDefaultValue()));
     slider.onValueChange = [this] { repaint(); };
     addAndMakeVisible (slider);
@@ -81,9 +87,8 @@ void Knob::resized()
 
 void Knob::paint (juce::Graphics& g)
 {
-    // the ring sits on the rail, which changes with delta and bypass
-    const auto deep = (bool) slider.getProperties().contains ("bg") && juce::Colour ((juce::uint32) (int) slider.getProperties()["bg"]) != theme.p().rail;
-    slider.getProperties().set ("bg", (int) (deep ? theme.p().railDeep : theme.p().rail).getARGB());
+    // the ring sits on the rail, whose colour changes with delta and bypass
+    slider.getProperties().set ("bg", (int) (deepRail ? theme.p().railDeep : theme.p().rail).getARGB());
 
     const auto w = (float) getWidth();
     const auto captionHeight = large ? 18.0f : 15.0f;
@@ -131,8 +136,8 @@ void ValueSlider::setEnabledLook (bool shouldBeEnabled)
 
 void ValueSlider::resized()
 {
-    // caption 13.5 + gap 5, then a 10 px band around the 4 px track (3 px margins)
-    slider.setBounds (0, 18, getWidth(), 20);
+    // caption 13.5 + gap 5, then a 10 px band around the 4 px track (3 px margins): the track's centre is at y = 24
+    slider.setBounds (0, 14, getWidth(), 20);
 }
 
 void ValueSlider::paint (juce::Graphics& g)

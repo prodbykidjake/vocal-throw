@@ -8,6 +8,9 @@ namespace vox::fonts
     the nearest). `px` is the CSS font-size of the design; `tracking` is the CSS letter-spacing in em. */
 juce::Font make (int weight, float px, float tracking = 0.0f);
 
+/** Width of a line of text in design pixels. */
+float width (const juce::Font& font, const juce::String& text);
+
 /** Draws one line of text in the given colour, aligned inside bounds. */
 void draw (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> bounds, const juce::Font& font,
     juce::Colour colour, juce::Justification justification = juce::Justification::centred);

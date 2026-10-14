@@ -107,7 +107,7 @@ void VoxLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int widt
     float, float, juce::Slider::SliderStyle, juce::Slider& slider)
 {
     const auto& pal = theme.p();
-    const auto area = juce::Rectangle<float> ((float) x, (float) y, (float) width, (float) height);
+    const auto area = juce::Rectangle<float> ((float) x, (float) y, (float) width, (float) height).expanded ((float) getSliderThumbRadius (slider), 0.0f);
     const auto cy = area.getCentreY();
 
     g.setColour (rgba (73, 101, 113, 0.23f));

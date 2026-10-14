@@ -3,11 +3,13 @@
 #include "BinaryData.h"
 #include "PluginProcessor.h"
 #include "melatonin_inspector/melatonin_inspector.h"
-#include "ui/DepthCurveOverlay.h"
-#include "ui/KeyMeter.h"
-#include "ui/ReductionGraph.h"
+#include "ui/EditorContent.h"
+#include "ui/Theme.h"
+#include "ui/VoxLookAndFeel.h"
 
 //==============================================================================
+/** The plugin window. All the UI lives in one 1480 x 860 "design pixel" component that this scales to fit
+    the window, which can be resized with the aspect ratio locked. */
 class PluginEditor : public juce::AudioProcessorEditor
 {
 public:
@@ -18,36 +20,25 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-private:
-    struct Knob
-    {
-        Knob (juce::AudioProcessorValueTreeState& state, const juce::String& paramID, const juce::String& labelText, juce::Component& parent);
+    vox::EditorContent& getContent() noexcept { return *content; }
 
-        juce::Slider slider { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
-        juce::Label label;
-        juce::AudioProcessorValueTreeState::SliderAttachment attachment;
-    };
+   #if JUCE_DEBUG
+    bool keyPressed (const juce::KeyPress&) override;
+   #endif
+
+private:
+    void setScale (float scale);
 
     // This reference is provided as a quick way for your editor to
     // access the processor object that created it.
     PluginProcessor& processorRef;
     std::unique_ptr<melatonin::Inspector> inspector;
-    juce::TextButton inspectButton { "Inspect the UI" };
 
-    ReductionGraph graph;
-    DepthCurveOverlay depthOverlay;
-
-    std::vector<std::unique_ptr<Knob>> knobs;
-    std::vector<std::unique_ptr<Knob>> tiltKnobs;
-    juce::Label tiltLabel { {}, "TILT  (low < 500 Hz, high > 2 kHz)" };
-
-    juce::ComboBox modeBox, stereoBox;
-    juce::Label modeLabel { {}, "Mode" }, stereoLabel { {}, "Stereo" };
-    juce::ToggleButton deltaButton { "Delta" }, bypassButton { "Bypass" }, sidechainButton { "Sidechain" }, keyListenButton { "Key Listen" };
-    KeyMeter keyMeter;
-
-    juce::AudioProcessorValueTreeState::ComboBoxAttachment modeAttachment, stereoAttachment;
-    juce::AudioProcessorValueTreeState::ButtonAttachment deltaAttachment, bypassAttachment, sidechainAttachment, keyListenAttachment;
+    vox::Theme theme;
+    vox::VoxLookAndFeel lookAndFeel { theme }; // declared before the content so it outlives it
+    std::unique_ptr<vox::EditorContent> content;
+    juce::ComponentBoundsConstrainer constrainer;
+    juce::TooltipWindow tooltips { this, 700 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

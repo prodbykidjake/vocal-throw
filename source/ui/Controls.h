@@ -16,6 +16,7 @@ namespace fmt
     juce::String balance (double v);     // "EVEN", "+12", "-20"
     juce::String hertz (double v);       // "850 Hz", "4.6 kHz"
     juce::String number (double v);      // "3.7"
+    juce::String signedPercent (double v); // "+30%", "-20%", "0%"
 }
 
 /** Draws the rounded value read-out used under knobs and sliders. */
@@ -41,6 +42,7 @@ private:
     juce::String caption;
     Format format;
     bool large;
+    bool deepRail;
     juce::SliderParameterAttachment attachment;
 };
 
@@ -103,7 +105,7 @@ private:
 };
 
 /** A button showing a choice parameter's current value; clicking steps to the next one (L/R <-> M/S). */
-class ChoiceButton : public juce::Component
+class ChoiceButton : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     ChoiceButton (Theme& theme, juce::AudioProcessorValueTreeState& state, const juce::String& paramID, juce::StringArray items,

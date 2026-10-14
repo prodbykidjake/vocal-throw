@@ -29,10 +29,21 @@ namespace
 
 juce::Font make (int weight, float px, float tracking)
 {
-    auto options = juce::FontOptions (typefaceFor (weight)).withPointHeight (px);
+    juce::Font font (juce::FontOptions (typefaceFor (weight)).withPointHeight (px));
     if (! juce::approximatelyEqual (tracking, 0.0f))
-        options = options.withKerningFactor (tracking);
-    return juce::Font (options);
+    {
+        // JUCE's kerning factor is a fraction of the JUCE height (ascent + descent), CSS letter-spacing is in em
+        const auto ratio = font.getHeight() / juce::jmax (0.001f, font.getHeightInPoints());
+        font = font.withExtraKerningFactor (tracking / ratio);
+    }
+    return font;
+}
+
+float width (const juce::Font& font, const juce::String& text)
+{
+    juce::GlyphArrangement glyphs;
+    glyphs.addLineOfText (font, text, 0.0f, 0.0f);
+    return glyphs.getBoundingBox (0, -1, false).getWidth();
 }
 
 void draw (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> bounds, const juce::Font& font,

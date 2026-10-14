@@ -43,6 +43,10 @@ public:
     juce::AudioProcessorValueTreeState apvts { *this, &undoManager, "VoxSmoove", createParameterLayout() };
 
     // A/B: two complete parameter states. Only the inactive slot is stored; the active one is the live state.
+    /** Editor size as a fraction of the design's 1480 px width. Saved with the session. */
+    float getUiScale() const noexcept { return uiScale; }
+    void setUiScale (float scale) noexcept { uiScale = juce::jlimit (0.7f, 1.0f, scale); }
+
     int getActiveSlot() const noexcept { return activeSlot; }
     void switchToSlot (int slot);
     void copyActiveToOtherSlot();
@@ -60,6 +64,7 @@ private:
     vs::SuppressorParams readParams() const noexcept;
 
     int currentProgram = 0;
+    float uiScale = 0.85f;
     int activeSlot = 0;
     std::array<juce::ValueTree, 2> abState;
 
