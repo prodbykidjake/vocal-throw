@@ -37,7 +37,15 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    juce::AudioProcessorValueTreeState apvts { *this, nullptr, "VoxSmoove", createParameterLayout() };
+    // Declared before the state so the state can use it. Undo/redo of parameter changes.
+    juce::UndoManager undoManager;
+
+    juce::AudioProcessorValueTreeState apvts { *this, &undoManager, "VoxSmoove", createParameterLayout() };
+
+    // A/B: two complete parameter states. Only the inactive slot is stored; the active one is the live state.
+    int getActiveSlot() const noexcept { return activeSlot; }
+    void switchToSlot (int slot);
+    void copyActiveToOtherSlot();
 
     /** Latest gain reduction at ResonanceSuppressor::numDisplayPoints log-spaced frequencies, for the editor. */
     void getReductionDisplay (float* dest) const noexcept { suppressor.getReductionDisplay (dest); }
@@ -50,6 +58,10 @@ public:
 
 private:
     vs::SuppressorParams readParams() const noexcept;
+
+    int currentProgram = 0;
+    int activeSlot = 0;
+    std::array<juce::ValueTree, 2> abState;
 
     // raw parameter pointers for the depth curve bands, so the audio thread never looks up by name
     std::array<std::array<std::atomic<float>*, (size_t) ParamIDs::numBandParams>, ParamIDs::numBands> bandValues {};

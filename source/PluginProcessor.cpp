@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "Presets.h"
 
 //==============================================================================
 PluginProcessor::PluginProcessor()
@@ -62,25 +63,28 @@ double PluginProcessor::getTailLengthSeconds() const
 
 int PluginProcessor::getNumPrograms()
 {
-    return 1;   // NB: some hosts don't cope very well if you tell them there are 0 programs,
-                // so this should be at least 1, even if you're not really implementing programs.
+    return presets::count(); // NB: some hosts don't cope very well with 0 programs
 }
 
 int PluginProcessor::getCurrentProgram()
 {
-    return 0;
+    return currentProgram;
 }
 
 void PluginProcessor::setCurrentProgram (int index)
 {
-    juce::ignoreUnused (index);
+    if (! juce::isPositiveAndBelow (index, presets::count()))
+        return;
+
+    currentProgram = index;
+    undoManager.beginNewTransaction ("Load preset");
+    presets::apply (apvts, index);
 }
 
 const juce::String PluginProcessor::getProgramName (int index)
 {
-    juce::ignoreUnused (index);
-    // Steinberg's VST3 validator fails plugins whose single default program has no name
-    return "Default";
+    // Steinberg's VST3 validator fails plugins whose programs have no name
+    return presets::name (index);
 }
 
 void PluginProcessor::changeProgramName (int index, const juce::String& newName)
@@ -221,15 +225,69 @@ juce::AudioProcessorEditor* PluginProcessor::createEditor()
 //==============================================================================
 void PluginProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    if (auto xml = apvts.copyState().createXml())
-        copyXmlToBinary (*xml, destData);
+    // <VoxSmooveSession slot= program=> <state of the live slot/> [<state of the other slot/>] </...>
+    juce::XmlElement session ("VoxSmooveSession");
+    session.setAttribute ("slot", activeSlot);
+    session.setAttribute ("program", currentProgram);
+
+    if (auto live = apvts.copyState().createXml())
+        session.addChildElement (live.release());
+
+    const auto& other = abState[(size_t) (1 - activeSlot)];
+    if (other.isValid())
+        if (auto xml = other.createXml())
+            session.addChildElement (xml.release());
+
+    copyXmlToBinary (session, destData);
 }
 
 void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    if (auto xml = getXmlFromBinary (data, sizeInBytes))
-        if (xml->hasTagName (apvts.state.getType()))
-            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    const auto xml = getXmlFromBinary (data, sizeInBytes);
+    if (xml == nullptr)
+        return;
+
+    if (xml->hasTagName ("VoxSmooveSession"))
+    {
+        activeSlot = juce::jlimit (0, 1, xml->getIntAttribute ("slot", 0));
+        currentProgram = juce::jlimit (0, juce::jmax (0, presets::count() - 1), xml->getIntAttribute ("program", 0));
+
+        abState = {};
+        if (auto* live = xml->getFirstChildElement())
+        {
+            if (live->hasTagName (apvts.state.getType()))
+                apvts.replaceState (juce::ValueTree::fromXml (*live));
+
+            if (auto* other = live->getNextElement())
+                if (other->hasTagName (apvts.state.getType()))
+                    abState[(size_t) (1 - activeSlot)] = juce::ValueTree::fromXml (*other);
+        }
+    }
+    else if (xml->hasTagName (apvts.state.getType()))
+    {
+        // plain parameter state (older sessions)
+        apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    }
+}
+
+void PluginProcessor::switchToSlot (int slot)
+{
+    slot = juce::jlimit (0, 1, slot);
+    if (slot == activeSlot)
+        return;
+
+    abState[(size_t) activeSlot] = apvts.copyState();
+
+    // a slot that was never filled starts as a copy of what you have now
+    auto incoming = abState[(size_t) slot].isValid() ? abState[(size_t) slot].createCopy() : apvts.copyState();
+    undoManager.beginNewTransaction ("Switch A/B");
+    apvts.replaceState (incoming);
+    activeSlot = slot;
+}
+
+void PluginProcessor::copyActiveToOtherSlot()
+{
+    abState[(size_t) (1 - activeSlot)] = apvts.copyState();
 }
 
 //==============================================================================
