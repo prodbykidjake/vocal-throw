@@ -20,12 +20,13 @@ def iso(ts):
 class FakeKalshi:
     """12 chained 15-minute windows (target = previous settlement); the first 4 sit in the archive tier."""
 
-    def __init__(self):
+    def __init__(self, n=12, gap_every=0):
         rnd = random.Random(3)
         px = 90.0
         self.W = []
-        for i in range(12):
-            o = T0 + 900 * i
+        o = T0 - 900
+        for i in range(n):
+            o += 900 + (3600 if gap_every and i and i % gap_every == 0 else 0)  # the daily trading break
             target = round(px, 2)
             px += rnd.gauss(0, 0.08)
             settle = round(px, 2)
@@ -77,6 +78,9 @@ class FakeKalshi:
             return ok({"markets": [self.market(w, True) for w in reversed(self.W) if w[3] < self.cutoff], "cursor": ""})
         if path == "/markets/candlesticks":
             tks = q["market_tickers"].split(",")
+            asked = len(tks) * ((int(q["end_ts"]) - int(q["start_ts"])) // 60 + 1)
+            if asked > 10000:  # Kalshi's real rule (seen 2026-10-13)
+                return 400, {}, json.dumps({"error": {"code": "bad_request", "details": f"requested candlesticks across all markets: {asked}, max candlesticks: 10000"}}).encode()
             return ok({"markets": [{"market_ticker": t, "candlesticks": self.candles(t, int(q["start_ts"]), int(q["end_ts"]), False)}
                                    for t in tks]})
         if path.startswith("/series/") and path.endswith("/candlesticks"):
@@ -175,3 +179,17 @@ def test_second_by_second_prices_cover_four_windows_per_request_and_stop_when_ka
                       stop_after_empty=3)
     assert {r[0] for r in db2.execute("SELECT event_ticker FROM price_paths")} == {w[1] for w in fake2.W[8:]}
     assert sum(1 for c in fake2.calls if c.startswith("/live_data/")) == 1 + 3
+
+
+def test_candle_batches_stay_under_kalshis_cap_over_weeks_of_windows(tmp_path):
+    fake = FakeKalshi(n=400, gap_every=92)  # ~4 days of windows with daily breaks: a 50-window batch would be refused
+    fake.fail_next_429 = 0
+    fake.cutoff = 0  # everything in the live tier
+    args = Args()
+    args.out, args.now, args.days = str(tmp_path / "h.db"), fake.W[-1][3] + 600, 10
+    db = bf.run(args, bf.Http(rps=1000.0, opener=fake, sleep=lambda s: None), log=lambda *a: None)
+    assert db.execute("SELECT COUNT(*) FROM candles_done").fetchone()[0] == 400
+    assert db.execute("SELECT COUNT(DISTINCT ticker) FROM kalshi_candles").fetchone()[0] == 400
+    batch_calls = sum(1 for c in fake.calls if c == "/markets/candlesticks")
+    singles = sum(1 for c in fake.calls if c.startswith("/series/") and c.endswith("/candlesticks"))
+    assert singles == 0 and batch_calls <= 25

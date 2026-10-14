@@ -43,7 +43,8 @@ PYTH_SYMBOL = "Commodities.Index.PYTHOIL/USD"   # the series' settlement source 
 PYTH_CHANNEL = "fixed_rate@200ms"
 PYTH_CHUNK_MIN = 480  # minutes per /history call (stays under a 500-bar cap if the server has one: UNCONFIRMED)
 UA = {"Accept": "application/json", "User-Agent": "wti15m-backfill/1.0"}
-BATCH = 50  # tickers per batch-candles call (API max 100 and 10,000 candles; 50 x ~16 candles stays far below)
+BATCH = 50  # tickers per batch-candles call (API max 100)
+CANDLE_CAP = 8000  # Kalshi refuses a batch when markets x minutes in its time span exceeds 10,000 (seen 2026-10-13)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -227,17 +228,39 @@ def fetch_candles(http: Http, db: sqlite3.Connection, series: str, log=print):
     def single(t, o, c, archived_tier):
         params = {"start_ts": int(o) - 60, "end_ts": int(c) + 60, "period_interval": 1}
         path = f"/historical/markets/{t}/candlesticks" if archived_tier else f"/series/{series}/markets/{t}/candlesticks"
-        data = http.get(path, params) or {}
+        try:
+            data = http.get(path, params) or {}
+        except HttpError as exc:  # one odd window must not stop the run; it is retried on the next run
+            log(f"  candles: {t} skipped ({exc})")
+            return
         store(t, data.get("candlesticks") or [])
 
-    for i in range(0, len(live), BATCH):
-        chunk = live[i:i + BATCH]
+    def minutes(batch):
+        return (int(max(r[2] for r in batch)) + 60 - (int(min(r[1] for r in batch)) - 60)) // 60 + 1
+
+    # Kalshi counts a batch as (markets x minutes between the earliest start and the latest end) and refuses more than
+    # 10,000, so batches are built from neighbouring windows and kept well under that
+    batches, cur = [], []
+    for r in live:
+        if cur and (len(cur) >= BATCH or (len(cur) + 1) * minutes(cur + [r]) > CANDLE_CAP):
+            batches.append(cur)
+            cur = []
+        cur.append(r)
+    if cur:
+        batches.append(cur)
+    n_done = 0
+    for b_i, chunk in enumerate(batches):
         params = {"market_tickers": ",".join(r[0] for r in chunk), "start_ts": int(min(r[1] for r in chunk)) - 60,
                   "end_ts": int(max(r[2] for r in chunk)) + 60, "period_interval": 1}
-        data = http.get("/markets/candlesticks", params) or {}
-        got = {m.get("market_ticker"): m.get("candlesticks") or [] for m in data.get("markets") or []}
+        try:
+            data = http.get("/markets/candlesticks", params) or {}
+        except HttpError as exc:
+            if exc.status != 400:
+                raise
+            data = None  # refused: one call per market instead
+        got = {m.get("market_ticker"): m.get("candlesticks") or [] for m in (data or {}).get("markets") or []}
         total = sum(len(v) for v in got.values())
-        if total >= 10000:  # hit the response cap: fall back to one call per market
+        if data is None or total >= 10000:  # refused, or hit the response cap: one call per market
             for t, o, c, _ in chunk:
                 single(t, o, c, False)
         else:
@@ -247,7 +270,9 @@ def fetch_candles(http: Http, db: sqlite3.Connection, series: str, log=print):
                 else:
                     single(t, o, c, False)
         db.commit()
-        log(f"  candles: {min(i + BATCH, len(live))}/{len(live)} live-tier windows")
+        n_done += len(chunk)
+        if len(batches) < 20 or n_done == len(live) or b_i % 20 == 0:
+            log(f"  candles: {n_done}/{len(live)} windows")
     for j, (t, o, c, _) in enumerate(archived):
         single(t, o, c, True)
         if j % 100 == 0:
@@ -292,7 +317,11 @@ def fetch_livedata(http: Http, db: sqlite3.Connection, series: str, log=print, s
     for k, (ev, o, c) in enumerate(todo):
         if ev in have:
             continue
-        pts = parse_live(http.get(f"/live_data/events/{ev}", {"range": "1h"}))
+        try:
+            pts = parse_live(http.get(f"/live_data/events/{ev}", {"range": "1h"}))
+        except HttpError as exc:
+            log(f"  live prices: {ev} skipped ({exc})")
+            continue
         fetched += 1
         if not pts:
             empty += 1
