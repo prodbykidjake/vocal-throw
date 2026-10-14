@@ -40,8 +40,8 @@ EditorContent::EditorContent (PluginProcessor& p, Theme& t)
       delta (t, p.apvts, ParamIDs::delta, "DELTA"),
       bypass (t, p.apvts, ParamIDs::bypass, "BYPASS"),
       topBar (t, p),
-      graph (p),
-      overlay (p.apvts),
+      spectrum (t, p),
+      bandEditor (t, p.apvts),
       drawer (t, p.apvts),
       popover (t)
 {
@@ -51,7 +51,7 @@ EditorContent::EditorContent (PluginProcessor& p, Theme& t)
     bypass.setTooltip ("Bypass (soft, click-free)");
 
     for (auto* c : std::initializer_list<juce::Component*> { &mode, &depth, &detail, &selectivity, &balance, &stereo, &link, &attack, &release, &quality,
-             &lock, &sidechain, &keyListen, &meter, &mix, &trim, &delta, &bypass, &graph, &overlay, &topBar, &drawer, &popover })
+             &lock, &sidechain, &keyListen, &meter, &mix, &trim, &delta, &bypass, &spectrum, &bandEditor, &topBar, &drawer, &popover })
         addAndMakeVisible (c);
 
     popover.setVisible (false);
@@ -65,6 +65,17 @@ EditorContent::EditorContent (PluginProcessor& p, Theme& t)
     topBar.onAdvanced = [this] { toggleDrawer(); };
     topBar.onHelp = [this] { togglePopover (Popover::Kind::help); };
     topBar.onSettings = [this] { togglePopover (Popover::Kind::settings); };
+
+    spectrum.onSelectionChanged = [this] (int band) { bandEditor.setBand (band); };
+    {
+        // start on the neutral bell, like the design's selected band
+        int first = -1;
+        for (int b = ParamIDs::numBands - 1; b >= 0; --b)
+            if (processor.apvts.getRawParameterValue (ParamIDs::bandParamID (b + 1, ParamIDs::BandParam::active))->load() >= 0.5f)
+                first = b;
+        const auto bell = processor.apvts.getRawParameterValue (ParamIDs::bandParamID (2, ParamIDs::BandParam::active))->load() >= 0.5f;
+        spectrum.setSelectedBand (bell ? 1 : first);
+    }
 
     theme.addChangeListener (this);
     deltaAttachment.sendInitialUpdate();
@@ -152,8 +163,8 @@ void EditorContent::resized()
     // work area
     topBar.setBounds (workX, F, layout::designWidth - F - workX, layout::topBarHeight);
     const juce::Rectangle<int> graphArea (workX, F + layout::topBarHeight, layout::designWidth - F - workX, bodyH - layout::topBarHeight);
-    graph.setBounds (graphArea);
-    overlay.setBounds (graphArea);
+    spectrum.setBounds (graphArea);
+    bandEditor.setBounds (workX + (graphArea.getWidth() - BandEditor::width) / 2, F + bodyH - 18 - BandEditor::height, BandEditor::width, BandEditor::height);
 
     if (! animator.isAnimating())
         drawer.setBounds (drawerOpen ? layout::designWidth - F - AdvancedDrawer::width : layout::designWidth, F + layout::topBarHeight,

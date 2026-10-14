@@ -3,9 +3,9 @@
 #include "../PluginProcessor.h"
 #include "AdvancedDrawer.h"
 #include "Controls.h"
-#include "DepthCurveOverlay.h"
+#include "BandEditor.h"
 #include "Popover.h"
-#include "ReductionGraph.h"
+#include "SpectrumView.h"
 #include "TopBar.h"
 #include "Widgets.h"
 
@@ -29,6 +29,9 @@ public:
     void setDrawerOpen (bool open, bool animate = true);
     bool isDrawerOpen() const noexcept { return drawerOpen; }
     void showPopover (Popover::Kind kind);
+
+    SpectrumView& getSpectrum() noexcept { return spectrum; }
+    BandEditor& getBandEditor() noexcept { return bandEditor; }
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
@@ -58,8 +61,8 @@ private:
 
     // work area
     TopBar topBar;
-    ReductionGraph graph;
-    DepthCurveOverlay overlay;
+    SpectrumView spectrum;
+    BandEditor bandEditor;
     AdvancedDrawer drawer;
     Popover popover;
     juce::ComponentAnimator animator;
