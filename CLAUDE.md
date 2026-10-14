@@ -18,16 +18,27 @@ Signal flow: `in (or sidechain key) -> [L/R or M/S] -> SpectralAnalyzer -> Reduc
 
 - `FrameConfig` - FFT/hop/kernel sizes derived from the sample rate (window is ~43 ms at any rate)
 - `SpectralAnalyzer` - Hann-windowed STFT, power spectrum normalised so a full-scale sine = 1.0
-- `ReductionCurve` - bins that stick out of a log-frequency-smoothed copy of the spectrum become target dB reduction. Soft = relative only (level independent); Hard also scales by absolute level. Per-bin attack/release, faster at high frequencies. The six tilt params (Detail/Attack/Release, low and high) reshape the per-bin envelope width and time constants like gentle shelves. Tuning constants are at the top of `ReductionCurve.cpp`
-- `DepthCurve` - up to 8 EQ-style bands (low/high cut, low/high shelf, bell, bandpass, band reject, tilt) turned into a per-bin multiplier on detection sensitivity. It steers the detector and never touches the audio. Non-bandpass bands multiply; enabled bandpass bands run in parallel and set the base weight. Weights are only recomputed when a band changes
+- `ReductionCurve` - bins that stick out of a log-frequency-smoothed copy of the spectrum become target dB reduction. Soft = relative only (level independent); Hard also scales by absolute level. Selectivity sets the knee (how far a bin must stand out, `0.5 + 7.5 * s^2` dB). Per-bin attack/release, faster at high frequencies. The six tilt params (Detail/Attack/Release, low and high) reshape the per-bin envelope width and time constants like gentle shelves. Each channel has its own `channelScale` (the stereo Balance). The hop size is a runtime setting (Quality: 512/256/128 samples, same latency). Tuning constants are at the top of `ReductionCurve.cpp`
+- `DepthCurve` - up to 8 EQ-style bands (low/high cut, low/high shelf, bell, bandpass, band reject, tilt) turned into a per-bin multiplier on detection sensitivity. It steers the detector and never touches the audio. Non-bandpass bands multiply; enabled bandpass bands run in parallel and set the base weight. Each band has a balance that scales its effect per channel (gain shapes in dB, bandpass by level), so there are two weight arrays. Weights are only recomputed when a band changes
 - `MinPhaseFilter` - turns the reduction curve into a minimum-phase FIR (cepstral method) once per hop, crossfading between kernels
 - `ResonanceSuppressor` - owns the above per channel, stereo mode/link, smoothed mix/trim/gain, delta and bypass, the optional sidechain key (detection runs on the key; key listen plays it delayed by the latency), and publishes a reduction snapshot and key level for the editor via atomics
 
-Parameters are defined in `source/Parameters.cpp` (APVTS). Each depth-curve band is 6 params (`bandN_active/enabled/shape/freq/gain/q`, see `ParamIDs::bandParamID`); `active` means the node exists, `enabled` means it isn't bypassed. The processor has an optional mono/stereo sidechain input bus (off by default) and caches raw parameter pointers so the audio thread never looks parameters up by name.
+Parameters are defined in `source/Parameters.cpp` (APVTS). Each depth-curve band is 7 params (`bandN_active/enabled/shape/freq/gain/q/balance`, see `ParamIDs::bandParamID`); `active` means the node exists, `enabled` means it isn't bypassed; gain is +-18 dB. The processor has an optional mono/stereo sidechain input bus (off by default) and caches raw parameter pointers so the audio thread never looks parameters up by name.
 
-The editor (`source/PluginEditor.*`, `source/ui/`) polls the reduction snapshot on a timer. `DepthCurveOverlay` draws the depth curve over `ReductionGraph` and edits the band params through the host (drag a node = frequency + depth, wheel = Q/slope, double-click empty = add a bell, double-click node = bypass, right-click = shape menu/delete).
+Session features in `PluginProcessor`: an `UndoManager` (the APVTS records into it; it only sees a change once the APVTS timer or `copyState()` flushes parameters into the tree), four factory presets exposed as host programs (`source/Presets.*`; a load sets every sound-shaping parameter, leaves mix/out gain/bypass/delta/sidechain alone, and only changes Quality when the quality lock is off), A/B slots (`switchToSlot`, `copyActiveToOtherSlot`), and the editor scale. All of it is saved in the session XML (`VoxSmooveSession`); plain parameter states from older sessions still load.
 
-Not yet implemented: per-band stereo focus and band listen, linear-phase/quality modes, low-latency mode, presets and A/B, multichannel.
+### Editor (`source/PluginEditor.*`, `source/ui/`)
+
+The editor is drawn from the Figma export (a light, misty blue-grey design). Everything lives in one 1480 x 860 "design pixel" canvas (`EditorContent`) that `PluginEditor` scales with a transform; the window is resizable with a locked aspect ratio (scale 0.7-1.0, saved with the session). Numbers in the UI code are the design's CSS values, so compare against the export when changing anything.
+
+- `Theme.h` - palette, layout constants, band colours. Delta swaps to a warm palette and bypass desaturates it, as in the design; components read the theme when they paint
+- `Fonts.*` - DM Sans (static TTFs in `assets/fonts`, SIL OFL; `tools/make_dm_sans.py` rebuilds them from Google's variable woff2). `fonts::make(weight, cssPx, trackingEm)` matches CSS sizes and letter-spacing. DM Sans lacks the design's Unicode icon glyphs, so `Icons.*` draws them as paths
+- `VoxLookAndFeel`, `Controls.*` - knobs, value sliders, toggles, segmented control, each bound to a parameter. `Widgets.*` - top-bar buttons, lock, key meter
+- `SpectrumView` - the graph: live reduction, dashed depth curve, draggable band nodes (drag = frequency + depth, wheel = Q, double-click empty = add a bell, double-click a node = bypass, right-click = shapes/delete, "+" = add). `BandEditor` - the floating panel for the selected band. `AdvancedDrawer` - Max Cut, Wet Trim and the tilts. `TopBar`, `Popover` - presets, undo/redo, A/B, help, settings
+
+Tests render the editor to PNGs with `VOX_SNAPSHOT_DIR=/some/dir xvfb-run -a ./Builds/Tests "[snapshot]"` (default, delta, bypass, drawer, popovers, small, Vocal silk). The Vocal silk preset uses the values shown in the design, so it is the one to compare with a render of the design. To render the export itself: copy its `src/App.tsx`, `src/index.css`, `src/main.tsx` and `index.html` into a fresh directory with a minimal package.json (react, vite, `@vitejs/plugin-react`, tailwindcss, `@tailwindcss/vite`), `npm install --ignore-scripts`, `vite build`, serve `dist`, and screenshot `.plugin` at 1480x860 with Playwright's Chromium. In a Debug build Ctrl/Cmd+Alt+I opens the melatonin inspector.
+
+Not yet implemented: band listen, linear-phase mode, low-latency mode, multichannel, a preset browser (presets are the four factory ones, stepped with the arrows).
 
 ## Build Commands
 
@@ -52,8 +63,9 @@ ctest --test-dir Builds --verbose --output-on-failure
 
 # Tests that open the editor need a display; on a headless box use: xvfb-run -a ./Builds/Tests
 
-# Save a PNG of the editor (from the editor test) to look at the UI
-VOX_SNAPSHOT_PATH=/tmp/editor.png ./Builds/Tests "[editor]"
+# Save PNGs of the editor in each state (and of the control gallery) to look at the UI
+VOX_SNAPSHOT_DIR=/tmp/shots xvfb-run -a ./Builds/Tests "[snapshot]"
+VOX_GALLERY_PATH=/tmp/gallery.png xvfb-run -a ./Builds/Tests "[ui]"
 ```
 
 Preferred setup is VS Code with the CMake Tools extension and Ninja: `cmake -B Builds -G Ninja -DCMAKE_BUILD_TYPE=Debug`. The first time you clone, run `git submodule update --init --recursive`.
@@ -62,13 +74,14 @@ On macOS for universal binary: `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`
 
 ## Project Structure
 
-- `source/` - Plugin source code (PluginProcessor, PluginEditor, Parameters, `dsp/`, `ui/`)
+- `source/` - Plugin source code (PluginProcessor, PluginEditor, Parameters, Presets, `dsp/`, `ui/`)
 - `tests/` - Catch2 test files
 - `benchmarks/` - Catch2 benchmark files
 - `cmake/` - CMake modules (Tests.cmake, Benchmarks.cmake, Assets.cmake, etc.)
 - `modules/` - Git submodules: clap-juce-extensions, melatonin_inspector
 - `JUCE/` - JUCE framework (git submodule)
-- `assets/` - Binary resources (auto-included via juce_add_binary_data)
+- `assets/` - Binary resources (auto-included via juce_add_binary_data): the DM Sans fonts and the template image
+- `tools/` - Scripts that aren't part of the build (`make_dm_sans.py`)
 - `packaging/` - Installer resources and scripts
 
 ## Architecture

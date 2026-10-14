@@ -54,6 +54,12 @@ TEST_CASE ("The editor renders at the design size in every state", "[editor][sna
     CHECK (image.getHeight() == 860);
     save (image, "juce-default");
 
+    SECTION ("with the Vocal silk preset, which uses the values shown in the design")
+    {
+        h.plugin.setCurrentProgram (0);
+        save (h.snapshot(), "juce-vocal-silk");
+    }
+
     SECTION ("delta")
     {
         testing_helpers::setParam (h.plugin, ParamIDs::delta, 1.0f);

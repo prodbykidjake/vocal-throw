@@ -143,7 +143,7 @@ void ValueSlider::resized()
 void ValueSlider::paint (juce::Graphics& g)
 {
     const auto w = (float) getWidth();
-    fonts::draw (g, caption, { 0.0f, 0.0f, w, 13.5f }, fonts::make (600, 9.0f, 0.06f), theme.adj (juce::Colour (0xff667c87)), juce::Justification::centredLeft);
+    fonts::draw (g, caption, { 0.0f, 0.0f, w, 13.5f }, fonts::make (600, 10.0f, 0.06f), theme.adj (juce::Colour (0xff667c87)), juce::Justification::centredLeft);
     drawPill (g, { 0.0f, 33.5f + 0.0f, w, 27.0f }, format (slider.getValue()), 11.0f);
 }
 

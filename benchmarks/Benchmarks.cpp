@@ -44,7 +44,20 @@ TEST_CASE ("Processing performance")
         for (int i = 0; i < 512; ++i)
             buffer.setSample (c, i, 0.1f * (rng.nextFloat() * 2.0f - 1.0f));
 
-    BENCHMARK ("processBlock, stereo, 512 samples @ 48 kHz")
+    auto setQuality = [&plugin] (float index) {
+        auto* p = plugin.apvts.getParameter (ParamIDs::quality);
+        p->setValueNotifyingHost (p->convertTo0to1 (index));
+    };
+
+    setQuality (0.0f);
+    BENCHMARK ("processBlock, stereo, 512 samples @ 48 kHz, Normal")
+    {
+        plugin.processBlock (buffer, midi);
+        return buffer.getSample (0, 0);
+    };
+
+    setQuality (2.0f);
+    BENCHMARK ("processBlock, stereo, 512 samples @ 48 kHz, Ultra")
     {
         plugin.processBlock (buffer, midi);
         return buffer.getSample (0, 0);

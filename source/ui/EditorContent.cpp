@@ -191,13 +191,13 @@ void EditorContent::paint (juce::Graphics& g)
     // brand
     icons::stroke (g, icons::wave(), juce::Rectangle<float> (26.0f, 12.0f, 34.0f, 18.0f), pal.accent, 2.0f);
     fonts::draw (g, "VOX SMOOVE", { 26.0f, 31.0f, 232.0f, 26.0f }, fonts::make (700, 26.0f, 0.09f), theme.adj (juce::Colour (0xff33444d)), juce::Justification::centredLeft);
-    fonts::draw (g, utf8 ("PLAYBOX AUDIO \xc2\xb7 ") + VERSION, { 26.0f, 64.0f, 232.0f, 13.5f }, fonts::make (400, 9.0f, 0.12f), pal.muted, juce::Justification::centredLeft);
+    fonts::draw (g, utf8 ("PLAYBOX AUDIO \xc2\xb7 ") + VERSION, { 26.0f, 64.0f, 232.0f, 13.5f }, fonts::make (400, 10.0f, 0.12f), pal.muted, juce::Justification::centredLeft);
 
     // stereo section
     g.setColour (rgba (71, 99, 111, 0.13f));
     g.fillRect (26, 549, 232, 1);
     fonts::draw (g, "STEREO", { 26.0f, 563.0f, 200.0f, 24.0f }, fonts::make (700, 10.0f, 0.08f), theme.adj (juce::Colour (0xff58707c)), juce::Justification::centredLeft);
-    fonts::draw (g, "MODE", { 26.0f, 598.0f, 100.0f, 13.5f }, fonts::make (400, 9.0f, 0.08f), pal.muted, juce::Justification::centredLeft);
+    fonts::draw (g, "MODE", { 26.0f, 598.0f, 100.0f, 13.5f }, fonts::make (400, 10.0f, 0.08f), pal.muted, juce::Justification::centredLeft);
 
     // utility rail
     const juce::Rectangle<int> utilityRail (F + railW, F, utilW, bodyH);
