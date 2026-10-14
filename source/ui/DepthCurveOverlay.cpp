@@ -17,7 +17,7 @@ juce::String formatHz (float hz)
 DepthCurveOverlay::DepthCurveOverlay (juce::AudioProcessorValueTreeState& state) : apvts (state)
 {
     for (int b = 0; b < ParamIDs::numBands; ++b)
-        for (int p = 0; p < 6; ++p)
+        for (int p = 0; p < ParamIDs::numBandParams; ++p)
             params[(size_t) b][(size_t) p] = apvts.getParameter (ParamIDs::bandParamID (b + 1, (BandParam) p));
 
     setOpaque (false);

@@ -17,6 +17,10 @@ inline constexpr auto stereoMode = "stereoMode";
 inline constexpr auto link = "link";
 inline constexpr auto delta = "delta";
 inline constexpr auto bypass = "bypass";
+inline constexpr auto selectivity = "selectivity";
+inline constexpr auto stereoBalance = "balance";
+inline constexpr auto quality = "quality";
+inline constexpr auto qualityLock = "qualityLock";
 inline constexpr auto sidechain = "sidechain";
 inline constexpr auto keyListen = "keyListen";
 inline constexpr auto detailLow = "detailLow";
@@ -34,8 +38,10 @@ enum class BandParam
     shape,
     freq,
     gain,
-    q
+    q,
+    balance // -50..+50, positive favours R/Side
 };
+inline constexpr int numBandParams = 7;
 
 /** @param band 1..numBands */
 juce::String bandParamID (int band, BandParam which);

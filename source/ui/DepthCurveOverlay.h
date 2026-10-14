@@ -11,7 +11,7 @@
 class DepthCurveOverlay : public juce::Component, private juce::Timer
 {
 public:
-    static constexpr float maxDb = 24.0f;
+    static constexpr float maxDb = 18.0f;
 
     explicit DepthCurveOverlay (juce::AudioProcessorValueTreeState& state);
 
@@ -49,7 +49,7 @@ private:
     void endDrag();
 
     juce::AudioProcessorValueTreeState& apvts;
-    std::array<std::array<juce::RangedAudioParameter*, 6>, ParamIDs::numBands> params {};
+    std::array<std::array<juce::RangedAudioParameter*, (size_t) ParamIDs::numBandParams>, ParamIDs::numBands> params {};
     int selected = -1;
     int hovered = -1;
     bool dragging = false;

@@ -18,6 +18,14 @@ public:
 
     void setCurve (const float* reductionDb) noexcept;
 
+    /** Analysis hop in samples; the crossfade between kernels is a quarter of it. */
+    void setHopSize (int hop) noexcept
+    {
+        cfg.hopSize = hop;
+        cfg.fadeLength = std::max (1, hop / 4);
+        fadeStep = 1.0f / (float) cfg.fadeLength;
+    }
+
     float process (float x) noexcept
     {
         history[(size_t) writePos] = x;

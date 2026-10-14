@@ -8,19 +8,20 @@ namespace vs
 bool BandSettings::sameAs (const BandSettings& o) const noexcept
 {
     return enabled == o.enabled && shape == o.shape && juce::exactlyEqual (freqHz, o.freqHz)
-        && juce::exactlyEqual (gainDb, o.gainDb) && juce::exactlyEqual (q, o.q);
+        && juce::exactlyEqual (gainDb, o.gainDb) && juce::exactlyEqual (q, o.q) && juce::exactlyEqual (balance, o.balance);
 }
 
 void DepthCurve::prepare (const FrameConfig& config)
 {
     cfg = config;
-    weights.assign ((size_t) cfg.numBins, 1.0f);
+    for (auto& w : weights)
+        w.assign ((size_t) cfg.numBins, 1.0f);
     haveBands = false;
 }
 
 void DepthCurve::setBands (const BandArray& newBands) noexcept
 {
-    if (weights.empty())
+    if (weights[0].empty())
         return;
 
     bool changed = ! haveBands;
@@ -38,7 +39,8 @@ void DepthCurve::setBands (const BandArray& newBands) noexcept
 void DepthCurve::recompute() noexcept
 {
     for (int k = 0; k < cfg.numBins; ++k)
-        weights[(size_t) k] = weightAt (bands, (float) k * cfg.binHz());
+        for (int c = 0; c < 2; ++c)
+            weights[(size_t) c][(size_t) k] = weightAt (bands, (float) k * cfg.binHz(), c);
 }
 
 float DepthCurve::bandMagnitude (const BandSettings& band, float hz) noexcept
@@ -67,7 +69,7 @@ float DepthCurve::bandMagnitude (const BandSettings& band, float hz) noexcept
     return (float) m;
 }
 
-float DepthCurve::weightAt (const BandArray& bands, float hz) noexcept
+float DepthCurve::weightAt (const BandArray& bands, float hz, int channel) noexcept
 {
     auto parallel = 0.0f;
     auto anyBandpass = false;
@@ -78,15 +80,17 @@ float DepthCurve::weightAt (const BandArray& bands, float hz) noexcept
         if (! b.enabled)
             continue;
 
+        const auto balance = juce::jlimit (-1.0f, 1.0f, b.balance);
+        const auto factor = channel == 0 ? 1.0f - std::max (0.0f, balance) : 1.0f - std::max (0.0f, -balance);
         const auto m = bandMagnitude (b, hz);
         if (b.shape == BandShape::bandpass)
         {
             anyBandpass = true;
-            parallel = std::max (parallel, m);
+            parallel = std::max (parallel, m * factor);
         }
         else
         {
-            product *= m;
+            product *= juce::exactlyEqual (factor, 1.0f) ? m : std::pow (m, factor);
         }
     }
 

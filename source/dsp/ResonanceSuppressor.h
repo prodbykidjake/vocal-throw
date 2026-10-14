@@ -32,6 +32,10 @@ struct SuppressorParams
     float attackTiltLow = 0.0f, attackTiltHigh = 0.0f;
     float releaseTiltLow = 0.0f, releaseTiltHigh = 0.0f;
 
+    float selectivity = 46.0f; // 0..100
+    float balance = 0.0f;      // -50..+50, positive favours R/Side
+    int quality = 0;           // 0 Normal, 1 High, 2 Ultra: how often the filter is refreshed
+
     BandArray bands {};
 };
 
@@ -65,6 +69,7 @@ public:
 
 private:
     void runAnalysisHop() noexcept;
+    void applyHopSize (int hop) noexcept;
 
     FrameConfig cfg;
     SuppressorParams params;

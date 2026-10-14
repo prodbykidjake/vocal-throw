@@ -9,7 +9,6 @@ namespace vs
 static constexpr float kWidestEnvelopeOct = 1.5f;  // envelope smoothing width at Detail = 0
 static constexpr float kNarrowestEnvelopeOct = 0.125f; // ... and at Detail = 1
 static constexpr float kPeakClipDb = 3.0f;         // peaks are clipped to this above the first envelope pass
-static constexpr float kKneeDb = 2.0f;             // excess below this isn't a resonance
 static constexpr float kSoftDepthScale = 2.0f;     // reduction dB per dB of excess at Depth = 1
 static constexpr float kHardDepthScale = 3.0f;
 static constexpr float kFloorDb = -130.0f;         // nothing is detected below this absolute level
@@ -76,11 +75,21 @@ void ReductionCurve::setParams (const ReductionParams& p)
         || ! juce::exactlyEqual (p.attackLow, params.attackLow) || ! juce::exactlyEqual (p.attackHigh, params.attackHigh)
         || ! juce::exactlyEqual (p.releaseLow, params.releaseLow) || ! juce::exactlyEqual (p.releaseHigh, params.releaseHigh);
     params = p;
+    kneeDb = 0.5f + 7.5f * p.selectivity01 * p.selectivity01;
 
     if (detailChanged)
         rebuildEnvelopeTables();
     if (timeChanged)
         rebuildBallisticsTables();
+}
+
+void ReductionCurve::setHopSize (int hop)
+{
+    if (hop == cfg.hopSize || hop < 1)
+        return;
+
+    cfg.hopSize = hop;
+    rebuildBallisticsTables();
 }
 
 void ReductionCurve::rebuildEnvelopeTables()
@@ -149,7 +158,7 @@ void ReductionCurve::process (const float* power, const float* depthWeight) noex
     for (int k = 0; k < nb; ++k)
         prefix[(size_t) k + 1] = prefix[(size_t) k] + (double) clipped[(size_t) k];
 
-    const auto depthScale = params.depth01 * (params.hard ? kHardDepthScale : kSoftDepthScale);
+    const auto depthScale = params.depth01 * params.channelScale * (params.hard ? kHardDepthScale : kSoftDepthScale);
 
     for (int k = 0; k < nb; ++k)
     {
@@ -157,7 +166,7 @@ void ReductionCurve::process (const float* power, const float* depthWeight) noex
         const auto hi = hiIdx[(size_t) k];
         const auto env = (float) ((prefix[(size_t) hi + 1] - prefix[(size_t) lo]) / (double) (hi - lo + 1));
         const auto level = specDb[(size_t) k];
-        const auto excess = level - env - kKneeDb;
+        const auto excess = level - env - kneeDb;
 
         auto t = 0.0f;
         if (excess > 0.0f)

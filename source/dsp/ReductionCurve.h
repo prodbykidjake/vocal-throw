@@ -14,6 +14,13 @@ struct ReductionParams
     float release01 = 0.5f;
     float maxCutDb = 12.0f;
 
+    // How far a bin has to stand out of the envelope to count as a resonance: 0 = anything, 1 = only the
+    // tallest peaks. The knee in dB grows as 0.5 + 7.5 * selectivity^2 (46 % is about the old fixed 2 dB).
+    float selectivity01 = 0.46f;
+
+    // Per-channel multiplier on Depth (1 = unchanged, 0 = none). Used for the stereo balance.
+    float channelScale = 1.0f;
+
     // Tilts, -1..+1. "Low" acts below ~500 Hz and "high" above ~2 kHz, like very gentle shelves.
     // Positive detail tilt = narrower, positive attack/release tilt = slower.
     float detailLow = 0.0f, detailHigh = 0.0f;
@@ -35,6 +42,9 @@ public:
     void reset();
     void setParams (const ReductionParams& p);
 
+    /** Analysis hop in samples (the frame rate of process()). Rebuilds the attack/release tables, no allocation. */
+    void setHopSize (int hop);
+
     /** @param power numBins linear powers, full-scale sine = 1.0
         @param depthWeight optional numBins multipliers on detection sensitivity (the depth curve) */
     void process (const float* power, const float* depthWeight = nullptr) noexcept;
@@ -47,6 +57,7 @@ private:
 
     FrameConfig cfg;
     ReductionParams params;
+    float kneeDb = 2.09f;
 
     std::vector<int> loIdx, hiIdx;
     std::vector<float> attackCoef, releaseCoef, freqWeight, lowShelf, highShelf;

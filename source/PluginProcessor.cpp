@@ -14,7 +14,7 @@ PluginProcessor::PluginProcessor()
                        )
 {
     for (int b = 0; b < ParamIDs::numBands; ++b)
-        for (int p = 0; p < 6; ++p)
+        for (int p = 0; p < ParamIDs::numBandParams; ++p)
             bandValues[(size_t) b][(size_t) p] = apvts.getRawParameterValue (ParamIDs::bandParamID (b + 1, (ParamIDs::BandParam) p));
 }
 
@@ -180,6 +180,9 @@ vs::SuppressorParams PluginProcessor::readParams() const noexcept
     p.link = get (ParamIDs::link);
     p.delta = get (ParamIDs::delta) >= 0.5f;
     p.bypass = get (ParamIDs::bypass) >= 0.5f;
+    p.selectivity = get (ParamIDs::selectivity);
+    p.balance = get (ParamIDs::stereoBalance);
+    p.quality = juce::jlimit (0, 2, (int) std::lround (get (ParamIDs::quality)));
     p.sidechain = get (ParamIDs::sidechain) >= 0.5f;
     p.keyListen = get (ParamIDs::keyListen) >= 0.5f;
     p.detailTiltLow = get (ParamIDs::detailLow);
@@ -199,6 +202,7 @@ vs::SuppressorParams PluginProcessor::readParams() const noexcept
         band.freqHz = v[(size_t) BandParam::freq]->load();
         band.gainDb = v[(size_t) BandParam::gain]->load();
         band.q = v[(size_t) BandParam::q]->load();
+        band.balance = v[(size_t) BandParam::balance]->load() / 50.0f;
     }
     return p;
 }

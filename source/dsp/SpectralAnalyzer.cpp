@@ -3,8 +3,9 @@
 namespace vs
 {
 // Averaging consecutive frames steadies the noisy bin-to-bin fluctuation of broadband content, so only
-// peaks that persist across frames stand out against the envelope.
-static constexpr float kPowerSmoothing = 0.5f;
+// peaks that persist across frames stand out against the envelope. At the default hop each new frame
+// counts for half; at shorter hops each frame counts for less so the smoothing time stays the same.
+static constexpr float kPowerSmoothingAtDefaultHop = 0.5f;
 
 void SpectralAnalyzer::prepare (const FrameConfig& config)
 {
@@ -20,6 +21,13 @@ void SpectralAnalyzer::prepare (const FrameConfig& config)
     smoothedPower.assign ((size_t) cfg.numBins, 0.0f);
     ring.assign ((size_t) cfg.fftSize, 0.0f);
     writePos = 0;
+    smoothing = kPowerSmoothingAtDefaultHop;
+}
+
+void SpectralAnalyzer::setHopSize (int hop) noexcept
+{
+    const auto ratio = (float) hop / (float) (cfg.fftSize / 4);
+    smoothing = 1.0f - std::pow (1.0f - kPowerSmoothingAtDefaultHop, ratio);
 }
 
 void SpectralAnalyzer::reset()
@@ -47,7 +55,7 @@ void SpectralAnalyzer::analyse() noexcept
         const float re = fftData[(size_t) (2 * k)];
         const float im = fftData[(size_t) (2 * k + 1)];
         const float p = (re * re + im * im) * norm2;
-        smoothedPower[(size_t) k] += kPowerSmoothing * (p - smoothedPower[(size_t) k]);
+        smoothedPower[(size_t) k] += smoothing * (p - smoothedPower[(size_t) k]);
     }
 }
 } // namespace vs

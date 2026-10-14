@@ -84,8 +84,12 @@ void ResonanceSuppressor::setParams (const SuppressorParams& p) noexcept
     if (! prepared)
         return;
 
+    // Quality only changes how often the filter is refreshed (the latency stays the same)
+    applyHopSize (juce::jmax (32, (cfg.fftSize / 4) >> juce::jlimit (0, 2, p.quality)));
+
     ReductionParams rp;
     rp.hard = p.hard;
+    rp.selectivity01 = juce::jlimit (0.0f, 1.0f, p.selectivity * 0.01f);
     rp.depth01 = juce::jlimit (0.0f, 1.0f, p.depth * 0.01f);
     rp.detail01 = juce::jlimit (0.0f, 1.0f, p.detail * 0.01f);
     rp.attack01 = juce::jlimit (0.0f, 1.0f, p.attack * 0.01f);
@@ -97,8 +101,11 @@ void ResonanceSuppressor::setParams (const SuppressorParams& p) noexcept
     rp.attackHigh = juce::jlimit (-1.0f, 1.0f, p.attackTiltHigh * 0.01f);
     rp.releaseLow = juce::jlimit (-1.0f, 1.0f, p.releaseTiltLow * 0.01f);
     rp.releaseHigh = juce::jlimit (-1.0f, 1.0f, p.releaseTiltHigh * 0.01f);
-    for (auto& c : curves)
-        c.setParams (rp);
+    const auto balance = activeChannels == 2 ? juce::jlimit (-1.0f, 1.0f, p.balance / 50.0f) : 0.0f;
+    rp.channelScale = 1.0f - std::max (0.0f, balance);
+    curves[0].setParams (rp);
+    rp.channelScale = 1.0f - std::max (0.0f, -balance);
+    curves[1].setParams (rp);
 
     depthCurve.setBands (p.bands);
 
@@ -106,6 +113,21 @@ void ResonanceSuppressor::setParams (const SuppressorParams& p) noexcept
     trimSmoothed.setTargetValue (juce::Decibels::decibelsToGain (p.wetTrimDb));
     outGainSmoothed.setTargetValue (juce::Decibels::decibelsToGain (p.outGainDb));
     bypassSmoothed.setTargetValue (p.bypass ? 1.0f : 0.0f);
+}
+
+void ResonanceSuppressor::applyHopSize (int hop) noexcept
+{
+    if (hop == cfg.hopSize)
+        return;
+
+    cfg.hopSize = hop;
+    cfg.fadeLength = std::max (1, hop / 4);
+    for (int c = 0; c < maxChannels; ++c)
+    {
+        analyzers[(size_t) c].setHopSize (hop);
+        curves[(size_t) c].setHopSize (hop);
+        filters[(size_t) c].setHopSize (hop);
+    }
 }
 
 void ResonanceSuppressor::process (juce::AudioBuffer<float>& buffer, const juce::AudioBuffer<float>* key) noexcept
@@ -243,7 +265,7 @@ void ResonanceSuppressor::runAnalysisHop() noexcept
             power = linkedPower.data();
         }
 
-        curves[(size_t) c].process (power, depthCurve.getWeights());
+        curves[(size_t) c].process (power, depthCurve.getWeights (c));
         filters[(size_t) c].setCurve (curves[(size_t) c].getReductionDb());
     }
 

@@ -205,7 +205,7 @@ TEST_CASE ("Depth curve parameters", "[depthcurve][params]")
     PluginProcessor plugin;
 
     for (int n = 1; n <= ParamIDs::numBands; ++n)
-        for (int p = 0; p < 6; ++p)
+        for (int p = 0; p < ParamIDs::numBandParams; ++p)
             CHECK (plugin.apvts.getParameter (ParamIDs::bandParamID (n, (BandParam) p)) != nullptr);
 
     // default: low cut, neutral bell, high cut are active

@@ -52,7 +52,7 @@ private:
     vs::SuppressorParams readParams() const noexcept;
 
     // raw parameter pointers for the depth curve bands, so the audio thread never looks up by name
-    std::array<std::array<std::atomic<float>*, 6>, ParamIDs::numBands> bandValues {};
+    std::array<std::array<std::atomic<float>*, (size_t) ParamIDs::numBandParams>, ParamIDs::numBands> bandValues {};
 
     vs::ResonanceSuppressor suppressor;
 

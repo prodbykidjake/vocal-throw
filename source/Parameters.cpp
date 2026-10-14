@@ -3,7 +3,7 @@
 
 juce::String ParamIDs::bandParamID (int band, BandParam which)
 {
-    static constexpr const char* suffixes[] = { "active", "enabled", "shape", "freq", "gain", "q" };
+    static constexpr const char* suffixes[] = { "active", "enabled", "shape", "freq", "gain", "q", "balance" };
     return "band" + juce::String (band) + "_" + suffixes[(int) which];
 }
 
@@ -29,6 +29,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamIDs::mode, version }, "Mode", StringArray { "Soft", "Hard" }, 0));
     layout.add (percent (ParamIDs::depth, "Depth", 40.0f));
     layout.add (percent (ParamIDs::detail, "Detail", 50.0f));
+    layout.add (percent (ParamIDs::selectivity, "Selectivity", 46.0f));
     layout.add (percent (ParamIDs::attack, "Attack", 50.0f));
     layout.add (percent (ParamIDs::release, "Release", 50.0f));
     layout.add (decibels (ParamIDs::maxCut, "Max Cut", 1.0f, 40.0f, 12.0f));
@@ -37,6 +38,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (decibels (ParamIDs::outGain, "Out Gain", -18.0f, 18.0f, 0.0f));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamIDs::stereoMode, version }, "Stereo Mode", StringArray { "L/R", "M/S" }, 0));
     layout.add (percent (ParamIDs::link, "Link", 100.0f));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::stereoBalance, version }, "Balance",
+        NormalisableRange<float> (-50.0f, 50.0f, 1.0f), 0.0f));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamIDs::quality, version }, "Quality", StringArray { "Normal", "High", "Ultra" }, 0));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::qualityLock, version }, "Quality Lock", true));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::delta, version }, "Delta", false));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::bypass, version }, "Bypass", false));
 
@@ -94,8 +99,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id (BandParam::freq), version }, name ("Frequency"), freqRange, d.freq,
             AudioParameterFloatAttributes().withLabel ("Hz")));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id (BandParam::gain), version }, name ("Depth"),
-            NormalisableRange<float> (-24.0f, 24.0f, 0.1f), 0.0f, AudioParameterFloatAttributes().withLabel ("dB")));
+            NormalisableRange<float> (-18.0f, 18.0f, 0.1f), 0.0f, AudioParameterFloatAttributes().withLabel ("dB")));
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id (BandParam::q), version }, name ("Q"), qRange, d.q));
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id (BandParam::balance), version }, name ("Balance"),
+            NormalisableRange<float> (-50.0f, 50.0f, 1.0f), 0.0f));
     }
 
     return layout;

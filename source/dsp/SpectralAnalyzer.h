@@ -19,6 +19,9 @@ public:
         writePos = (writePos + 1) & mask;
     }
 
+    /** Keeps the time smoothing of the spectrum the same in milliseconds whatever the hop. */
+    void setHopSize (int hop) noexcept;
+
     /** Windows the last fftSize samples and updates the power spectrum. */
     void analyse() noexcept;
 
@@ -30,5 +33,6 @@ private:
     std::vector<float> ring, window, fftData, smoothedPower;
     int writePos = 0;
     int mask = 0;
+    float smoothing = 0.5f;
 };
 } // namespace vs

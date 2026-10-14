@@ -35,6 +35,9 @@ struct BandSettings
     float gainDb = 0.0f; // sensitivity change; boosting means more suppression there
     float q = 1.0f;      // bell/bandpass/reject: Q. shelves/tilt: steepness. cuts: filter order
 
+    // -1..+1. Positive favours R/Side (the band does less on L/Mid), negative the reverse, 0 = even.
+    float balance = 0.0f;
+
     bool sameAs (const BandSettings& o) const noexcept;
 };
 
@@ -55,14 +58,16 @@ public:
     /** Recomputes the per-bin weights, but only if the settings changed. */
     void setBands (const BandArray& newBands) noexcept;
 
-    /** numBins linear multipliers (1 = neutral) */
-    const float* getWeights() const noexcept { return weights.data(); }
+    /** numBins linear multipliers (1 = neutral) for a channel (0 = L/Mid, 1 = R/Side) */
+    const float* getWeights (int channel = 0) const noexcept { return weights[(size_t) (channel != 0 ? 1 : 0)].data(); }
 
     /** Linear multiplier of a single band at a frequency. */
     static float bandMagnitude (const BandSettings& band, float hz) noexcept;
 
-    /** Linear multiplier of the whole curve at a frequency. */
-    static float weightAt (const BandArray& bands, float hz) noexcept;
+    /** Linear multiplier of the whole curve at a frequency, for a channel (0 = L/Mid, 1 = R/Side).
+        A band's balance scales its effect on the channel it de-emphasises: gain shapes in dB (so 0 is
+        neutral), a bandpass by its level (so its zone is processed less, not widened). */
+    static float weightAt (const BandArray& bands, float hz, int channel = 0) noexcept;
 
 private:
     void recompute() noexcept;
@@ -70,6 +75,6 @@ private:
     FrameConfig cfg;
     BandArray bands {};
     bool haveBands = false;
-    std::vector<float> weights;
+    std::array<std::vector<float>, 2> weights;
 };
 } // namespace vs
