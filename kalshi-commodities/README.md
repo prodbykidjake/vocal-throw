@@ -22,7 +22,7 @@ records with the WTI, natural gas or gold coaches, and they keep running as they
 
 It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
-## EDGE: the buy signal (v1.2)
+## EDGE: the buy signal (v1.2, tightened in v1.3)
 
 Two months of Kalshi history (Aug 14 - Oct 13 2026, pulled with `kalshi-wti/tools/backfill.py`; second-by-second
 settlement prices for 1,600-4,100 windows per market) replayed through each card's own engine said:
@@ -32,19 +32,32 @@ settlement prices for 1,600-4,100 windows per market) replayed through each card
   Bought at the ask about a minute after the call (the price real fills got), every market came out between -0.9c and
   +0.6c a contract after fees: break-even. The calls stay on the cards as forecasts.
 - **What made money: buying only when the model is clearly more confident than Kalshi's price.** At each whole
-  minute from 3:00 to 13:00 into a window, if the model's chance for its side is at least 55% and at least
-  **6 points above that side's ask**, the card shows **EDGE · BUY UP/DOWN at N¢ or less** and notifies. Chosen on WTI's
-  first 19 days, it made +6.2c a contract on WTI's last 12 days, and, never tuned on them, gold +5.5c, silver +6.4c,
-  platinum +3.6c, palladium +3.5c, copper +3.3c, natural gas +2.2c (fills a full minute later, fees included). It
-  fires in about one window in six. History is not a promise: the EDGE record on the board keeps the honest count.
+  minute from 3:00 to 13:00 into a window, if the model's chance for its side is at least **75%** and at least
+  **8 points above that side's ask**, the card shows **EDGE · BUY UP/DOWN at N¢ or less** and notifies.
+  - The idea was found on WTI alone with a 6-point gap (chosen on WTI's first 19 days: +6.2c a contract on its last 12
+    days, and, never tuned on them, +2.2c to +6.4c on the six other markets).
+  - v1.3 tightened it after testing 8 combinations on all seven markets: 8 points and 75% won **84%** of the time
+    (79% before) and made **+6.5c a contract** (+4.8 to +8.2, 95% range by day; +4.5c before), profitable on every
+    market, with about half as many signals (a few per market per day). Fills are priced a full minute after the
+    signal, fees included.
+  - History is not a promise, and even at 84% about one signal in six loses (a loss costs ~78c a contract, a win pays
+    ~22c). The EDGE record on the board keeps the honest count.
 - **Hold to settlement.** Stop-losses, take-profits and "cash out when it turns" all lost money in history; so did
   resting a bid below the ask (the orders that fill are the ones going wrong), buying the cheap side, and clicking
   faster (the ask barely moves in the minute after a signal).
 
 The EDGE box under each card's meter shows what it is watching (model vs ask, the gap, the next minute check), a
 signal when one fires (one per window), and its result; the top strip shows the EDGE record and profit per contract
-across all markets. Signals are kept in `data/edges.db`. The margin and minimum are `[board] edge_gap` (0.06) and
-`edge_min_p` (0.55).
+across all markets. Signals are kept in `data/edges.db`. The margin and minimum are `[board] edge_gap` (0.08) and
+`edge_min_p` (0.75).
+
+### On your phone
+
+`python -m cm15m serve --phone` (or `phone = true` under `[server]`) prints a private link like
+`http://192.168.1.23:8790/?key=...`. Open it on your phone on the same Wi-Fi, then Share → Add to Home Screen; the
+phone remembers the key for a year. Every other device gets "Locked". The Mac has to stay awake and keep the board
+running. Away from home, use Tailscale and the Mac's `100.x.y.z` address. Delete `data/phone_key.txt` to lock every
+phone out and get a new link.
 
 ## The page
 

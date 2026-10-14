@@ -1,4 +1,4 @@
-"""EDGE: buy only at a minute check (3:00-13:00) when the model beats the ask by the margin; one per window; scored."""
+"""EDGE: buy only at a minute check (3:00-13:00) when the model is >= 75% and beats the ask by 8 points; one per window."""
 import datetime as dt
 
 from cm15m.edge import EdgeStore, EdgeTracker, taker_fee_per_contract
@@ -29,8 +29,8 @@ def test_fires_only_at_a_minute_check_when_the_model_beats_the_ask_by_six_points
     assert tr.step(OPEN + 301, state(0.78, 0.72, 0.74)) is None
     # still minute 5 a few seconds later: already checked this minute, no second look
     assert tr.step(OPEN + 304, state(0.90, 0.72, 0.74)) is None
-    # minute 6 check: 82% vs 75c = +7 pts -> BUY UP
-    sig = tr.step(OPEN + 361, state(0.82, 0.73, 0.75))
+    # minute 6 check: 85% vs 75c = +10 pts -> BUY UP
+    sig = tr.step(OPEN + 361, state(0.85, 0.73, 0.75))
     assert sig and sig["side"] == "UP" and sig["minute"] == 6 and abs(sig["ask"] - 0.75) < 1e-9
     # one per window
     assert tr.step(OPEN + 421, state(0.95, 0.73, 0.75)) is None and tr.watch["signal"]["minute"] == 6
@@ -54,7 +54,7 @@ def test_after_minute_thirteen_nothing_and_the_window_says_so():
 
 def test_settles_with_the_fee_and_keeps_a_record():
     tr = tracker()
-    tr.step(OPEN + 361, state(0.82, 0.73, 0.75, ticker="A"))
+    tr.step(OPEN + 361, state(0.85, 0.73, 0.75, ticker="A"))
     tr.settle_from(lambda t: {"result": "yes"}, OPEN + 1000)
     r = tr.store.record("gold")
     assert r["wins"] == 1 and r["losses"] == 0
@@ -64,3 +64,20 @@ def test_settles_with_the_fee_and_keeps_a_record():
     tr.settle_from(lambda t: {"result": "yes"} if t == "B" else {"result": "yes"}, OPEN + 2000)  # DOWN lost
     r = tr.store.record("gold")
     assert (r["wins"], r["losses"]) == (1, 1)
+
+
+def test_a_big_gap_is_not_enough_without_confidence():
+    tr = tracker()
+    assert tr.step(OPEN + 181, state(0.70, 0.58, 0.60)) is None  # +10 pts but only 70% sure: no signal
+    assert tr.step(OPEN + 241, state(0.82, 0.73, 0.75)) is None  # 82% but only +7 pts: no signal
+    assert tr.step(OPEN + 301, state(0.84, 0.74, 0.76))["side"] == "UP"  # 84% and +8 pts: signal
+
+
+def test_an_old_config_with_the_v12_rule_gets_the_tighter_one(tmp_path):
+    from cm15m import config
+    path = tmp_path / "config.toml"
+    path.write_text("[board]\nedge_gap = 0.06\nedge_min_p = 0.55\n")
+    cfg = config.load(str(path))
+    assert cfg.board.edge_gap == 0.08 and cfg.board.edge_min_p == 0.75
+    path.write_text("[board]\nedge_gap = 0.10\n")  # a deliberate choice is kept
+    assert config.load(str(path)).board.edge_gap == 0.10

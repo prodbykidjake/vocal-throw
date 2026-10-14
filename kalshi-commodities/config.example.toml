@@ -9,8 +9,8 @@ category = "Commodities"        # Kalshi category searched for 15-minute series
 [board]
 markets = []                    # empty = every 15-minute commodity; or e.g. ["gold", "silver", "wti"]
 muted = []                      # markets whose calls never notify (each card also has a 🔔 toggle)
-edge_gap = 0.06                 # EDGE: buy only when the model's chance beats that side's ask by this much ...
-edge_min_p = 0.55               # ... and is at least this (checked at each whole minute 3:00-13:00 of a window)
+edge_gap = 0.08                 # EDGE: buy only when the model's chance beats that side's ask by this much ...
+edge_min_p = 0.75               # ... and is at least this (checked at each whole minute 3:00-13:00 of a window)
 # releases to treat as reports for one market, ET (CPI / jobs / PCE dates are not built in):
 # extra_events = { gold = ["2026-11-13 08:30 CPI"], silver = ["2026-11-13 08:30 CPI"] }
 
@@ -28,6 +28,7 @@ min_warmup_minutes = 30
 host = "127.0.0.1"
 port = 8790                     # WTI 8787, natural gas 8788, gold 8789
 open_browser = true
+phone = false                   # true = also reachable from your phone with a private link (same as `serve --phone`)
 
 [notify]
 desktop = true

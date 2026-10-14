@@ -19,28 +19,42 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("serve", help="run the board at http://127.0.0.1:8790")
     s.add_argument("--no-browser", action="store_true")
+    s.add_argument("--phone", action="store_true", help="also open the board to your phone (private link)")
     d = sub.add_parser("demo", help="the board on simulated markets at real price scales (works offline)")
     d.add_argument("--window", type=int, default=90, help="simulated window length in seconds")
     d.add_argument("--warmup", type=int, default=3, help="simulated warm-up minutes required before calls")
     d.add_argument("--no-browser", action="store_true")
+    d.add_argument("--phone", action="store_true", help="also open the demo to your phone (private link)")
     d.add_argument("--data", default="data-demo", help="folder for the demo's databases")
     sub.add_parser("probe", help="list Kalshi's 15-minute commodity series and each live window's target")
     return p
 
 
-def run_server(cfg, board, open_browser: bool):
+def run_server(cfg, board, open_browser: bool, phone: bool = False):
     import uvicorn
 
     from .app import create_app
 
-    app = create_app(board)
+    phone_key = None
+    if phone:
+        from .phone import load_or_create_key
+        phone_key = load_or_create_key(cfg.storage.data_dir)
+    app = create_app(board, phone_key)
     stop = asyncio.Event()
+    bind = "0.0.0.0" if phone else cfg.server.host
 
     async def main():
         board_task = asyncio.create_task(board.run(stop))
-        server = uvicorn.Server(uvicorn.Config(app, host=cfg.server.host, port=cfg.server.port, log_level="warning"))
-        url = f"http://{cfg.server.host}:{cfg.server.port}"
+        server = uvicorn.Server(uvicorn.Config(app, host=bind, port=cfg.server.port, log_level="warning"))
+        url = f"http://127.0.0.1:{cfg.server.port}" if phone else f"http://{cfg.server.host}:{cfg.server.port}"
         print(f"commodities board v{__version__}: {url}   (Ctrl-C to stop)")
+        if phone:
+            from .phone import phone_links
+            links = phone_links(cfg.server.port, phone_key)
+            print("phone: open this link on your phone (same Wi-Fi), then Add to Home Screen:")
+            for link in links or [f"http://<your Mac's IP>:{cfg.server.port}/?key={phone_key}"]:
+                print(f"   {link}")
+            print("   keep the link private: it is the key. Delete data/phone_key.txt to lock phones out and get a new one.")
         if open_browser:
             threading.Timer(1.5, lambda: webbrowser.open(url)).start()
         try:
@@ -103,7 +117,7 @@ def main(argv=None) -> int:
         return asyncio.run(probe(cfg))
     if args.cmd == "serve":
         try:
-            run_server(cfg, Board(cfg), cfg.server.open_browser and not args.no_browser)
+            run_server(cfg, Board(cfg), cfg.server.open_browser and not args.no_browser, args.phone or cfg.server.phone)
         except KeyboardInterrupt:
             pass
         return 0
@@ -120,7 +134,7 @@ def main(argv=None) -> int:
         cfg.notify.desktop = cfg.notify.sound = False
         board = Board(cfg, sim={"window_s": args.window, "warmup_minutes": max(5, args.warmup + 5)})
         try:
-            run_server(cfg, board, cfg.server.open_browser and not args.no_browser)
+            run_server(cfg, board, cfg.server.open_browser and not args.no_browser, args.phone)
         except KeyboardInterrupt:
             pass
         return 0

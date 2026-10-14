@@ -108,7 +108,7 @@
       box.textContent = w.window_over ? "EDGE · none this window" : `EDGE · watching · ${w.side} ${pct(w.p)} vs ask ${cents(w.ask)} (${gp})`;
       box.className = "edge-box";
       note.textContent = w.window_over ? "no edge at any minute check this window: skipping is the right trade" :
-        `buys only at +${Math.round((w.need || 0.06) * 100)} pts at a minute check` + (w.next_check_in_s != null ? ` · next check in ${mmss(w.next_check_in_s)}` : "") +
+        `buys only at ${Math.round(((e.rules || {}).min_p || 0.75) * 100)}%+ and +${Math.round((w.need || 0.08) * 100)} pts over the ask, at a minute check` + (w.next_check_in_s != null ? ` · next check in ${mmss(w.next_check_in_s)}` : "") +
         (w.usable ? "" : " · waiting for fresh quotes");
     } else {
       box.textContent = "EDGE · waiting for a window"; box.className = "edge-box"; note.textContent = "";

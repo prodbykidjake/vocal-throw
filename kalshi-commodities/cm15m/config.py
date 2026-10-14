@@ -50,8 +50,8 @@ class BoardCfg:
     markets: list = field(default_factory=list)  # keys to show, e.g. ["gold", "wti"]; empty = every 15-minute commodity
     extra_events: dict = field(default_factory=dict)  # {"gold": ["2026-11-13 08:30 CPI"], ...}, ET
     muted: list = field(default_factory=list)  # markets whose calls do not notify (also switchable on each card)
-    edge_gap: float = 0.06  # EDGE: buy only when the model's chance for its side beats that side's ask by this much ...
-    edge_min_p: float = 0.55  # ... and is at least this (checked at each whole minute 3:00-13:00; see cm15m/edge.py)
+    edge_gap: float = 0.08  # EDGE: buy only when the model's chance for its side beats that side's ask by this much ...
+    edge_min_p: float = 0.75  # ... and is at least this (checked at each whole minute 3:00-13:00; see cm15m/edge.py)
 
 
 @dataclass
@@ -59,6 +59,7 @@ class ServerCfg:
     host: str = "127.0.0.1"
     port: int = 8790  # WTI 8787, natural gas 8788, gold 8789: the board runs next to all of them
     open_browser: bool = True
+    phone: bool = False  # true = `serve` also answers your phone (same Wi-Fi or Tailscale) via a private link
 
 
 @dataclass
@@ -108,6 +109,12 @@ def load(path: str | None = None) -> Config:
                 raw = tomllib.load(fh)
             used = cand
             break
+    board = raw.get("board")
+    if isinstance(board, dict) and board.get("edge_gap") == 0.06 and board.get("edge_min_p", 0.55) == 0.55:
+        # v1.2's EDGE rule copied from an old config.example.toml: v1.3 tightened it (8 points, 75%; see cm15m/edge.py)
+        board = {k: v for k, v in board.items() if k not in ("edge_gap", "edge_min_p")}
+        raw = {**raw, "board": board}
+        log.warning("config: [board] edge_gap = 0.06 / edge_min_p = 0.55 are v1.2's EDGE rule; using v1.3's 0.08 / 0.75")
     return Config(
         kalshi=_build(KalshiCfg, raw.get("kalshi"), "kalshi"),
         feed=_build(FeedCfg, raw.get("feed"), "feed"),

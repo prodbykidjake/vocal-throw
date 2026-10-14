@@ -3,16 +3,16 @@
 Why: replaying the settlement call on two months of Kalshi history (Aug-Oct 2026; WTI, gold, silver, copper, natural
 gas, palladium, platinum; second-by-second settlement prices) showed the calls are honest (they win about as often as
 they say) but break-even to slightly losing when bought at the ask: Kalshi's price already knows what the model knows
-by the time a call fires. What did make money was buying only when the model's chance for its side stood at least
-6 points above that side's ask at a minute mark. Chosen on WTI (first 19 of 31 days), it made +6.2c a contract on
-WTI's later 12 days and, never tuned on them, +2.2c to +6.4c on all six other markets (fills priced a full minute
-later, fees included). It fires in about one window in six.
+by the time a call fires. What made money was buying only when the model's chance for its side stood clearly above
+that side's ask at a minute mark. First found on WTI with a 6-point gap (+6.2c a contract on WTI's held-out days,
++2.2c to +6.4c on the six other markets, never tuned on them). v1.3 tightens it to an 8-point gap and a 75% minimum:
+over all seven markets that won 84% instead of 79% and made +6.5c a contract instead of +4.5c (fills priced a full
+minute later, fees included), profitable on every market, with about half as many signals.
 
-The rule, exactly as tested: at each whole minute from 3:00 to 13:00 into the window (checked in the first few
-seconds after the mark), take the model's favoured side; if its chance is at least `min_p` and at least `gap` above
-that side's ask (Kalshi's live book, fresh quotes, the live price from Kalshi's own series), signal BUY that side.
-At most one signal per window; it is scored at settlement against the ask at the signal, with the taker fee of a
-100-contract order.
+The rule: at each whole minute from 3:00 to 13:00 into the window (checked in the first few seconds after the mark),
+take the model's favoured side; if its chance is at least `min_p` and at least `gap` above that side's ask (Kalshi's
+live book, fresh quotes, the live price from Kalshi's own series), signal BUY that side. At most one signal per
+window; it is scored at settlement against the ask at the signal, with the taker fee of a 100-contract order.
 """
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ class EdgeStore:
 class EdgeTracker:
     """One market's EDGE signal, fed the market's live state once a second."""
 
-    def __init__(self, market: str, store: EdgeStore, gap: float = 0.06, min_p: float = 0.55, first_min: int = 3,
+    def __init__(self, market: str, store: EdgeStore, gap: float = 0.08, min_p: float = 0.75, first_min: int = 3,
                  last_min: int = 13, check_window_s: float = 10.0):
         self.market, self.store = market, store
         self.gap, self.min_p, self.first_min, self.last_min = gap, min_p, first_min, last_min
@@ -126,7 +126,7 @@ class EdgeTracker:
         if not usable:
             return None  # try again next second while still inside this minute's check window
         self._checked[ticker].add(minute)
-        if p_side < self.min_p or gap < self.gap:
+        if p_side < self.min_p - 1e-9 or gap < self.gap - 1e-9:  # an exact 8 points counts as 8 points
             return None
         self.store.add(self.market, ticker, now, minute, side, p_side, ask, gap)
         sig = self.store.get(self.market, ticker)

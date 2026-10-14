@@ -122,8 +122,12 @@ main { position: relative; z-index: 1; padding: 18px 28px 40px; max-width: 1500p
 .u-legend { display: none; }
 
 @media (max-width: 720px) {
-  .top { padding: 12px 16px; } main { padding: 14px 16px 30px; } .lines { padding: 12px 16px 0; }
+  .top { padding: 12px 16px; position: static; } main { padding: 14px 16px 30px; } .lines { padding: 12px 16px 0; }
   .cards { grid-template-columns: 1fr; } .stat { min-width: 0; flex: 1; }
+  .hero-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: 100%; }
+  .stat { padding: 7px 10px; } .stat-k { font-size: 9.5px; letter-spacing: .05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat-v { font-size: 16px; white-space: nowrap; }
+  .edge-stat { order: -1; } /* on a phone the EDGE numbers come first */
 }
 
 /* EDGE: the buy signal */
