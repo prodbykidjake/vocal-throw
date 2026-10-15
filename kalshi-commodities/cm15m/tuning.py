@@ -1,19 +1,21 @@
-"""Per-market settlement-call rules. v1.5 (the default): each market reads its own mix of the engine and Kalshi's price
-and calls the first second it is sure enough; v1.4 (rollback: [tuning] version = "1.4"): a fixed bar held for 10 s.
+"""Per-market settlement-call rules: v1.4's engines, and (v1.5) a strictness switch with three modes.
 
-v1.5, why: re-tested on the same two months, walk-forward (choices made only on earlier days, scored on 3 later blocks
-of days at the SAME share of windows called as v1.4):
-  * The 10-second hold: at the same number of calls, calling the first second a slightly higher bar is reached was
-    0.6-2.5 points more accurate than holding a lower bar for 10 s, in all seven markets. The hold was a crude way of
-    being careful; the bar is a better one. Calls come 20-50 s later (still 5+ minutes before the close).
-  * How much to trust the engine vs Kalshi's price differs by market (fitted log-odds weights, which also take the
-    over-confidence out of the engine's tails): gold leans on Kalshi most (0.31), WTI 0.18, silver 0.13, copper 0.12;
-    natural gas keeps v1.4's mix (Kalshi 0.65); palladium and platinum: the engine alone (Kalshi added nothing there).
-  * Walk-forward, v1.5 vs v1.4 at the same coverage: silver +1.5 points, natural gas +2.3, platinum +1.3, copper
-    +1.1, gold +1.0, WTI +0.5 (borderline), palladium +0.6 (not significant). Most of it comes from calling a little
-    later; ideas that did not survive the test (momentum, volatility-so-far, time-left terms, a gold-led silver) are
-    not used. History is not a promise: the card keeps a "since v1.5" record next to what v1.4 would have called on
-    the same windows (cm15m/shadow.py).
+v1.5, what testing found. Seven per-market recipes were tested on the same two months, walk-forward (choices made only
+on earlier days, scored on 3 later blocks of days at the same share of windows called as v1.4): a per-market mix of
+the engine and Kalshi's price, momentum, volatility-so-far, time-left terms, holds of 0-20 s. Once calls were held to
+the same timing and the same last-minute cut-off, none of them beat v1.4 (changes of -0.9 to +0.7 points); what looked
+like gains came from calling later, from one-second spikes, or from the very last eligible second. So v1.4's engines
+stay. What reliably buys accuracy is calling fewer windows: the same rule with a higher bar per market.
+
+  mode         windows called   wins (held-out blocks)   called with      typical ask   bar
+  Standard     ~85%             89-91%                   ~6:20 left       ~90c          v1.4's (85-88%)
+  Strict       ~75%             93.5-95%                 ~5:00 left       ~93c          per market, 89-94%
+  Very strict  ~65%             96.5-98%                 ~3:50 left       ~96c          per market, 94-97.5%
+
+Profit buying the call at the ask stays about even at every level (Kalshi's price rises with the certainty): the
+switch buys trust in the call, not an edge. EDGE (cm15m/edge.py) is still the buy signal. The board runs all three
+modes on the same windows in the background (cm15m/shadow.py) and shows their records side by side, so the choice can
+be made on live results.
 
 v1.4: fewer calls, surer calls.
 
@@ -51,20 +53,32 @@ from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
-CURRENT = "1.5"
+MODES = ("standard", "strict", "very_strict")
+MODE_LABELS = {"standard": "Standard", "strict": "Strict", "very_strict": "Very strict"}
+MODE_TAGS = {"standard": "v1.4", "strict": "strict", "very_strict": "very-strict"}  # tags the calls each mode makes
+# fitted on Aug-Oct 13 (scratchpad analysis wf/v15/fitmodes.py): the bar at which ~75% / ~65% of windows get a call
+MODE_BARS = {
+    "wti": {"strict": 0.935, "very_strict": 0.973},
+    "gold": {"strict": 0.939, "very_strict": 0.973},
+    "silver": {"strict": 0.930, "very_strict": 0.971},
+    "copper": {"strict": 0.936, "very_strict": 0.975},
+    "natgas": {"strict": 0.892, "very_strict": 0.939},
+    "palladium": {"strict": 0.909, "very_strict": 0.953},
+    "platinum": {"strict": 0.925, "very_strict": 0.962},
+}
+MODE_DEFAULT_BARS = {"strict": 0.93, "very_strict": 0.97}  # a market Kalshi adds later
 
 
 @dataclass(frozen=True)
 class Tuning:
-    call_prob: float = 0.85  # call when the chance for one side reaches this (for hold_s seconds) ...
+    call_prob: float = 0.85  # call when the chance for one side reaches this for hold_s seconds ...
     study_s: float = 300.0  # ... after studying the window this long
     late_call: bool = False  # no lean call at 2:00 left: a window that never gets sure enough gets no call
     blend_market: float = 0.0  # > 0 = the call reads a log-odds blend of the model and Kalshi's mid (Kalshi's weight)
-    blend_model: float | None = None  # the model's weight in that blend (None = 1 - Kalshi's weight)
-    hold_s: float = 10.0  # seconds the chance must stay above the bar (v1.5: 0 = the first second it gets there)
+    hold_s: float = 10.0  # seconds the chance must stay above the bar
 
 
-TUNING_V14: dict[str, Tuning] = {
+TUNING: dict[str, Tuning] = {
     "wti": Tuning(call_prob=0.88, study_s=300.0),
     "gold": Tuning(call_prob=0.88, study_s=240.0),
     "silver": Tuning(call_prob=0.88, study_s=300.0),
@@ -73,22 +87,7 @@ TUNING_V14: dict[str, Tuning] = {
     "palladium": Tuning(call_prob=0.85, study_s=300.0),
     "platinum": Tuning(call_prob=0.85, study_s=300.0),
 }
-DEFAULT_V14 = Tuning()
-
-# v1.5: fitted on Aug-Oct 13 (scratchpad analysis wf/v15/final.py): bar = v1.4's share of windows called
-TUNING_V15: dict[str, Tuning] = {
-    "wti": Tuning(call_prob=0.913, study_s=300.0, hold_s=0, blend_market=0.179, blend_model=0.815),
-    "gold": Tuning(call_prob=0.907, study_s=300.0, hold_s=0, blend_market=0.306, blend_model=0.698),
-    "silver": Tuning(call_prob=0.905, study_s=300.0, hold_s=0, blend_market=0.132, blend_model=0.820),
-    "copper": Tuning(call_prob=0.909, study_s=300.0, hold_s=0, blend_market=0.120, blend_model=0.856),
-    "natgas": Tuning(call_prob=0.895, study_s=240.0, hold_s=0, blend_market=0.65),
-    "palladium": Tuning(call_prob=0.894, study_s=300.0, hold_s=0),
-    "platinum": Tuning(call_prob=0.901, study_s=300.0, hold_s=0),
-}
-DEFAULT_V15 = Tuning(call_prob=0.90, study_s=300.0, hold_s=0)
-
-VERSIONS: dict[str, tuple[dict[str, Tuning], Tuning]] = {"1.4": (TUNING_V14, DEFAULT_V14), "1.5": (TUNING_V15, DEFAULT_V15)}
-TUNING, DEFAULT = VERSIONS[CURRENT]
+DEFAULT = Tuning()
 
 
 def _bool(value, where: str, default: bool) -> bool:
@@ -123,18 +122,17 @@ def enabled(overrides: dict | None) -> bool:
     return _bool((overrides or {}).get("enabled", True), "[tuning] enabled", True)
 
 
-def version(overrides: dict | None) -> str:
-    """The rules version: [tuning] version = "1.4" rolls back to v1.4; anything else unknown means the current one."""
-    v = (overrides or {}).get("version", CURRENT)
-    v = f"{v:.1f}" if isinstance(v, float) else str(v).strip().lstrip("vV")
-    if v not in VERSIONS:
-        log.warning("config: [tuning] version = %r is not one of %s; using %s", v, ", ".join(VERSIONS), CURRENT)
-        return CURRENT
-    return v
+def mode_of(value) -> str:
+    """'strict', 'Very strict', 'very-strict' ... -> a mode key; anything else -> standard."""
+    key = str(value or "standard").strip().lower().replace("-", "_").replace(" ", "_")
+    if key not in MODES:
+        log.warning("call mode %r is not one of %s; using standard", value, ", ".join(MODES))
+        return "standard"
+    return key
 
 
-def tag(overrides: dict | None) -> str:
-    return "v" + version(overrides)
+def tag(mode: str = "standard") -> str:
+    return MODE_TAGS[mode_of(mode)]
 
 
 def check(overrides: dict | None, keys) -> list[str]:
@@ -146,10 +144,13 @@ def check(overrides: dict | None, keys) -> list[str]:
     return unknown
 
 
-def for_market(key: str, overrides: dict | None = None) -> Tuning:
-    """The market's rules for the configured version, with any valid [tuning.<key>] values from config.toml on top."""
-    table, default = VERSIONS[version(overrides)]
-    base = table.get(key, default)
+def for_market(key: str, overrides: dict | None = None, mode: str = "standard") -> Tuning:
+    """The market's rules in a mode (v1.4's bar, or the Strict / Very strict bar for that market), with any valid
+    [tuning.<key>] values from config.toml on top."""
+    base = TUNING.get(key, DEFAULT)
+    mode = mode_of(mode)
+    if mode != "standard":
+        base = dataclasses.replace(base, call_prob=MODE_BARS.get(key, MODE_DEFAULT_BARS)[mode])
     extra = _sections(overrides).get(key.lower())
     if not extra:
         return base
@@ -165,8 +166,6 @@ def for_market(key: str, overrides: dict | None = None) -> Tuning:
             vals[k] = _number(v, where, 0.0, 840.0, base.study_s)
         elif k == "blend_market":
             vals[k] = _number(v, where, 0.0, 1.0, base.blend_market)
-        elif k == "blend_model":
-            vals[k] = _number(v, where, 0.0, 1.5, 1.0 - base.blend_market if base.blend_model is None else base.blend_model)
         elif k == "hold_s":
             vals[k] = _number(v, where, 0.0, 60.0, base.hold_s)
         elif k == "late_call":
@@ -174,14 +173,13 @@ def for_market(key: str, overrides: dict | None = None) -> Tuning:
     return dataclasses.replace(base, **vals)
 
 
-def apply(trading, tuning: Tuning, window_s: float | None = None, rules_tag: str = "v" + CURRENT):
+def apply(trading, tuning: Tuning, window_s: float | None = None, rules_tag: str = "v1.4"):
     """Write a market's rules into its own copy of the trading settings. `window_s` (the demo's short simulated
     windows) scales the study period with the window, as the demo does for every other clock (and keeps the demo's
     shorter hold)."""
     trading.call_prob = float(tuning.call_prob)
     trading.late_call = bool(tuning.late_call)
     trading.call_blend_market = float(tuning.blend_market)
-    trading.call_blend_model = None if tuning.blend_model is None else float(tuning.blend_model)
     trading.rules_tag = rules_tag
     if window_s is None:
         trading.study_s = float(tuning.study_s)

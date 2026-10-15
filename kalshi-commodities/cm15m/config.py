@@ -42,7 +42,6 @@ class TradingCfg:
     call_min_left_s: float = 60.0  # and never a call with less than this left
     late_call: bool = True  # False = no lean call at the deadline: a window that never gets sure enough gets no call
     call_blend_market: float = 0.0  # > 0 = the call reads a log-odds blend with Kalshi's mid (Kalshi's weight)
-    call_blend_model: float | None = None  # the model's weight in that blend (None = 1 - Kalshi's weight)
     rules_tag: str = ""  # set = the card also keeps a record of the calls made since these rules first ran
     settle_lag_s: float = 0.0  # Kalshi settles on the price AT the close (measured on WTI; the Stats check keeps watching)
     basis_min_windows: int = 6
@@ -56,6 +55,7 @@ class BoardCfg:
     muted: list = field(default_factory=list)  # markets whose calls do not notify (also switchable on each card)
     edge_gap: float = 0.08  # EDGE: buy only when the model's chance for its side beats that side's ask by this much ...
     edge_min_p: float = 0.75  # ... and is at least this (checked at each whole minute 3:00-13:00; see cm15m/edge.py)
+    call_mode: str = "standard"  # settlement-call strictness: standard | strict | very_strict (the page's switch wins)
 
 
 @dataclass

@@ -35,6 +35,7 @@
       <div class="warn" data-f="status"></div>
       <div class="rec"><div><div class="rec-v" data-f="record">0–0</div><div class="rec-k" data-f="bench">no settled calls yet</div></div>
         <div class="chips" data-f="recent"></div></div>
+      <div class="rules" data-f="modes"></div>
       <div class="rules" data-f="rules"></div>
     </article>`;
   }
@@ -96,15 +97,18 @@
     if (rr) {
       const nn = (rr.wins || 0) + (rr.losses || 0);
       bench += ` · since ${tag}: ${rr.wins || 0}–${rr.losses || 0}` + (nn ? ` (${Math.round(100 * rr.wins / nn)}%)` : "");
-      const sh = m.shadow;  // what the previous rules would have called on the same windows (cm15m/shadow.py)
-      if (sh) { const sn = (sh.wins || 0) + (sh.losses || 0); bench += ` · v${sh.version} on the same windows: ${sh.wins || 0}–${sh.losses || 0}` + (sn ? ` (${Math.round(100 * sh.wins / sn)}%)` : ""); }
     }
     f(card, "bench").textContent = bench;
+    // the three strictness modes on the same windows (cm15m/shadow.py)
+    const md = m.modes || {}, labels = (state && state.mode_labels) || {};
+    f(card, "modes").textContent = Object.keys(md).length ? "same windows: " + ["standard", "strict", "very_strict"].filter((k) => md[k]).map((k) => {
+      const x = md[k], nn = (x.wins || 0) + (x.losses || 0);
+      return `${labels[k] || k} ${x.wins || 0}–${x.losses || 0}` + (nn ? ` (${Math.round(100 * x.wins / nn)}%)` : "");
+    }).join(" · ") : "";
     const held = rules.hold_s ? ` held ${rules.hold_s}s` : " (the first second it gets there)";
-    const wMkt = rules.blend_market || 0, wMod = rules.blend_model == null ? 1 - wMkt : rules.blend_model;
     f(card, "rules").textContent = rules.prob == null ? "" : `${tag ? tag + " rules" : "rules"}: calls at ${Math.round(rules.prob * 100)}%+${held} · studies ${mmss(rules.study_s)}` +
       (rules.late_call === false ? " · no lean calls" : ` · lean call at ${mmss(rules.deadline_s)} left`) +
-      (wMkt ? ` · reads engine ×${wMod.toFixed(2)} + Kalshi ×${wMkt.toFixed(2)}` : " · reads the engine alone");
+      (rules.blend_market ? ` · reads engine + Kalshi (Kalshi ${Math.round(rules.blend_market * 100)}%)` : "");
     f(card, "recent").innerHTML = (r.recent || []).slice(0, 12).reverse().map((x) =>
       `<span class="c ${x.correct ? "w" : "l"}" title="${esc(x.ticker)} · ${esc(x.side)} · ${pct(x.p)}">${x.correct ? "✓" : "✗"}</span>`).join("");
   }
@@ -219,10 +223,11 @@
     $("total-rate").textContent = n ? `${Math.round(100 * r.wins / n)}%` : "--";
     $("total-exp").textContent = n ? `${r.market_expected} / ${r.n_market}` : "--";
     const rr = s.record_rules || {}, rn = (rr.wins || 0) + (rr.losses || 0);
-    $("rules-label").textContent = `since ${rr.tag || "v1.5"}`;
+    const labels = s.mode_labels || {}, curMode = s.mode || "standard", modesOn = s.modes_on !== false;
+    $("rules-label").textContent = modesOn ? `${labels[curMode] || "Standard"} mode` : `since ${rr.tag || "these rules"}`;
     $("rules-record").innerHTML = rr.since == null ? "--" : `${rr.wins || 0}–${rr.losses || 0}` + (rn ? ` <small>${Math.round(100 * rr.wins / rn)}%</small>` : "");
-    const st = s.record_shadow || {}, sn = (st.wins || 0) + (st.losses || 0);
-    $("shadow-note").textContent = st.on && sn ? `v${st.version} same windows ${st.wins}–${st.losses}` : "";
+    $("shadow-note").textContent = modesOn ? "calls made in this mode" : "";
+    renderModes(s);
     const po = s.pullout || {};
     $("po-record").textContent = po.n ? `${po.right}/${po.n}` : "--";
     renderBanner(markets);
@@ -236,6 +241,20 @@
     $("board-foot").textContent = `${markets.length} markets · settlement calls are forecasts (v1.4: fewer, surer calls, about 9 in 10 on two months of history, but later and at higher prices, so bought at the ask they still break even); EDGE is the buy signal; PULL OUT is the safety net · ` +
       (s.requests != null ? `${s.requests} Kalshi requests so far` : "simulated markets") + (s.throttled ? ` · slowed down by Kalshi ${s.throttled}×` : "");
     if (openKey) renderDetailLive();
+  }
+
+  // the strictness switch: Standard / Strict / Very strict, each with its record on the same windows
+  const MODE_HELP = { standard: "about 85% of windows called, ~90% right", strict: "about 75% called, ~94% right, calls ~1:20 later",
+    very_strict: "about 65% called, ~97% right, calls ~2:30 later" };
+  function renderModes(s) {
+    const box = $("modes"), cur = s.mode || "standard", labels = s.mode_labels || {}, tot = s.modes || {};
+    box.classList.toggle("hidden", s.modes_on === false);  // [tuning] enabled = false: v1.3's rules, no switch
+    if (s.modes_on === false) return;
+    box.innerHTML = ["standard", "strict", "very_strict"].map((k) => {
+      const t = tot[k], n = t ? (t.wins || 0) + (t.losses || 0) : 0;
+      const rec = t ? ` <span class="mode-rec">${t.wins || 0}–${t.losses || 0}${n ? ` · ${Math.round(100 * t.wins / n)}%` : ""}</span>` : "";
+      return `<button type="button" class="mode-btn${k === cur ? " on" : ""}" data-mode="${k}" title="${esc(MODE_HELP[k])}">${esc(labels[k] || k)}${rec}</button>`;
+    }).join("") + `<span class="mode-note">${esc(MODE_HELP[cur])} · records: all three modes on the same windows since v1.5</span>`;
   }
 
   // a PULL OUT anywhere on the board: a banner pinned to the top of the screen (the card may be scrolled away, on a phone)
@@ -330,6 +349,15 @@
     openDetail(key);
   });
   $("d-close").addEventListener("click", closeDetail);
+  $("modes").addEventListener("click", async (ev) => {
+    const b = ev.target.closest(".mode-btn"); if (!b || b.classList.contains("on")) return;
+    b.classList.add("busy");  // the next second's update shows the switch done
+    try {
+      const r = await fetch("/api/mode", { method: "POST", headers: { "Content-Type": "application/json", "X-CM15M": "1" },
+        body: JSON.stringify({ mode: b.dataset.mode }) });
+      if (!r.ok) b.classList.remove("busy");
+    } catch (e) { b.classList.remove("busy"); }
+  });
   $("po-banner").addEventListener("click", (ev) => {
     const b = ev.target.closest(".po-ban-item"); if (!b) return;
     const card = $(`mkt-${b.dataset.key}`); if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });

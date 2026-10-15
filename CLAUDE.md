@@ -180,4 +180,7 @@ automatically and one database per market, plus an EDGE buy signal (model at lea
 check, validated on two months of history) and a private phone link (`serve --phone`). v1.4 adds per-market call rules
 (`cm15m/tuning.py`: 85-88% bar, 4-5 minute study, no lean call; ~90% wins on held-out history) and a PULL OUT alarm
 (`cm15m/pullout.py`: engine + Kalshi average <= 3% for the called side with 1:00+ left; ~98% right on history).
+v1.5 keeps v1.4's engines (per-market recipes did not beat them in fair walk-forward tests) and adds a strictness
+switch (Standard / Strict / Very strict, per-market bars in `cm15m/tuning.py`), with all three modes run on the same
+windows in the background (`cm15m/shadow.py`) so their live records can be compared.
 See `kalshi-commodities/README.md`; tests: `cd kalshi-commodities && pytest`.

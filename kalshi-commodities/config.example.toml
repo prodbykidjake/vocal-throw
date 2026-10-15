@@ -11,6 +11,8 @@ markets = []                    # empty = every 15-minute commodity; or e.g. ["g
 muted = []                      # markets whose calls never notify (each card also has a 🔔 toggle)
 edge_gap = 0.08                 # EDGE: buy only when the model's chance beats that side's ask by this much ...
 edge_min_p = 0.75               # ... and is at least this (checked at each whole minute 3:00-13:00 of a window)
+call_mode = "standard"          # settlement-call strictness to start with: standard | strict | very_strict
+                                # (the switch on the page wins and is remembered in data/board.json)
 # releases to treat as reports for one market, ET (CPI is built in for metals; jobs / PCE dates are not):
 # extra_events = { gold = ["2026-11-06 08:30 Jobs report"], silver = ["2026-11-06 08:30 Jobs report"] }
 

@@ -22,6 +22,41 @@ records with the WTI, natural gas or gold coaches, and they keep running as they
 
 It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
+## v1.5: what testing found, and a strictness switch
+
+Each market's engine was re-tested on its own terms against two months of history. Settings were always chosen on
+earlier days and scored on later ones, at the same number of calls as v1.4. Tested for every market:
+- its own mix of the engine and Kalshi's price;
+- momentum;
+- how wild the window has been so far;
+- time-left adjustments;
+- holds of 0-20 seconds instead of 10.
+
+**Result: none of them beat v1.4 fairly.** Once calls had to come just as early and stop at the same last minute,
+every change was within -0.9 to +0.7 points. Apparent gains came from three things that don't help a trader:
+- calling later;
+- reacting to one-second price spikes;
+- calling at the very last allowed second.
+
+So v1.4's engines stay as they are, and nothing is dressed up as a "smarter" engine.
+
+What really buys accuracy is calling **fewer** windows. The switch at the top of the page sets how strict every card
+is. Each market gets its own bars, fitted to how that market moves:
+
+| mode | windows called | won on the later days | called with | Kalshi's ask then |
+| --- | --- | --- | --- | --- |
+| **Standard** (v1.4) | ~85% | 89-91% | ~6:20 left | ~90¢ |
+| **Strict** | ~75% | 93.5-95% | ~5:00 left | ~93¢ |
+| **Very strict** | ~65% | 96.5-98% | ~3:50 left | ~96¢ |
+
+- **Profit at the ask:** buying the called side stays about even in every mode, because Kalshi's price rises with the
+  certainty. The switch buys **trust in the call**, not a money edge; **EDGE is still the buy signal**.
+- **All three modes run on the same windows in the background.** Each card shows their records side by side ("same
+  windows: Standard 40–4 · Strict 33–1 · Very strict 27–0"), and so does the switch. After a few days the live
+  numbers show which mode suits you.
+- **Switching:** the switch applies to every card from the next call on. A call already made stays as it is. The
+  choice is remembered (`data/board.json`), and `[board] call_mode = "strict"` in `config.toml` sets the starting mode.
+
 ## v1.4: surer calls, and a PULL OUT alarm
 
 **Fewer, surer settlement calls.** Each market now has its own rules (`cm15m/tuning.py`), chosen on the first 60% of
@@ -117,8 +152,9 @@ phone out and get a new link.
   - the **PULL OUT box** (above);
   - the market's record (all time, and since v1.4), its last 10 calls and its rules;
   - the **EDGE box** (above).
-- **The top strip**: the combined record across all markets, the record since v1.4, how often PULL OUT was right, the
-  EDGE record, and each market's line, so it is clear which markets the caller reads best.
+- **The top strip**: the combined record across all markets, the record in the current mode, how often PULL OUT was
+  right, the EDGE record, and each market's line, so it is clear which markets the caller reads best.
+- **The strictness switch** (v1.5, above): Standard / Strict / Very strict, each with its record on the same windows.
 - **Click a card** for its detail view:
   - the price-vs-target chart;
   - what the model sees;
@@ -156,7 +192,7 @@ phone out and get a new link.
 ## Setup (macOS, next to the other coaches)
 
 ```bash
-unzip -o ~/Downloads/kalshi-commodities-v1.4.zip -d ~
+unzip -o ~/Downloads/kalshi-commodities-v1.5.zip -d ~
 cd ~/kalshi-commodities
 source ~/.venv/bin/activate
 python -m cm15m probe     # first time: lists the 15-minute series and each live target (paste it to Claude)

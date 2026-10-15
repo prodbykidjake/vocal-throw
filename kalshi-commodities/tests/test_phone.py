@@ -40,3 +40,18 @@ def test_a_device_on_the_wifi_cannot_fake_being_the_mac_and_other_sites_get_noth
     assert TestClient(app, base_url="http://127.0.0.1:8790", client=MAC).get("/api/state").status_code == 200
     assert TestClient(app, base_url="http://127.0.0.1:8790", client=PHONE).get("/api/state").status_code == 403
     assert TestClient(app, base_url="http://evil.example:8790", client=MAC).get("/api/state").status_code == 403
+
+
+def test_the_strictness_switch_needs_the_board_and_a_real_mode(tmp_path):
+    app = make_app(tmp_path)
+    mac = TestClient(app, base_url="http://127.0.0.1:8790", client=MAC)
+    hdr = {"X-CM15M": "1"}
+    assert mac.post("/api/mode", json={"mode": "strict"}).status_code == 403  # another page can't flip it
+    assert mac.post("/api/mode", json={"mode": "reckless"}, headers=hdr).status_code == 400
+    r = mac.post("/api/mode", json={"mode": "Very strict"}, headers=hdr)
+    assert r.status_code == 200 and r.json() == {"mode": "very_strict"} and app.state.board.mode == "very_strict"
+    cfg = Config()
+    cfg.storage.data_dir = str(tmp_path)
+    cfg.tuning = {"enabled": False}  # v1.3's rules: no switch
+    off = TestClient(create_app(Board(cfg)), base_url="http://127.0.0.1:8790", client=MAC)
+    assert off.post("/api/mode", json={"mode": "strict"}, headers=hdr).status_code == 400

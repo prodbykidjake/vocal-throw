@@ -12,9 +12,7 @@ record:
     (late joins and last-second calls would be near-free wins).
 
 With `call_blend_market` above 0 the call reads a blend of the model and Kalshi's mid (in log-odds, Kalshi's weight =
-`call_blend_market`, the model's `call_blend_model` or 1 minus Kalshi's) instead of the model alone; it falls back to
-the model when Kalshi's quotes are not fresh. Weights that add up to less than 1 also take some over-confidence out
-(board v1.5: fitted per market on two months of history).
+`call_blend_market`) instead of the model alone; it falls back to the model when Kalshi's quotes are not fresh.
 
 The record shows wins and losses next to the number of wins Kalshi's own odds expected at the moments of the calls,
 so it is clear whether the calls beat the market or just agree with it. With `rules_tag` set, a second record counts
@@ -34,9 +32,8 @@ from .model import Prediction
 METER_TRAIL_S = 30.0  # the meter's faint band = where the model's chance moved over this many seconds
 
 
-def blend_up(p_model: float, p_market: float | None, w_market: float, w_model: float | None = None) -> float:
-    """The Up chance the call reads: the model's, or a log-odds blend with Kalshi's mid (Kalshi's weight w_market, the
-    model's w_model, by default 1 - w_market)."""
+def blend_up(p_model: float, p_market: float | None, w_market: float) -> float:
+    """The Up chance the call reads: the model's, or a log-odds blend with Kalshi's mid (Kalshi's weight w_market)."""
     if not w_market or p_market is None:
         return p_model
 
@@ -44,7 +41,7 @@ def blend_up(p_model: float, p_market: float | None, w_market: float, w_model: f
         p = min(0.999, max(0.001, p))
         return math.log(p / (1.0 - p))
 
-    x = (1.0 - w_market if w_model is None else w_model) * logit(p_model) + w_market * logit(p_market)
+    x = (1.0 - w_market) * logit(p_model) + w_market * logit(p_market)
     return 1.0 / (1.0 + math.exp(-x))
 
 
@@ -57,14 +54,7 @@ class CallTracker:
         self.cfg = cfg
         self.store = store
         self.rules_since: float | None = None  # when the current rules (rules_tag) first ran on this market
-        tag = cfg.rules_tag
-        if tag:
-            key = f"rules_since:{tag}"
-            try:
-                self.rules_since = float(store.get_state(key))
-            except (TypeError, ValueError):
-                self.rules_since = time.time()
-                store.set_state(key, str(self.rules_since))
+        self.refresh_rules()
         self._ticker: str | None = None
         self.call: dict | None = None  # the current window's call, once made
         self._hold: tuple[str, float] | None = None  # (side, since): a confident side being confirmed
@@ -74,6 +64,18 @@ class CallTracker:
         self._quotes = Quotes()  # Kalshi's prices this second, recorded with a call
         self._trail: deque[tuple[float, float]] = deque()  # (ts, model's Up chance) over the last METER_TRAIL_S, for the meter
         self.meter: dict | None = None  # the confidence meter under the card: where the model stands right now
+
+    def refresh_rules(self):
+        """After the rules changed at runtime (board v1.5's strictness switch): re-read the tag and its first-run time."""
+        self.rules_since = None
+        tag = self.cfg.rules_tag
+        if tag:
+            key = f"rules_since:{tag}"
+            try:
+                self.rules_since = float(self.store.get_state(key))
+            except (TypeError, ValueError):
+                self.rules_since = time.time()
+                self.store.set_state(key, str(self.rules_since))
 
     # ------------------------------------------------------------------ per second
     def step(self, now: float, ticker: str | None, pred: Prediction | None, seconds_left: float | None,
@@ -139,7 +141,7 @@ class CallTracker:
 
     def p_for_call(self, pred: Prediction) -> float:
         """The Up chance the call goes by: the model's, or its blend with Kalshi's mid (see blend_up)."""
-        return blend_up(pred.p_final, pred.p_market, self.cfg.call_blend_market, self.cfg.call_blend_model)
+        return blend_up(pred.p_final, pred.p_market, self.cfg.call_blend_market)
 
     def _update_meter(self, now: float, pred: Prediction | None, seconds_left: float | None):
         """The Up chance the call goes by this second plus its range over the last half minute. It only shows what the
@@ -179,7 +181,6 @@ class CallTracker:
                "rules": {"prob": cfg.call_prob, "hold_s": cfg.call_hold_s, "deadline_s": cfg.call_deadline_s,
                          "late_call": cfg.late_call, "study_s": cfg.study_s,
                          "min_left_s": cfg.call_min_left_s, "blend_market": cfg.call_blend_market,
-                         "blend_model": cfg.call_blend_model,
                          "tag": cfg.rules_tag}}
         if self.rules_since is not None:  # only the calls these rules made (a call row carries the rules it was made under)
             out["record_rules"] = {**self.store.call_record(0, rules=cfg.rules_tag), "since": self.rules_since}

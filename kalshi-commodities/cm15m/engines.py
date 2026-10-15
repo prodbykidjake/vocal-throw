@@ -62,7 +62,8 @@ def _limited_live_class(pkg, limiter):
 class EngineDesk:
     """Wraps a coach Engine so the board can run and show it like its own desks."""
 
-    def __init__(self, spec: MarketSpec, board_cfg, limiter, notifier, is_muted, sim: dict | None = None):
+    def __init__(self, spec: MarketSpec, board_cfg, limiter, notifier, is_muted, sim: dict | None = None,
+                 mode: str = "standard"):
         pkg, self.engine_label = ENGINES[spec.key]
         self.spec = spec
         self.is_muted = is_muted
@@ -87,8 +88,8 @@ class EngineDesk:
         cfg.trading.extra_events = list(board_cfg.board.extra_events.get(spec.key, []))
         cfg.trading.event_entries = board_cfg.trading.event_entries
         if tuning.enabled(board_cfg.tuning):  # v1.4: this market's settlement-call rules (cm15m/tuning.py)
-            tuning.apply(cfg.trading, tuning.for_market(spec.key, board_cfg.tuning),
-                         None if sim is None else sim.get("window_s", 900), tuning.tag(board_cfg.tuning))
+            tuning.apply(cfg.trading, tuning.for_market(spec.key, board_cfg.tuning, mode),
+                         None if sim is None else sim.get("window_s", 900), tuning.tag(mode))
             cfg.trading.call_block_events = True  # and no calls in report windows, like the board's own desks
         self.cfg = cfg
         store = store_mod.Store(cfg.storage.db_path)

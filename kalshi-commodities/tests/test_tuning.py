@@ -1,5 +1,6 @@
-"""Per-market settlement-call rules: v1.5 (default: per-market mix of engine and Kalshi, the first second over the bar)
-and v1.4 (rollback: a fixed bar held 10 s, longer study, no lean call; gas reads a blend with Kalshi)."""
+"""Per-market settlement-call rules: v1.4's (higher bar, longer study, no lean call; gas reads a blend with Kalshi) and
+v1.5's strictness switch (Standard / Strict / Very strict, each market with its own bars), all three run on the same
+windows so their records can be compared live."""
 import asyncio
 
 from cm15m import config, tuning
@@ -14,38 +15,22 @@ def pred(p_up, p_market=None, conf="lean"):
     return Prediction(p_up, p_up, p_up, p_market, 0.0, 0.004, None, None, 600, 0.0, 0.1, conf, 0.0)
 
 
-V14 = {"version": "1.4"}
-
-
-def tuned(key, overrides=V14, **kw):
-    t = tuning.apply(TradingCfg(), tuning.for_market(key, overrides), rules_tag=tuning.tag(overrides))
+def tuned(key, **kw):
+    t = tuning.apply(TradingCfg(), tuning.for_market(key))
     for k, v in kw.items():
         setattr(t, k, v)
     return CallTracker(t, Store(":memory:"))
 
 
-def test_v14_rules_are_kept_for_rollback():
-    assert tuning.for_market("wti", V14).call_prob == 0.88 and tuning.for_market("gold", V14).study_s == 240
-    assert tuning.for_market("natgas", V14).blend_market == 0.65 and tuning.for_market("platinum", V14).call_prob == 0.85
-    assert tuning.for_market("newmetal", V14) == tuning.DEFAULT_V14 and not tuning.DEFAULT_V14.late_call
-    o = tuning.for_market("gold", {**V14, "gold": {"call_prob": 0.9, "bogus": 1}})
+def test_each_market_has_its_rules_and_config_can_override_them():
+    assert tuning.for_market("wti").call_prob == 0.88 and tuning.for_market("gold").study_s == 240
+    assert tuning.for_market("natgas").blend_market == 0.65 and tuning.for_market("platinum").call_prob == 0.85
+    assert tuning.for_market("newmetal") == tuning.DEFAULT and not tuning.DEFAULT.late_call
+    o = tuning.for_market("gold", {"gold": {"call_prob": 0.9, "bogus": 1}})
     assert o.call_prob == 0.9 and o.study_s == 240
-    t = tuning.apply(TradingCfg(), tuning.for_market("copper", V14), rules_tag="v1.4")
+    t = tuning.apply(TradingCfg(), tuning.for_market("copper"))
     assert (t.call_prob, t.study_s, t.late_call, t.call_hold_s, t.rules_tag) == (0.88, 300.0, False, 10.0, "v1.4")
-    assert tuning.apply(TradingCfg(), tuning.for_market("copper", V14), window_s=90).study_s == 30  # the demo's short windows
-    assert tuning.version({"version": 1.4}) == "1.4" and tuning.version({"version": "v1.4"}) == "1.4"
-
-
-def test_v15_is_the_default_and_each_market_has_its_own_mix():
-    assert tuning.version({}) == "1.5" and tuning.tag({}) == "v1.5" and tuning.version({"version": "9.9"}) == "1.5"
-    gold, wti, gas, plat = (tuning.for_market(k) for k in ("gold", "wti", "natgas", "platinum"))
-    assert gold.hold_s == 0 and gold.blend_market > wti.blend_market > 0  # gold leans on Kalshi most
-    assert gas.blend_market == 0.65 and plat.blend_market == 0.0  # gas keeps v1.4's mix; platinum: the engine alone
-    assert all(0.88 < t.call_prob < 0.93 for t in (gold, wti, gas, plat))
-    t = tuning.apply(TradingCfg(), gold)
-    assert (t.call_hold_s, t.rules_tag, t.call_blend_model) == (0.0, "v1.5", gold.blend_model)
-    o = tuning.for_market("gold", {"gold": {"hold_s": 5, "blend_model": 0.9}})
-    assert o.hold_s == 5 and o.blend_model == 0.9
+    assert tuning.apply(TradingCfg(), tuning.for_market("copper"), window_s=90).study_s == 30  # the demo's short windows
 
 
 def test_config_reads_tuning_sections(tmp_path):
@@ -53,8 +38,6 @@ def test_config_reads_tuning_sections(tmp_path):
     p.write_text("[tuning]\nenabled = false\n[tuning.gold]\ncall_prob = 0.9\n")
     cfg = config.load(str(p))
     assert not tuning.enabled(cfg.tuning) and tuning.for_market("gold", cfg.tuning).call_prob == 0.9
-    p.write_text('[tuning]\nversion = "1.4"\n')
-    assert tuning.version(config.load(str(p)).tuning) == "1.4"
     assert tuning.enabled(Config().tuning)
 
 
@@ -65,8 +48,7 @@ def test_every_desk_gets_its_own_rules_and_the_shared_settings_stay_untouched(tm
     board = Board(cfg)
     board.sim = None
     silver, platinum = board._desk_cfg("silver").trading, board._desk_cfg("platinum").trading
-    assert silver.call_prob == tuning.TUNING_V15["silver"].call_prob and silver.call_hold_s == 0 and silver is not platinum
-    assert platinum.call_prob == tuning.TUNING_V15["platinum"].call_prob and platinum.call_blend_market == 0.0
+    assert silver.call_prob == 0.88 and platinum.call_prob == 0.85 and silver is not platinum
     assert cfg.trading.call_prob == 0.72 and cfg.trading.late_call  # v1.3's rules stay the shared default
     cfg.tuning = {"enabled": False}
     assert board._desk_cfg("silver").trading.call_prob == 0.72
@@ -81,11 +63,9 @@ def test_engines_get_their_rules_on_the_board(tmp_path):
     asyncio.run(board.build())
     by = {d.spec.key: d for d in board.desks}
     wti, gas, gold = by["wti"].cfg.trading, by["natgas"].cfg.trading, by["gold"].cfg.trading
-    v15 = tuning.TUNING_V15
-    assert (wti.call_prob, wti.study_s, wti.late_call, wti.call_hold_s) == (v15["wti"].call_prob, 300.0, False, 0.0)
-    assert gas.call_blend_market == 0.65 and gold.call_blend_market == v15["gold"].blend_market and gold.rules_tag == "v1.5"
-    assert by["silver"].calls.cfg.call_prob == v15["silver"].call_prob
-    assert set(board.shadows) == {d.spec.key for d in board.desks}  # every market also runs v1.4 in the shadow
+    assert (wti.call_prob, wti.study_s, wti.late_call) == (0.88, 300.0, False)
+    assert gas.call_blend_market == 0.65 and gold.study_s == 240.0
+    assert by["silver"].cfg.trading.call_prob == 0.88 and by["silver"].calls.cfg.call_prob == 0.88
 
 
 def test_no_lean_call_at_the_deadline_but_a_sure_call_still_counts_until_the_last_minute():
@@ -120,11 +100,11 @@ def test_gas_calls_on_its_blend_with_kalshi():
     assert abs(ct.meter["p_up"] - round(b, 3)) < 1e-9 and ct.meter["model_up"] == 0.8
 
 
-def test_since_record_counts_only_calls_made_under_those_rules():
+def test_since_v14_record_counts_only_calls_made_under_the_new_rules():
     store = Store(":memory:")
     store.add_call("OLD", "UP", 0.75, 0.7, 10.0, 500, "late")
     store.settle_call("OLD", "DOWN", 20.0)
-    t = tuning.apply(TradingCfg(), tuning.for_market("gold", V14), rules_tag="v1.4")
+    t = tuning.apply(TradingCfg(), tuning.for_market("gold"))
     ct = CallTracker(t, store)
     made = None
     for i in range(12):  # a call made under v1.4 carries its rules
@@ -159,8 +139,7 @@ def test_overrides_are_read_forgivingly_and_bad_values_are_ignored(caplog):
     wti = tuning.for_market("wti", o)
     assert wti.call_prob == 0.9 and wti.late_call is True  # [tuning.WTI] counts; 90 means 90%
     gold = tuning.for_market("gold", o)
-    builtin = tuning.TUNING_V15["gold"]
-    assert gold.call_prob == builtin.call_prob and gold.blend_market == builtin.blend_market  # bad values: built-in kept
+    assert gold.call_prob == 0.88 and gold.blend_market == 0.0  # out of range / not a number: built-in kept
     assert tuning.check(o, ["wti", "gold", "natgas"]) == ["natural_gas"]
     assert "matches no market" in caplog.text
 
@@ -207,19 +186,42 @@ def test_engines_make_no_call_in_a_report_window(tmp_path):
     assert c["watch"]["status"].startswith("no call this window (Test report") and c["call"] is None and c["meter"]
 
 
-def test_v15_calls_the_first_second_over_the_bar_with_its_own_mix():
-    t = tuning.for_market("gold")
-    ct = tuned("gold", {})
-    assert ct.step(1000, "G", pred(0.90, 0.80), 880, 20, 300) is None  # seen from the start, studying
-    # engine 94%, Kalshi 90%: gold's mix (engine x0.70 + Kalshi x0.31 in log-odds) is about 92.6% >= the bar: called at once
-    made = ct.step(1300, "G", pred(0.94, 0.90), 590, 310, 300)
-    assert made and made["kind"] == "confident" and made["rules"] == "v1.5"
-    assert abs(made["p_side"] - blend_up(0.94, 0.90, t.blend_market, t.blend_model)) < 1e-9
-    # weights adding up to less than 1 take some confidence out
-    assert blend_up(0.95, 0.95, 0.10, 0.80) < 0.95
+def test_strict_modes_raise_each_markets_own_bar():
+    for key in ("wti", "gold", "silver", "copper", "natgas", "palladium", "platinum"):
+        std, st, vs = (tuning.for_market(key, mode=m) for m in tuning.MODES)
+        assert std.call_prob < st.call_prob < vs.call_prob < 0.99
+        assert st.study_s == std.study_s and st.hold_s == std.hold_s == 10 and st.blend_market == std.blend_market
+    assert tuning.for_market("natgas", mode="strict").call_prob < tuning.for_market("gold", mode="strict").call_prob
+    assert tuning.for_market("newmetal", mode="very_strict").call_prob == tuning.MODE_DEFAULT_BARS["very_strict"]
+    assert tuning.mode_of("Very strict") == "very_strict" and tuning.mode_of("bogus") == "standard"
+    assert (tuning.tag("standard"), tuning.tag("strict")) == ("v1.4", "strict")
+    # a value set in config.toml still wins over the mode's bar
+    assert tuning.for_market("gold", {"gold": {"call_prob": 0.9}}, mode="strict").call_prob == 0.9
 
 
-def test_the_v14_shadow_records_what_the_old_rules_would_have_called(tmp_path):
+def test_the_switch_changes_every_card_and_is_remembered(tmp_path):
+    cfg = Config()
+    cfg.storage.data_dir = str(tmp_path)
+    cfg.notify.desktop = cfg.notify.sound = False
+    cfg.trading.min_warmup_minutes = 1
+    board = Board(cfg, sim={"window_s": 900, "warmup_minutes": 10})
+    asyncio.run(board.build())
+    assert board.mode == "standard" and board.desk("silver").calls.cfg.call_prob == 0.88
+    board.set_mode("strict")
+    silver, wti = board.desk("silver"), board.desk("wti").engine
+    assert silver.calls.cfg.call_prob == tuning.MODE_BARS["silver"]["strict"] and silver.calls.cfg.rules_tag == "strict"
+    assert wti.calls.cfg.call_prob == tuning.MODE_BARS["wti"]["strict"] and wti.calls.rules_since is not None
+    assert Board(cfg).mode == "strict"  # remembered across restarts
+    try:
+        board.set_mode("reckless")
+        raise AssertionError("a bad mode must be refused")
+    except ValueError:
+        pass
+    # every market runs all three modes on the same windows
+    assert all(set(v) == set(tuning.MODES) for v in board.shadows.values()) and len(board.shadows) == len(board.desks)
+
+
+def test_each_mode_records_its_own_calls_on_the_same_windows(tmp_path):
     import datetime as dt
     import types
 
@@ -231,16 +233,13 @@ def test_the_v14_shadow_records_what_the_old_rules_would_have_called(tmp_path):
                                open_time=now - dt.timedelta(seconds=400), close_time=now + dt.timedelta(seconds=500),
                                seconds_left=lambda at: 500.0, seconds_elapsed=lambda at: 400.0)
     desk = types.SimpleNamespace(tracker=types.SimpleNamespace(current=mk, quotes_fresh=lambda a, b: True),
-                                 pred=pred(0.95, 0.89), _vol_info={"events": []})
-    sh = ShadowCalls("silver", TradingCfg(), str(tmp_path))
-    assert sh.cfg.call_hold_s == 10 and sh.cfg.rules_tag == "v1.4"
-    for i in range(9):
-        sh.step(desk, 1000 + i)
-    assert sh.calls.call is None  # v1.4 holds 10 s ...
-    for i in range(9, 12):
-        sh.step(desk, 1000 + i)
-    assert sh.calls.call and sh.calls.call["rules"] == "v1.4"  # ... then calls
-    sh.settle_from(lambda t: {"result": "yes"})
-    st = sh.state()
-    assert (st["wins"], st["losses"], st["version"]) == (1, 0, "1.4")
-    assert (tmp_path / "shadow" / "silver.db").exists()
+                                 pred=pred(0.92, 0.89), _vol_info={"events": []})
+    std = ShadowCalls("silver", "standard", TradingCfg(), str(tmp_path))
+    vs = ShadowCalls("silver", "very_strict", TradingCfg(), str(tmp_path))
+    for i in range(12):  # the engine at 92% for 12 s: enough for Standard (88%), not for Very strict (97.1%)
+        std.step(desk, 1000 + i)
+        vs.step(desk, 1000 + i)
+    assert std.calls.call and std.calls.call["rules"] == "v1.4" and vs.calls.call is None
+    std.settle_from(lambda t: {"result": "yes"})
+    assert (std.state()["wins"], std.state()["losses"], vs.state()["wins"]) == (1, 0, 0)
+    assert (tmp_path / "shadow" / "silver-standard.db").exists() and (tmp_path / "shadow" / "silver-very_strict.db").exists()

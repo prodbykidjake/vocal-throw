@@ -1,9 +1,9 @@
-"""The v1.4 shadow: what the previous rules would have called on the same windows, recorded quietly.
+"""All three strictness modes on the same windows, recorded quietly (board v1.5).
 
-v1.5's per-market rules were chosen on two months of history. The fair live test is head to head: every market also
-runs v1.4's settlement call (its per-market bar held for 10 s, its mix of engine and Kalshi) on the very same
-seconds, into its own small database (data/shadow/<market>.db), never shown as the call and never notified. The card shows
-both records, so after a few days it is plain whether v1.5 is really better live.
+The board shows one settlement call per card, in the mode chosen on the page (Standard, Strict or Very strict; see
+cm15m/tuning.py). To make that choice on live results rather than on history, every market also runs each mode's
+call on the very same seconds into its own small database (data/shadow/<market>-<mode>.db), never shown as the call
+and never notified. The cards show the three records side by side.
 """
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from .calls import CallTracker
 from .quotes import Quotes
 from .store import Store
 
-SHADOW_VERSION = "1.4"
 QUOTE_MAX_AGE_S = 10.0
 
 
@@ -36,19 +35,21 @@ def desk_inputs(d, now: float):
 
 
 class ShadowCalls:
-    def __init__(self, key: str, base_trading, data_dir: str, window_s: float | None = None):
-        self.key = key
+    """One market's call in one mode, run on the same seconds as the live card."""
+
+    def __init__(self, key: str, mode: str, base_trading, data_dir: str, overrides: dict | None = None,
+                 window_s: float | None = None):
+        self.key, self.mode = key, tuning.mode_of(mode)
         t = copy.copy(base_trading)
-        table, default = tuning.VERSIONS[SHADOW_VERSION]
-        tuning.apply(t, table.get(key, default), window_s, "v" + SHADOW_VERSION)
+        tuning.apply(t, tuning.for_market(key, overrides, self.mode), window_s, tuning.tag(self.mode))
         self.cfg = t
-        self.store = Store(os.path.join(data_dir, "shadow", f"{key}.db"))
+        self.store = Store(os.path.join(data_dir, "shadow", f"{key}-{self.mode}.db"))
         self.calls = CallTracker(t, self.store)
 
     def step(self, d, now: float | None = None):
         now = time.time() if now is None else now
         ticker, pred, tau, elapsed, quotes, blocked = desk_inputs(d, now)
-        if blocked and self.calls.call is None:  # v1.4 made no new call in a report window either
+        if blocked and self.calls.call is None:  # no new call in a report window, as on the card
             pred = None
         self.calls.step(now, ticker, pred, tau, elapsed, self.cfg.study_s, quotes)
 
@@ -59,6 +60,6 @@ class ShadowCalls:
                 self.calls.settle(row[0], w["result"] == "yes")
 
     def state(self) -> dict:
-        r = self.store.call_record(0, rules="v" + SHADOW_VERSION)
-        return {"version": SHADOW_VERSION, "wins": r["wins"], "losses": r["losses"], "since": self.calls.rules_since,
-                "call": self.calls.call}
+        r = self.store.call_record(0, rules=self.cfg.rules_tag)
+        return {"mode": self.mode, "wins": r["wins"], "losses": r["losses"], "since": self.calls.rules_since,
+                "bar": self.cfg.call_prob, "call": self.calls.call}

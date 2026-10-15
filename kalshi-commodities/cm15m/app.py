@@ -42,6 +42,10 @@ class MuteIn(BaseModel):
     muted: bool
 
 
+class ModeIn(BaseModel):
+    mode: str
+
+
 def create_app(board: Board, phone_key: str | None = None) -> FastAPI:
     app = FastAPI(title="Commodities board", version=__version__)
     app.state.board = board
@@ -99,6 +103,14 @@ def create_app(board: Board, phone_key: str | None = None) -> FastAPI:
         if d is None:
             raise HTTPException(404, "no such market")
         return JSONResponse(d.detail(minutes))
+
+    @app.post("/api/mode", dependencies=[Depends(from_dashboard)])
+    async def set_mode(body: ModeIn):
+        try:
+            board.set_mode(body.mode)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"mode": board.mode}
 
     @app.post("/api/market/{key}/mute", dependencies=[Depends(from_dashboard)])
     async def mute(key: str, body: MuteIn):
