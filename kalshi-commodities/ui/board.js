@@ -75,7 +75,7 @@
       box.textContent = `${call.side === "UP" ? "▲" : "▼"} ${call.side} AT SETTLEMENT${res}`;
       box.className = "callbox " + (call.side === "UP" ? "up" : "down") + (call.result == null ? "" : call.correct ? " win" : " loss");
     } else if (w.status === "studying" || w.status === "watching") {
-      box.textContent = (w.status === "studying" ? `STUDYING · ${mmss(w.study_left_s)}` : "WATCHING") + (w.confirming_s != null ? ` · confirming ${w.confirming_s}/${rules.hold_s}s` : "");
+      box.textContent = (w.status === "studying" ? `STUDYING · ${mmss(w.study_left_s)}` : "WATCHING") + (w.confirming_s != null && rules.hold_s ? ` · confirming ${w.confirming_s}/${rules.hold_s}s` : "");
       box.className = "callbox";
     } else if ((w.status || "").startsWith("no call")) {
       const why = /\((.*)\)/.exec(w.status);
@@ -96,11 +96,15 @@
     if (rr) {
       const nn = (rr.wins || 0) + (rr.losses || 0);
       bench += ` · since ${tag}: ${rr.wins || 0}–${rr.losses || 0}` + (nn ? ` (${Math.round(100 * rr.wins / nn)}%)` : "");
+      const sh = m.shadow;  // what the previous rules would have called on the same windows (cm15m/shadow.py)
+      if (sh) { const sn = (sh.wins || 0) + (sh.losses || 0); bench += ` · v${sh.version} on the same windows: ${sh.wins || 0}–${sh.losses || 0}` + (sn ? ` (${Math.round(100 * sh.wins / sn)}%)` : ""); }
     }
     f(card, "bench").textContent = bench;
-    f(card, "rules").textContent = rules.prob == null ? "" : `${tag ? tag + " rules" : "rules"}: calls at ${Math.round(rules.prob * 100)}%+ held ${rules.hold_s}s · studies ${mmss(rules.study_s)}` +
+    const held = rules.hold_s ? ` held ${rules.hold_s}s` : " (the first second it gets there)";
+    const wMkt = rules.blend_market || 0, wMod = rules.blend_model == null ? 1 - wMkt : rules.blend_model;
+    f(card, "rules").textContent = rules.prob == null ? "" : `${tag ? tag + " rules" : "rules"}: calls at ${Math.round(rules.prob * 100)}%+${held} · studies ${mmss(rules.study_s)}` +
       (rules.late_call === false ? " · no lean calls" : ` · lean call at ${mmss(rules.deadline_s)} left`) +
-      (rules.blend_market ? ` · reads engine + Kalshi (Kalshi ${Math.round(rules.blend_market * 100)}%)` : "");
+      (wMkt ? ` · reads engine ×${wMod.toFixed(2)} + Kalshi ×${wMkt.toFixed(2)}` : " · reads the engine alone");
     f(card, "recent").innerHTML = (r.recent || []).slice(0, 12).reverse().map((x) =>
       `<span class="c ${x.correct ? "w" : "l"}" title="${esc(x.ticker)} · ${esc(x.side)} · ${pct(x.p)}">${x.correct ? "✓" : "✗"}</span>`).join("");
   }
@@ -197,9 +201,9 @@
     if (call) t = `called ${call.side} at ${pct(call.p_side)} with ${mmss(call.seconds_left)} left · now ${side} ${Math.round(pSide * 100)}% · locked`;
     else if ((w.status || "").startsWith("no call")) t = `${w.status} · the meter only shows what the model sees`;
     else if (w.status === "studying") t = `studying · no call for ${mmss(w.study_left_s)} · last 30s ${range}`;
-    else if (w.confirming_s != null) t = `over the ${Math.round(line * 100)}% line · confirming ${w.confirming_s}/${rules.hold_s}s`;
+    else if (w.confirming_s != null && rules.hold_s) t = `over the ${Math.round(line * 100)}% line · confirming ${w.confirming_s}/${rules.hold_s}s`;
     else if (m.disagree) t = "model and Kalshi far apart: no confident call yet";
-    else t = `needs ${Math.round(line * 100)}% for ${rules.hold_s}s · last 30s ${range}` + (w.deadline_in_s != null ? ` · lean call in ${mmss(w.deadline_in_s)}` :
+    else t = `needs ${Math.round(line * 100)}%` + (rules.hold_s ? ` for ${rules.hold_s}s` : "") + ` · last 30s ${range}` + (w.deadline_in_s != null ? ` · lean call in ${mmss(w.deadline_in_s)}` :
       w.closes_in_s != null ? ` · ${mmss(w.closes_in_s)} left to get there, else no call` : "");
     if (m.model_up != null) t += ` · engine ${pct(m.model_up)} blended with Kalshi ${pct(m.market_up)}`;
     note.textContent = t;
@@ -215,7 +219,10 @@
     $("total-rate").textContent = n ? `${Math.round(100 * r.wins / n)}%` : "--";
     $("total-exp").textContent = n ? `${r.market_expected} / ${r.n_market}` : "--";
     const rr = s.record_rules || {}, rn = (rr.wins || 0) + (rr.losses || 0);
+    $("rules-label").textContent = `since ${rr.tag || "v1.5"}`;
     $("rules-record").innerHTML = rr.since == null ? "--" : `${rr.wins || 0}–${rr.losses || 0}` + (rn ? ` <small>${Math.round(100 * rr.wins / rn)}%</small>` : "");
+    const st = s.record_shadow || {}, sn = (st.wins || 0) + (st.losses || 0);
+    $("shadow-note").textContent = st.on && sn ? `v${st.version} same windows ${st.wins}–${st.losses}` : "";
     const po = s.pullout || {};
     $("po-record").textContent = po.n ? `${po.right}/${po.n}` : "--";
     renderBanner(markets);

@@ -175,3 +175,4 @@ main { position: relative; z-index: 1; padding: 18px 28px 40px; max-width: 1500p
   .edge-stat { order: -2; }
   .stat-v small, .clock-stat, .exp-stat { display: none; } /* each card shows its countdown and what Kalshi expected */
 }
+.stat-n { color: var(--faint); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

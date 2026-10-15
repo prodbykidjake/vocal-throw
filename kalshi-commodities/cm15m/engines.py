@@ -88,7 +88,7 @@ class EngineDesk:
         cfg.trading.event_entries = board_cfg.trading.event_entries
         if tuning.enabled(board_cfg.tuning):  # v1.4: this market's settlement-call rules (cm15m/tuning.py)
             tuning.apply(cfg.trading, tuning.for_market(spec.key, board_cfg.tuning),
-                         None if sim is None else sim.get("window_s", 900))
+                         None if sim is None else sim.get("window_s", 900), tuning.tag(board_cfg.tuning))
             cfg.trading.call_block_events = True  # and no calls in report windows, like the board's own desks
         self.cfg = cfg
         store = store_mod.Store(cfg.storage.db_path)

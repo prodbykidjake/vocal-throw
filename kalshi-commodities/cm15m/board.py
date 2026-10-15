@@ -24,6 +24,7 @@ from .kalshi import KalshiClient, RateLimiter
 from .markets import KNOWN, MarketSpec, discover
 from .notify import Notifier
 from .pullout import PulloutStore, PulloutTracker
+from .shadow import SHADOW_VERSION, ShadowCalls
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class Board:
         self._last_edge_settle = 0.0
         self.pullout_store = PulloutStore(os.path.join(cfg.storage.data_dir, "pullouts.db"))
         self.pullouts: dict[str, PulloutTracker] = {}
+        self.shadows: dict[str, ShadowCalls] = {}  # v1.4's call on the same windows, to compare v1.5 live (cm15m/shadow.py)
 
     # ------------------------------------------------------------------ mutes (per card, remembered)
     def _load_mutes(self) -> set[str]:
@@ -78,6 +80,9 @@ class Board:
             self.desks.append(self._make_desk(spec))
             self.edges[spec.key] = EdgeTracker(spec.key, self.edge_store, self.cfg.board.edge_gap, self.cfg.board.edge_min_p)
             self.pullouts[spec.key] = self._make_pullout(spec.key)
+            if tuning.enabled(self.cfg.tuning) and tuning.version(self.cfg.tuning) != SHADOW_VERSION:
+                self.shadows[spec.key] = ShadowCalls(spec.key, self.cfg.trading, self.cfg.storage.data_dir,
+                                                     None if self.sim is None else self.sim.get("window_s", 900))
         log.info("board: %d markets: %s", len(self.desks), ", ".join(d.spec.name for d in self.desks))
 
     def _make_desk(self, spec: MarketSpec):
@@ -111,7 +116,8 @@ class Board:
         """A desk's own copy of the settings, with its market's settlement-call rules (v1.4, cm15m/tuning.py)."""
         t = copy.copy(self.cfg.trading)
         if tuning.enabled(self.cfg.tuning):
-            tuning.apply(t, tuning.for_market(key, self.cfg.tuning), None if self.sim is None else self.sim.get("window_s", 900))
+            tuning.apply(t, tuning.for_market(key, self.cfg.tuning), None if self.sim is None else self.sim.get("window_s", 900),
+                         tuning.tag(self.cfg.tuning))
         return dataclasses.replace(self.cfg, trading=t)
 
     def is_muted(self, key: str) -> bool:
@@ -172,6 +178,10 @@ class Board:
                 self._pullout_step(d, now, settle)
             except Exception:
                 log.exception("desk %s pull-out step failed", d.spec.key)
+            try:
+                self._shadow_step(d, now, settle)
+            except Exception:
+                log.exception("desk %s shadow step failed", d.spec.key)
         self.state = self._build_state()
 
     def _edge_step(self, d, now: float, settle: bool):
@@ -209,6 +219,17 @@ class Board:
                                  f"{int(left // 60)}:{int(left % 60):02d} left · sell your {alarm['side']} now{bid}", "Basso")
         d.state["pullout"] = tr.state()
 
+    def _shadow_step(self, d, now: float, settle: bool):
+        sh = self.shadows.get(d.spec.key)
+        if sh is None:
+            return
+        sh.step(d, now)
+        if settle:
+            store = self._window_store(d)
+            if store is not None:
+                sh.settle_from(store.window)
+        d.state["shadow"] = sh.state()
+
     @staticmethod
     def _window_store(d):
         return getattr(d, "store", None) or getattr(getattr(d, "engine", None), "store", None)
@@ -216,7 +237,8 @@ class Board:
     def _build_state(self) -> dict:
         markets = [d.state for d in self.desks]
         total = {"wins": 0, "losses": 0, "market_expected": 0.0, "n_market": 0}
-        rules_total = {"wins": 0, "losses": 0, "since": None}  # calls made under the current rules (v1.4) only
+        rules_total = {"wins": 0, "losses": 0, "since": None, "tag": tuning.tag(self.cfg.tuning)}  # calls made under the current rules only
+        shadow_total = {"wins": 0, "losses": 0, "version": SHADOW_VERSION, "on": bool(self.shadows)}
         lines = []
         for d in self.desks:
             c = d.state.get("call") or {}
@@ -231,11 +253,14 @@ class Board:
                 since = rr.get("since")
                 if since is not None and (rules_total["since"] is None or since < rules_total["since"]):
                     rules_total["since"] = since
+            sh = d.state.get("shadow") or {}
+            shadow_total["wins"] += sh.get("wins", 0) or 0
+            shadow_total["losses"] += sh.get("losses", 0) or 0
             lines.append({"key": d.spec.key, "name": d.spec.name, "wins": r.get("wins", 0), "losses": r.get("losses", 0)})
         total["market_expected"] = round(total["market_expected"], 1)
         return {"now": time.time(), "status": "live", "uptime_s": round(time.time() - self.started_ts),
                 "markets": markets, "record": total, "lines": lines, "edge": self.edge_store.record(recent=0),
-                "pullout": self.pullout_store.record(recent=0), "record_rules": rules_total,
+                "pullout": self.pullout_store.record(recent=0), "record_rules": rules_total, "record_shadow": shadow_total,
                 "requests": None if self.sim is not None else (getattr(self.client, "requests", 0) or 0)
                 + sum(d.requests for d in self.desks if isinstance(d, EngineDesk)),
                 "throttled": self.limiter.throttled}

@@ -42,6 +42,7 @@ class TradingCfg:
     call_min_left_s: float = 60.0  # and never a call with less than this left
     late_call: bool = True  # False = no lean call at the deadline: a window that never gets sure enough gets no call
     call_blend_market: float = 0.0  # > 0 = the call reads a log-odds blend with Kalshi's mid (Kalshi's weight)
+    call_blend_model: float | None = None  # the model's weight in that blend (None = 1 - Kalshi's weight)
     rules_tag: str = ""  # set = the card also keeps a record of the calls made since these rules first ran
     settle_lag_s: float = 0.0  # Kalshi settles on the price AT the close (measured on WTI; the Stats check keeps watching)
     basis_min_windows: int = 6
