@@ -22,6 +22,53 @@ records with the WTI, natural gas or gold coaches, and they keep running as they
 
 It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
+## v1.4: surer calls, and a PULL OUT alarm
+
+**Fewer, surer settlement calls.** Each market now has its own rules (`cm15m/tuning.py`), chosen on the first 60% of
+two months of Kalshi history and checked on the last 40% by replaying the board's own code:
+
+| market | call when one side holds ... | study | win rate on the held-out days (v1.3) | windows called |
+| --- | --- | --- | --- | --- |
+| WTI | 88% for 10 s | 5:00 | **90.5%** (76.4%) | 83% |
+| Gold | 88% | 4:00 | **91.4%** (78.0%) | 84% |
+| Silver | 88% | 5:00 | **89.3%** (77.6%) | 87% |
+| Copper | 88% | 5:00 | **90.7%** (77.0%) | 84% |
+| Natural Gas | 85% of a blend of the engine and Kalshi's price | 4:00 | **90.9%** (77.9%) | 82% |
+| Palladium | 85% | 5:00 | **89.8%** (78.0%) | 87% |
+| Platinum | 85% | 5:00 | **88.8%** (80.8%) | 90% |
+
+- **No more "lean" calls at 2:00 left:** they won only 63-73%. A window that never gets sure enough says
+  **NO CALL THIS WINDOW**.
+- **No calls in report windows** on WTI, gas and gold too (the other four already skipped them). Windows that opened
+  on a release won only 64%. CPI days are now on the metals calendar: Oct 14's CPI moved every metal several standard
+  deviations in two minutes.
+- **The catch:** calls come later (about 6½ minutes left instead of 10) when Kalshi's price is higher (about 90¢
+  instead of 78¢). Bought at the ask they still about break even. **EDGE stays the buy signal.**
+- Each card shows its rules and a **since v1.4** record next to the all-time one, so you can see whether it is
+  working.
+- `[tuning] enabled = false` in `config.toml` brings back v1.3's rules. `[tuning.gold] call_prob = 0.90` changes one
+  market.
+
+**PULL OUT.** Under each call there is a PULL OUT box. It flashes red (**⚠ PULL OUT · SELL YOUR UP NOW**), a red
+banner appears at the top of the page, and the Mac notifies (even for a muted card) when the locked call has flipped
+and is now almost certainly wrong:
+- the engine's chance for the called side and Kalshi's price for it **average 3% or less**, with at least 1:00 left;
+- if Kalshi has no usable price: the engine alone at 1% or less for 10 seconds.
+
+On two months of history it was right (the call really lost) **98 times in 100**:
+- On v1.3's calls: 97.8% on the held-out days and 97-100% in every market, flashing on about 7 calls in 100.
+- On v1.4's surer calls: right 162 times out of 166 (97.6%; 67 of 68 on the held-out days). It now flashes **rarely,
+  on about 1 call in 100**, usually in the last two minutes. The new calls lose less often, and when they do it is
+  more often a last-minute turn, which no alarm can catch in time.
+
+It deliberately stays quiet when a call merely slides: a strong call that drops to 35% with 5 minutes left still wins
+about 1 time in 4. Nothing under 1:00 left: by then the losing side often has no bid to sell into.
+
+It is a safety net, not a money maker. Selling at the alarm gets the few cents the losing side still bids (about 2-3¢
+a contract on history; maybe more if you sell within seconds) instead of riding it to zero, and about 2 alarms in 100
+will be on a call that comes back. The box keeps its own record ("PULL OUT right N of M"). Alarms are kept in
+`data/pullouts.db`.
+
 ## EDGE: the buy signal (v1.2, tightened in v1.3)
 
 Two months of Kalshi history (Aug 14 - Oct 13 2026, pulled with `kalshi-wti/tools/backfill.py`; second-by-second
@@ -64,13 +111,14 @@ phone out and get a new link.
 - **The cards**, in Kalshi's order. Each shows:
   - the target and the live price, and the move between them (in ¢ under $200, in $ above);
   - the countdown and Kalshi's Up/Down odds;
-  - the **call box**: STUDYING, then WATCHING, then e.g. **UP AT SETTLEMENT**, locked;
-  - the **meter**: the model's chance on a Down ◀ 50% ▶ Up bar, with dashed lines at the 72% call line, a faint band
-    for the last 30 seconds, and Kalshi's odds as a gold tick;
-  - the market's record and its last 10 calls;
+  - the **call box**: STUDYING, then WATCHING, then e.g. **UP AT SETTLEMENT**, locked (or **NO CALL THIS WINDOW**);
+  - the **meter**: the model's chance on a Down ◀ 50% ▶ Up bar, with dashed lines at the market's call line, a faint
+    band for the last 30 seconds, and Kalshi's odds as a gold tick;
+  - the **PULL OUT box** (above);
+  - the market's record (all time, and since v1.4), its last 10 calls and its rules;
   - the **EDGE box** (above).
-- **The top strip**: the combined record across all markets and each market's line, so it is clear which markets
-  the caller reads best.
+- **The top strip**: the combined record across all markets, the record since v1.4, how often PULL OUT was right, the
+  EDGE record, and each market's line, so it is clear which markets the caller reads best.
 - **Click a card** for its detail view:
   - the price-vs-target chart;
   - what the model sees;
@@ -81,9 +129,9 @@ phone out and get a new link.
 
 ## How each market is handled
 
-- **Same rules as the WTI coach:**
-  - 3-minute study;
-  - a call when one side holds 72% for 10 s, otherwise its lean at 2:00 left;
+- **The WTI coach's rules, tuned per market in v1.4** (table above):
+  - a 4- or 5-minute study;
+  - a call when one side holds 85-88% for 10 s, and no call at all if it never gets there;
   - no call for a window joined late or in its last minute;
   - no confident call without Kalshi's odds;
   - settlement at the close (checked every window);
@@ -96,17 +144,19 @@ phone out and get a new link.
 - **Report calendar by kind:**
   - Oil: EIA Wednesday 10:30, API Tuesday 16:30, Baker Hughes Friday 13:00.
   - Gas: EIA storage Thursday 10:30, Baker Hughes.
-  - Metals: jobless claims Thursday 8:30 and FOMC decisions at 14:00.
+  - Metals: jobless claims Thursday 8:30, FOMC decisions at 14:00 and CPI at 8:30. The CPI dates are Nov 10 and
+    Dec 10 2026 (on BLS's schedule) and Jan 13 2027 (projected).
 
-  Windows holding a report get no new calls. CPI, jobs and PCE dates are not built in, because they could not be
-  checked against the official schedules. Add them per market in `config.toml` (see `config.example.toml`).
+  Windows holding a report get no new calls, on every market. The jobs report and PCE dates are not built in, because
+  they could not be checked against the official schedules. Add them per market in `config.toml` (see
+  `config.example.toml`).
 - **Kalshi's rate limit:** one shared limiter, at most 14 requests a second. The three coach engines refresh every
   second, as in their own apps, and the other four markets every 2 seconds, staggered. The page footer shows if Kalshi ever slows the board down.
 
 ## Setup (macOS, next to the other coaches)
 
 ```bash
-unzip -o ~/Downloads/kalshi-commodities-v1.zip -d ~
+unzip -o ~/Downloads/kalshi-commodities-v1.4.zip -d ~
 cd ~/kalshi-commodities
 source ~/.venv/bin/activate
 python -m cm15m probe     # first time: lists the 15-minute series and each live target (paste it to Claude)

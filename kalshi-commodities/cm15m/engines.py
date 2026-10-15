@@ -13,6 +13,7 @@ import logging
 import os
 import time
 
+from . import tuning
 from .markets import MarketSpec, Scale
 
 log = logging.getLogger(__name__)
@@ -82,6 +83,9 @@ class EngineDesk:
             t.call_min_left_s = 5
             t.call_hold_s = 3
             t.late_entry_s = max(5, window // 15)
+        if tuning.enabled(board_cfg.tuning):  # v1.4: this market's settlement-call rules (cm15m/tuning.py)
+            tuning.apply(cfg.trading, tuning.for_market(spec.key, board_cfg.tuning),
+                         None if sim is None else sim.get("window_s", 900))
         self.cfg = cfg
         store = store_mod.Store(cfg.storage.db_path)
         wrapped = CallsOnlyNotifier(notifier, spec.key, is_muted)

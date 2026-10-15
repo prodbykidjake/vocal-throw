@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Commodities · 15 min</title>
+<link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap">
 <link rel="stylesheet" href="/ui/vendor/uPlot.min.css?v={{VERSION}}">
@@ -11,6 +12,7 @@
 </head>
 <body>
 <div class="glow g1"></div><div class="glow g2"></div>
+<div id="po-banner" class="po-banner hidden" role="alert"></div>
 
 <header class="top">
   <div class="brand">
@@ -23,10 +25,12 @@
   <div class="hero-stats">
     <div class="stat"><div class="stat-k">call record</div><div class="stat-v mono" id="total-record">0–0</div></div>
     <div class="stat"><div class="stat-k">win rate</div><div class="stat-v mono" id="total-rate">--</div></div>
-    <div class="stat"><div class="stat-k">Kalshi expected</div><div class="stat-v mono" id="total-exp">--</div></div>
+    <div class="stat exp-stat"><div class="stat-k">Kalshi expected</div><div class="stat-v mono" id="total-exp">--</div></div>
+    <div class="stat rules-stat"><div class="stat-k">since v1.4</div><div class="stat-v mono" id="rules-record">--</div></div>
+    <div class="stat po-stat"><div class="stat-k">PULL OUT right</div><div class="stat-v mono" id="po-record">--</div></div>
     <div class="stat edge-stat"><div class="stat-k">EDGE record</div><div class="stat-v mono" id="edge-record">0–0</div></div>
     <div class="stat edge-stat"><div class="stat-k">EDGE per contract</div><div class="stat-v mono" id="edge-pnl">--</div></div>
-    <div class="stat"><div class="stat-k">window</div><div class="stat-v mono" id="clock">--:--</div></div>
+    <div class="stat clock-stat"><div class="stat-k">window</div><div class="stat-v mono" id="clock">--:--</div></div>
   </div>
 </header>
 

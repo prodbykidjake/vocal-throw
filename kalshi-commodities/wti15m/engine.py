@@ -504,7 +504,14 @@ class Engine:
                     pos.high_bid = bid
                     self.store.update_position_high(pos.id, bid)
             self._study_step(m, pred, tick.price, now, elapsed, tau)
-            made = self.calls.step(now, m.ticker, pred, tau, elapsed, self._study_len(), quotes)
+            # on the board (v1.4): no new settlement call in a window that holds a scheduled report, like the board's
+            # own desks (on two months of history the windows opening at a release won only 64%)
+            events = self._vol_info.get("events") or []
+            blocked = bool(events) and self.cfg.trading.event_entries == "block" and self.calls.call is None
+            made = self.calls.step(now, m.ticker, None if blocked else pred, tau, elapsed, self._study_len(), quotes)
+            if blocked:
+                self.calls.watch = {"status": f"no call this window ({events[0]['name']} at {events[0]['at']})"}
+                self.calls._update_meter(now, pred, tau)  # still show what the model sees
             if made:
                 when = f"{int(made['seconds_left'] // 60)}:{int(made['seconds_left'] % 60):02d} left"
                 text = (f"settlement call: {made['side']} on {m.ticker} · model {round(made['p_side'] * 100)}% "

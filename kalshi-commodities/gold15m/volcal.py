@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from . import clock
 
 # Gold moves on U.S. macro data. Weekly: initial jobless claims, Thursday 8:30 AM ET (Wednesday in a holiday week:
-# add those to [trading] extra_events). Monthly releases (CPI, the jobs report, PCE) are not built in because their
-# dates could not be checked against the official schedules; add them as extra_events, e.g. "2026-11-06 08:30 Jobs report".
+# add those to [trading] extra_events). Of the monthly releases only CPI is built in (below, the board's copy); the jobs
+# report and PCE are not, as their dates could not be checked; add them as extra_events, e.g. "2026-11-06 08:30 Jobs report".
 WEEKLY_EVENTS = (
     (3, 8, 30, "Jobless claims"),  # Thursday 8:30 AM ET (Department of Labor)
 )
@@ -33,6 +33,11 @@ SCHEDULED_EVENTS = (
     ("2027-03-17 14:00", "FOMC decision"),
     ("2027-04-28 14:00", "FOMC decision"),
     ("2027-06-09 14:00", "FOMC decision"),
+    # on the commodities board (v1.4): U.S. CPI, 8:30 AM ET (Dec 10 on BLS's 2026 schedule, Nov 10 as calendars list
+    # it, Jan 13 2027 projected); the September report on Oct 14 moved gold several standard deviations in two minutes
+    ("2026-11-10 08:30", "CPI"),
+    ("2026-12-10 08:30", "CPI"),
+    ("2027-01-13 08:30", "CPI"),
 )
 LOG_CLAMP = 1.5  # one window can move the estimate by at most e^±1.5 (a 4.5x surprise is treated as 4.5x)
 MULT_RANGE = (0.5, 3.0)

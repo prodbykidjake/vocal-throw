@@ -194,8 +194,9 @@ class Store:
                                  "WHERE c.result IS NULL AND w.result IN ('yes','no')").fetchall()
         return [dict(r) for r in rows]
 
-    def call_record(self, recent: int = 20) -> dict:
-        rows = [dict(r) for r in self.conn.execute("SELECT * FROM calls WHERE result IS NOT NULL ORDER BY ts DESC").fetchall()]
+    def call_record(self, recent: int = 20, since_ts: float = 0.0) -> dict:
+        rows = [dict(r) for r in self.conn.execute("SELECT * FROM calls WHERE result IS NOT NULL AND COALESCE(ts, 0) >= ? "
+                                                   "ORDER BY ts DESC", (since_ts,)).fetchall()]
         out: dict = {"wins": 0, "losses": 0, "market_expected": 0.0, "model_expected": 0.0, "n_market": 0, "by_kind": {}}
         for r in rows:
             win = bool(r["correct"])

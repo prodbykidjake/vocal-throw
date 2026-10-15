@@ -22,7 +22,10 @@ METAL_WEEKLY = ((3, 8, 30, "Jobless claims"),)
 # Monthly CPI / jobs / PCE dates could not be checked against the official schedules: add them as extra_events.
 FOMC = ("2026-10-28 14:00 FOMC decision", "2026-12-09 14:00 FOMC decision", "2027-01-27 14:00 FOMC decision",
         "2027-03-17 14:00 FOMC decision", "2027-04-28 14:00 FOMC decision", "2027-06-09 14:00 FOMC decision")
-CALENDARS = {"oil": (OIL_WEEKLY, ()), "gas": (GAS_WEEKLY, ()), "metal": (METAL_WEEKLY, FOMC), "other": ((), FOMC)}
+# U.S. CPI, 8:30 AM ET (v1.4: the September report on Oct 14 moved every metal several standard deviations inside two
+# minutes; Dec 10 is on BLS's own 2026 schedule, Nov 10 as several calendars list it, Jan 13 2027 projected).
+CPI = ("2026-11-10 08:30 CPI", "2026-12-10 08:30 CPI", "2027-01-13 08:30 CPI")
+CALENDARS = {"oil": (OIL_WEEKLY, ()), "gas": (GAS_WEEKLY, ()), "metal": (METAL_WEEKLY, FOMC + CPI), "other": ((), FOMC)}
 
 
 @dataclass

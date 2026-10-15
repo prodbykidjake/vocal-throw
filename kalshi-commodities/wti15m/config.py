@@ -55,6 +55,10 @@ class TradingCfg:
     call_deadline_s: float = 120.0  # otherwise call the lean when this many seconds are left
     call_join_min_s: float = 300.0  # no call for a window first seen with less than this left (no free wins)
     call_min_left_s: float = 60.0  # and never a call with less than this left
+    # --- on the commodities board (v1.4): per-market rules from cm15m/tuning.py ---
+    late_call: bool = True  # False = no lean call at the deadline: a window that never gets sure enough gets no call
+    call_blend_market: float = 0.0  # > 0 = the call reads a log-odds blend with Kalshi's mid (Kalshi's weight)
+    rules_tag: str = ""  # set = the card also keeps a record of the calls made since these rules first ran
     late_entry_s: float = 60.0
     late_entry_min_z: float = 2.0
     hold_to_settle_prob: float = 0.90

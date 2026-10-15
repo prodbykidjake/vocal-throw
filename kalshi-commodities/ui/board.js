@@ -29,11 +29,13 @@
           <div class="meter-mkt" data-f="mkt" title="Kalshi's odds"></div></div>
       </div>
       <div class="note" data-f="note"></div>
+      <div class="po"><div class="po-box" data-f="po-box">PULL OUT · waiting for a call</div><div class="po-note" data-f="po-note"></div></div>
       <div class="edge"><div class="edge-box" data-f="edge-box">EDGE · waiting</div><div class="edge-note" data-f="edge-note"></div>
         <div class="edge-rec" data-f="edge-rec"></div></div>
       <div class="warn" data-f="status"></div>
       <div class="rec"><div><div class="rec-v" data-f="record">0–0</div><div class="rec-k" data-f="bench">no settled calls yet</div></div>
         <div class="chips" data-f="recent"></div></div>
+      <div class="rules" data-f="rules"></div>
     </article>`;
   }
 
@@ -75,20 +77,68 @@
     } else if (w.status === "studying" || w.status === "watching") {
       box.textContent = (w.status === "studying" ? `STUDYING · ${mmss(w.study_left_s)}` : "WATCHING") + (w.confirming_s != null ? ` · confirming ${w.confirming_s}/${rules.hold_s}s` : "");
       box.className = "callbox";
+    } else if ((w.status || "").startsWith("no call")) {
+      const why = /\((.*)\)/.exec(w.status);
+      box.textContent = "NO CALL THIS WINDOW" + (why ? ` · ${why[1]}` : ""); box.className = "callbox none";
     } else {
       box.textContent = (w.status || "waiting for the next window").toUpperCase(); box.className = "callbox";
     }
     renderMeter(card, c, call, w, rules);
+    renderPullout(card, m);
     renderEdge(card, m);
     const st = f(card, "status");
     st.textContent = m.status === "no_series" ? `Kalshi has no ${m.series} series right now` :
       m.status === "no_feed" ? "waiting for Kalshi's live price…" : m.status === "no_market" ? "no window trading right now" :
       (m.feed && m.feed.age_s != null && m.feed.age_s > 8) ? `live price is ${Math.round(m.feed.age_s)}s old: no new calls` : "";
-    const r = c.record || {}, n = (r.wins || 0) + (r.losses || 0);
+    const r = c.record || {}, n = (r.wins || 0) + (r.losses || 0), rr = c.record_rules, tag = rules.tag || "";
     f(card, "record").textContent = `${r.wins || 0}–${r.losses || 0}` + (n ? ` · ${Math.round(100 * r.wins / n)}%` : "");
-    f(card, "bench").textContent = n ? `Kalshi expected ${r.market_expected} of ${r.n_market}` : "no settled calls yet";
+    let bench = n ? `all time · Kalshi expected ${r.market_expected} of ${r.n_market}` : "no settled calls yet";
+    if (rr) {
+      const nn = (rr.wins || 0) + (rr.losses || 0);
+      bench += ` · since ${tag}: ${rr.wins || 0}–${rr.losses || 0}` + (nn ? ` (${Math.round(100 * rr.wins / nn)}%)` : "");
+    }
+    f(card, "bench").textContent = bench;
+    f(card, "rules").textContent = rules.prob == null ? "" : `${tag ? tag + " rules" : "rules"}: calls at ${Math.round(rules.prob * 100)}%+ held ${rules.hold_s}s · studies ${mmss(rules.study_s)}` +
+      (rules.late_call === false ? " · no lean calls" : ` · lean call at ${mmss(rules.deadline_s)} left`) +
+      (rules.blend_market ? ` · reads engine + Kalshi (Kalshi ${Math.round(rules.blend_market * 100)}%)` : "");
     f(card, "recent").innerHTML = (r.recent || []).slice(0, 12).reverse().map((x) =>
       `<span class="c ${x.correct ? "w" : "l"}" title="${esc(x.ticker)} · ${esc(x.side)} · ${pct(x.p)}">${x.correct ? "✓" : "✗"}</span>`).join("");
+  }
+
+  // PULL OUT: flashes when the engine and Kalshi together put the locked call at 3% or less with 1:00+ left (see cm15m/pullout.py)
+  function renderPullout(card, m) {
+    const p = m.pullout || {}, w = p.watch || {}, r = p.record || {}, box = f(card, "po-box"), note = f(card, "po-note");
+    const a = w.alarm, live = !!a && a.result == null && m.market && a.ticker === m.market.ticker;
+    card.classList.toggle("pulled", live);
+    if (a) {
+      const side = a.side, bid = a.bid != null ? ` · bid ~${cents(a.bid)}` : "";
+      if (a.result == null) {
+        box.textContent = `⚠ PULL OUT · SELL YOUR ${side} NOW`;
+        box.className = "po-box fire";
+        note.textContent = `the ${side} call has flipped: engine ${pct(a.p_model)}` + (a.p_kalshi != null ? ` · Kalshi ${pct(a.p_kalshi)}` : " (Kalshi had no usable quote)") +
+          ` for ${side} with ${mmss(a.seconds_left)} left${bid} · right about 98 times in 100 on two months of history`;
+      } else {
+        box.textContent = a.correct ? `PULL OUT was right ✓ · the ${side} call lost` : `PULL OUT was wrong ✗ · the ${side} call won`;
+        box.className = "po-box " + (a.correct ? "right" : "wrong");
+        note.textContent = `flashed with ${mmss(a.seconds_left)} left at engine ${pct(a.p_model)}` + (a.p_kalshi != null ? ` · Kalshi ${pct(a.p_kalshi)}` : "") + bid;
+      }
+    } else if (w.state === "watching") {
+      box.className = "po-box watch";
+      const now = w.p_kalshi != null ? `engine ${pct(w.p_model)} · Kalshi ${pct(w.p_kalshi)}` : `engine ${pct(w.p_model)} (no usable Kalshi quote)`;
+      if (w.too_late) {
+        box.textContent = `PULL OUT · off in the last minute`;
+        note.textContent = `${w.side} call · ${now} · under 1:00 left the losing side often has no bid to sell into`;
+      } else {
+        box.textContent = `PULL OUT · watching your ${w.side} call · ${now}`;
+        note.textContent = w.rule === "B" ? `flashes if the engine stays at ${pct(w.model_level)} or less for ${w.hold_s}s` + (w.low_for_s != null ? ` (${w.low_for_s}s so far)` : "")
+          : `flashes only if engine and Kalshi average ${pct(w.level)} or less for ${w.side} (now ${pct(w.score)})`;
+      }
+    } else if (w.state === "paused") {
+      box.className = "po-box"; box.textContent = `PULL OUT · paused`; note.textContent = `${w.why || "waiting"} · no alarm until it is back`;
+    } else {
+      box.className = "po-box"; box.textContent = "PULL OUT · waiting for a call"; note.textContent = "";
+    }
+    note.textContent += r.n ? `${note.textContent ? " · " : ""}record: right ${r.right} of ${r.n}` : "";
   }
 
   // EDGE: the buy signal. Only when the model beats Kalshi's ask by the rule's margin at a minute check (see cm15m/edge.py)
@@ -141,7 +191,9 @@
     else if (w.status === "studying") t = `studying · no call for ${mmss(w.study_left_s)} · last 30s ${range}`;
     else if (w.confirming_s != null) t = `over the ${Math.round(line * 100)}% line · confirming ${w.confirming_s}/${rules.hold_s}s`;
     else if (m.disagree) t = "model and Kalshi far apart: no confident call yet";
-    else t = `needs ${Math.round(line * 100)}% for ${rules.hold_s}s · last 30s ${range}` + (w.deadline_in_s != null ? ` · lean call in ${mmss(w.deadline_in_s)}` : "");
+    else t = `needs ${Math.round(line * 100)}% for ${rules.hold_s}s · last 30s ${range}` + (w.deadline_in_s != null ? ` · lean call in ${mmss(w.deadline_in_s)}` :
+      w.closes_in_s != null ? ` · ${mmss(w.closes_in_s)} left to get there, else no call` : "");
+    if (m.model_up != null) t += ` · engine ${pct(m.model_up)} blended with Kalshi ${pct(m.market_up)}`;
     note.textContent = t;
   }
 
@@ -154,6 +206,11 @@
     $("total-record").textContent = `${r.wins || 0}–${r.losses || 0}`;
     $("total-rate").textContent = n ? `${Math.round(100 * r.wins / n)}%` : "--";
     $("total-exp").textContent = n ? `${r.market_expected} / ${r.n_market}` : "--";
+    const rr = s.record_rules || {}, rn = (rr.wins || 0) + (rr.losses || 0);
+    $("rules-record").innerHTML = rr.since == null ? "--" : `${rr.wins || 0}–${rr.losses || 0}` + (rn ? ` <small>${Math.round(100 * rr.wins / rn)}%</small>` : "");
+    const po = s.pullout || {};
+    $("po-record").textContent = po.n ? `${po.right}/${po.n}` : "--";
+    renderBanner(markets);
     const er = s.edge || {}, en = (er.wins || 0) + (er.losses || 0);
     $("edge-record").textContent = `${er.wins || 0}–${er.losses || 0}`;
     $("edge-pnl").textContent = en ? money(er.pnl) : "--";
@@ -161,9 +218,25 @@
     $("clock").textContent = live ? live.countdown : "--:--";
     const colors = Object.fromEntries(markets.map((m) => [m.key, m.color]));
     $("lines").innerHTML = (s.lines || []).map((l) => `<span class="pill" data-key="${esc(l.key)}"><span class="dot" style="background:${esc(colors[l.key] || "#888")}"></span>${esc(l.name)} <b>${l.wins}–${l.losses}</b></span>`).join("");
-    $("board-foot").textContent = `${markets.length} markets · settlement calls are forecasts (in two months of history they won about as often as they said, so bought at the ask they broke even); EDGE is the buy signal · ` +
+    $("board-foot").textContent = `${markets.length} markets · settlement calls are forecasts (v1.4: fewer, surer calls, about 9 in 10 on two months of history, but later and at higher prices, so bought at the ask they still break even); EDGE is the buy signal; PULL OUT is the safety net · ` +
       (s.requests != null ? `${s.requests} Kalshi requests so far` : "simulated markets") + (s.throttled ? ` · slowed down by Kalshi ${s.throttled}×` : "");
     if (openKey) renderDetailLive();
+  }
+
+  // a PULL OUT anywhere on the board: a banner pinned to the top of the screen (the card may be scrolled away, on a phone)
+  const baseTitle = document.title;
+  let lastPulled = "";
+  function renderBanner(markets) {
+    const on = markets.filter((m) => { const a = ((m.pullout || {}).watch || {}).alarm; return a && a.result == null && m.market && a.ticker === m.market.ticker; });
+    const ban = $("po-banner");
+    if (!on.length) { ban.classList.add("hidden"); document.title = baseTitle; lastPulled = ""; return; }
+    ban.classList.remove("hidden");
+    ban.innerHTML = on.map((m) => { const a = m.pullout.watch.alarm;
+      return `<button type="button" class="po-ban-item" data-key="${esc(m.key)}">⚠ PULL OUT · ${esc(m.name)} · sell your ${esc(a.side)} now` + (a.bid != null ? ` (bid ~${cents(a.bid)})` : "") + `</button>`; }).join("");
+    document.title = `⚠ PULL OUT ${on.map((m) => m.name).join(", ")}`;
+    const key = on.map((m) => m.key + m.pullout.watch.alarm.ticker).join(",");
+    if (key !== lastPulled && navigator.vibrate) { try { navigator.vibrate([300, 150, 300]); } catch (e) { /* not supported */ } }
+    lastPulled = key;
   }
 
   // ------------------------------------------------------------------ detail view
@@ -242,6 +315,10 @@
     openDetail(key);
   });
   $("d-close").addEventListener("click", closeDetail);
+  $("po-banner").addEventListener("click", (ev) => {
+    const b = ev.target.closest(".po-ban-item"); if (!b) return;
+    const card = $(`mkt-${b.dataset.key}`); if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
   $("detail").addEventListener("click", (ev) => { if (ev.target === $("detail")) closeDetail(); });
   $("lines").addEventListener("click", (ev) => { const p = ev.target.closest(".pill"); if (p) openDetail(p.dataset.key); });
   document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeDetail(); });

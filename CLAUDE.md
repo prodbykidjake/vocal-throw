@@ -177,4 +177,7 @@ See `kalshi-gold/README.md`; tests: `cd kalshi-gold && pytest`.
 `kalshi-commodities/` (package `cm15m`, port 8790) is a separate board with a settlement caller for every Kalshi
 15-minute commodity (gold, silver, WTI, copper, natural gas, palladium, platinum), with per-market scale worked out
 automatically and one database per market, plus an EDGE buy signal (model at least 75% and 8 points above Kalshi's ask at a minute
-check, validated on two months of history) and a private phone link (`serve --phone`). See `kalshi-commodities/README.md`; tests: `cd kalshi-commodities && pytest`.
+check, validated on two months of history) and a private phone link (`serve --phone`). v1.4 adds per-market call rules
+(`cm15m/tuning.py`: 85-88% bar, 4-5 minute study, no lean call; ~90% wins on held-out history) and a PULL OUT alarm
+(`cm15m/pullout.py`: engine + Kalshi average <= 3% for the called side with 1:00+ left; ~98% right on history).
+See `kalshi-commodities/README.md`; tests: `cd kalshi-commodities && pytest`.
