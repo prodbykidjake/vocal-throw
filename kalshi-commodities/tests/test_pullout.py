@@ -112,3 +112,17 @@ def test_board_notifies_even_when_the_card_is_muted(tmp_path):
     assert desk.state["pullout"]["watch"]["state"] == "fired"
     board._pullout_step(desk, 1001.0, False)
     assert len(sent) == 1  # once per window
+
+
+def test_the_card_shows_how_the_last_alarm_ended_after_the_window_rolls_over():
+    tr = tracker()
+    assert tr.step(1000, state(0.01, 0.01, 0.03, ticker="A"))
+    # the close: the board moves on to window B before Kalshi has scored A
+    tr.step(1100, state(0.5, 0.45, 0.55, ticker="B", called=False))
+    assert tr.watch["state"] == "waiting" and tr.state()["last"]["ticker"] == "A" and tr.state()["last"]["result"] is None
+    tr.settle_from(lambda t: {"result": "no"} if t == "A" else None, 1110)
+    tr.step(1111, state(0.5, 0.45, 0.55, ticker="B", called=False))
+    assert tr.state()["last"]["correct"] == 1  # A's call (UP) lost: the alarm was right
+    tr.step(1000 + 1800 + 1, state(0.5, 0.45, 0.55, ticker="C", called=False))
+    assert tr.state()["last"] is None  # shown for half an hour
+    assert PulloutTracker("gold", tr.store)._last["ticker"] == "A"  # a restart reloads it from the store

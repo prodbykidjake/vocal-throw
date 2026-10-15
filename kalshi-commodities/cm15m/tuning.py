@@ -57,21 +57,68 @@ TUNING: dict[str, Tuning] = {
 DEFAULT = Tuning()
 
 
+def _bool(value, where: str, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in ("true", "false", "yes", "no", "on", "off"):
+        return value.strip().lower() in ("true", "yes", "on")
+    log.warning("config: %s = %r is not true/false; using %s", where, value, str(default).lower())
+    return default
+
+
+def _number(value, where: str, lo: float, hi: float, default: float, percent: bool = False) -> float:
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        x = float("nan")
+    if percent and 1.0 < x <= 100.0:  # "call_prob = 88" means 88%
+        log.warning("config: %s = %r read as %.2f", where, value, x / 100.0)
+        x /= 100.0
+    if not lo <= x <= hi:
+        log.warning("config: %s = %r is outside %s-%s; using %s", where, value, lo, hi, default)
+        return default
+    return x
+
+
+def _sections(overrides: dict | None) -> dict[str, dict]:
+    """[tuning.<market>] sections by lower-case market key ([tuning.WTI] is [tuning.wti])."""
+    return {str(k).lower(): v for k, v in (overrides or {}).items() if isinstance(v, dict)}
+
+
 def enabled(overrides: dict | None) -> bool:
-    return bool((overrides or {}).get("enabled", True))
+    return _bool((overrides or {}).get("enabled", True), "[tuning] enabled", True)
+
+
+def check(overrides: dict | None, keys) -> list[str]:
+    """Warn about [tuning.<name>] sections that match none of the board's markets; returns their names."""
+    keys = {k.lower() for k in keys}
+    unknown = sorted(k for k in _sections(overrides) if k not in keys)
+    for k in unknown:
+        log.warning("config: [tuning.%s] matches no market on the board (%s); ignored", k, ", ".join(sorted(keys)))
+    return unknown
 
 
 def for_market(key: str, overrides: dict | None = None) -> Tuning:
-    """The market's rules, with any [tuning.<key>] values from config.toml on top."""
+    """The market's rules, with any valid [tuning.<key>] values from config.toml on top."""
     base = TUNING.get(key, DEFAULT)
-    extra = (overrides or {}).get(key)
-    if not isinstance(extra, dict) or not extra:
+    extra = _sections(overrides).get(key.lower())
+    if not extra:
         return base
     names = {f.name for f in dataclasses.fields(Tuning)}
-    for k in extra:
+    vals = {}
+    for k, v in extra.items():
+        where = f"[tuning.{key}] {k}"
         if k not in names:
-            log.warning("config: unknown key [tuning.%s].%s ignored", key, k)
-    return dataclasses.replace(base, **{k: v for k, v in extra.items() if k in names})
+            log.warning("config: unknown key %s ignored", where)
+        elif k == "call_prob":
+            vals[k] = _number(v, where, 0.5, 0.999, base.call_prob, percent=True)
+        elif k == "study_s":
+            vals[k] = _number(v, where, 0.0, 840.0, base.study_s)
+        elif k == "blend_market":
+            vals[k] = _number(v, where, 0.0, 1.0, base.blend_market)
+        elif k == "late_call":
+            vals[k] = _bool(v, where, base.late_call)
+    return dataclasses.replace(base, **vals)
 
 
 def apply(trading, tuning: Tuning, window_s: float | None = None):

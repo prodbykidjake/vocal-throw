@@ -45,6 +45,10 @@ def blend_up(p_model: float, p_market: float | None, w_market: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
 
 
+def cfg_rules(cfg) -> str | None:
+    return cfg.rules_tag or None
+
+
 class CallTracker:
     def __init__(self, cfg: TradingCfg, store):
         self.cfg = cfg
@@ -63,6 +67,7 @@ class CallTracker:
         self._hold: tuple[str, float] | None = None  # (side, since): a confident side being confirmed
         self.watch: dict = {}  # what it is looking at before the call (for the card)
         self._first_left: float | None = None  # seconds left when the app first saw this window
+        self._refused: str | None = None  # why a call that reached the bar was refused this window (for the card)
         self._quotes = Quotes()  # Kalshi's prices this second, recorded with a call
         self._trail: deque[tuple[float, float]] = deque()  # (ts, model's Up chance) over the last METER_TRAIL_S, for the meter
         self.meter: dict | None = None  # the confidence meter under the card: where the model stands right now
@@ -79,6 +84,7 @@ class CallTracker:
             self._hold = None
             self.watch = {}
             self._first_left = None
+            self._refused = None
             self.call = self.store.call_for(ticker) if ticker else None
             self._trail.clear()
         self._update_meter(now, pred, seconds_left)
@@ -96,6 +102,8 @@ class CallTracker:
                 status = "no call this window (joined it too late to call it fairly)"
             elif late_call:
                 status = "no call this window (too close to the close)"
+            elif self._refused:
+                status = f"no call this window ({self._refused})"
             else:
                 status = f"no call this window (never {round(cfg.call_prob * 100)}% sure for {round(cfg.call_hold_s)}s)"
             self.watch = {"status": status}
@@ -111,6 +119,9 @@ class CallTracker:
         if seconds_elapsed is not None and seconds_elapsed < study_s:
             self._hold = None
             return None
+        if p_side >= cfg.call_prob and (pred.disagree or pred.p_market is None):
+            # sure enough, but no confident call while Kalshi's odds are far off or missing: remember why
+            self._refused = "engine and Kalshi too far apart" if pred.disagree else "no fresh Kalshi odds"
         if p_side >= cfg.call_prob and not pred.disagree and pred.p_market is not None:
             if self._hold is None or self._hold[0] != side:
                 self._hold = (side, now)
@@ -148,7 +159,7 @@ class CallTracker:
         if pred.p_market is not None:
             pm = pred.p_market if side == "UP" else 1.0 - pred.p_market
         q = self._quotes
-        self.store.add_call(ticker, side, p_side, pm, now, seconds_left, kind, q.ask(side), q.bid(side))
+        self.store.add_call(ticker, side, p_side, pm, now, seconds_left, kind, q.ask(side), q.bid(side), cfg_rules(self.cfg))
         self.call = self.store.call_for(ticker)
         self._hold = None
         return self.call
@@ -166,6 +177,6 @@ class CallTracker:
                          "late_call": cfg.late_call, "study_s": cfg.study_s,
                          "min_left_s": cfg.call_min_left_s, "blend_market": cfg.call_blend_market,
                          "tag": cfg.rules_tag}}
-        if self.rules_since is not None:
-            out["record_rules"] = {**self.store.call_record(0, since_ts=self.rules_since), "since": self.rules_since}
+        if self.rules_since is not None:  # only the calls these rules made (a call row carries the rules it was made under)
+            out["record_rules"] = {**self.store.call_record(0, rules=cfg.rules_tag), "since": self.rules_since}
         return out

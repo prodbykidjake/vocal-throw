@@ -135,6 +135,14 @@
       }
     } else if (w.state === "paused") {
       box.className = "po-box"; box.textContent = `PULL OUT · paused`; note.textContent = `${w.why || "waiting"} · no alarm until it is back`;
+    } else if (p.last && !(m.market && p.last.ticker === m.market.ticker)) {
+      // how the last alarm (an earlier window) ended: Kalshi scores it a little after the close
+      const l = p.last;
+      box.textContent = l.result == null ? `PULL OUT · last window: waiting for Kalshi's result` :
+        l.correct ? `PULL OUT · last window: right ✓ · the ${l.side} call lost` : `PULL OUT · last window: wrong ✗ · the ${l.side} call won`;
+      box.className = "po-box" + (l.result == null ? "" : l.correct ? " right" : " wrong");
+      note.textContent = `flashed with ${mmss(l.seconds_left)} left at engine ${pct(l.p_model)}` + (l.p_kalshi != null ? ` · Kalshi ${pct(l.p_kalshi)}` : "") +
+        (l.bid != null ? ` · bid ~${cents(l.bid)}` : "") + " · waiting for this window's call";
     } else {
       box.className = "po-box"; box.textContent = "PULL OUT · waiting for a call"; note.textContent = "";
     }

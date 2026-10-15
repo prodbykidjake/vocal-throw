@@ -83,9 +83,13 @@ class EngineDesk:
             t.call_min_left_s = 5
             t.call_hold_s = 3
             t.late_entry_s = max(5, window // 15)
+        # the board's own report settings: extra report dates for this market and "block" | "allow"
+        cfg.trading.extra_events = list(board_cfg.board.extra_events.get(spec.key, []))
+        cfg.trading.event_entries = board_cfg.trading.event_entries
         if tuning.enabled(board_cfg.tuning):  # v1.4: this market's settlement-call rules (cm15m/tuning.py)
             tuning.apply(cfg.trading, tuning.for_market(spec.key, board_cfg.tuning),
                          None if sim is None else sim.get("window_s", 900))
+            cfg.trading.call_block_events = True  # and no calls in report windows, like the board's own desks
         self.cfg = cfg
         store = store_mod.Store(cfg.storage.db_path)
         wrapped = CallsOnlyNotifier(notifier, spec.key, is_muted)

@@ -73,6 +73,7 @@ class Board:
         wanted = [k.lower() for k in self.cfg.board.markets]
         if wanted:
             specs = [s for s in specs if s.key in wanted or s.series.lower() in wanted]
+        tuning.check(self.cfg.tuning, [s.key for s in specs])
         for spec in specs:
             self.desks.append(self._make_desk(spec))
             self.edges[spec.key] = EdgeTracker(spec.key, self.edge_store, self.cfg.board.edge_gap, self.cfg.board.edge_min_p)

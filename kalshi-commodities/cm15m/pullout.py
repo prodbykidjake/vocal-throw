@@ -53,6 +53,10 @@ class PulloutStore:
         row = self.conn.execute("SELECT * FROM pullouts WHERE market=? AND ticker=?", (market, ticker)).fetchone()
         return dict(row) if row else None
 
+    def latest(self, market: str) -> dict | None:
+        row = self.conn.execute("SELECT * FROM pullouts WHERE market=? ORDER BY ts DESC LIMIT 1", (market,)).fetchone()
+        return dict(row) if row else None
+
     def open_alarms(self, market: str) -> list[dict]:
         return [dict(r) for r in self.conn.execute("SELECT * FROM pullouts WHERE market=? AND result IS NULL", (market,))]
 
@@ -85,12 +89,19 @@ class PulloutTracker:
         self._ticker: str | None = None
         self._alarm: dict | None = None  # this window's alarm, once fired (latched)
         self._low_since: float | None = None  # Rule B: since when the model alone has said <= model_level
+        self._last: dict | None = store.latest(market)  # the most recent alarm (any window), to show how it ended
+        self._now = 0.0
         self.watch: dict = {"state": "waiting"}
+
+    LAST_SHOWN_S = 1800.0  # the card shows how the last alarm ended for half an hour (Kalshi scores it after the close)
 
     def step(self, now: float, st: dict) -> dict | None:
         """Returns the alarm the second it fires, else None. `st` is the desk's state dict."""
         m = st.get("market") or {}
         ticker = m.get("ticker")
+        self._now = now
+        if self._last is not None and self._last.get("result") is None:  # pick up its score once Kalshi settles
+            self._last = self.store.get(self.market, self._last["ticker"]) or self._last
         if ticker != self._ticker:
             self._ticker, self._low_since = ticker, None
             self._alarm = self.store.get(self.market, ticker) if ticker else None
@@ -145,7 +156,7 @@ class PulloutTracker:
             return None
         self.store.add(self.market, ticker, now, left, side, rule, p_model, p_kalshi, score,
                        None if bid is None or bid <= 0 else bid, call.get("p_side"))
-        self._alarm = self.store.get(self.market, ticker)
+        self._alarm = self._last = self.store.get(self.market, ticker)
         self.watch = {"state": "fired", "alarm": self._alarm}
         return self._alarm
 
@@ -157,6 +168,7 @@ class PulloutTracker:
                 self.store.settle(self.market, a["ticker"], w["result"] == "yes", now)
 
     def state(self) -> dict:
-        return {"watch": self.watch, "record": self.store.record(self.market),
+        last = self._last if self._last and self._now - (self._last.get("ts") or 0) < self.LAST_SHOWN_S else None
+        return {"watch": self.watch, "record": self.store.record(self.market), "last": last,
                 "rules": {"level": self.level, "model_level": self.model_level, "hold_s": self.hold_s,
                           "min_left_s": self.min_left_s}}

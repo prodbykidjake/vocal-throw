@@ -104,13 +104,61 @@ def test_since_v14_record_counts_only_calls_made_under_the_new_rules():
     store.settle_call("OLD", "DOWN", 20.0)
     t = tuning.apply(TradingCfg(), tuning.for_market("gold"))
     ct = CallTracker(t, store)
-    store.add_call("NEW", "UP", 0.9, 0.85, ct.rules_since + 1, 400, "confident")
-    store.settle_call("NEW", "UP", ct.rules_since + 600)
-    s = ct.state()
-    assert (s["record"]["wins"], s["record"]["losses"]) == (1, 1)
+    made = None
+    for i in range(12):  # a call made under v1.4 carries its rules
+        made = ct.step(1e9 + i, "NEW", pred(0.92, 0.9), 500 - i, 400 + i, 240) or made
+    assert made and made["rules"] == "v1.4"
+    store.settle_call("NEW", "UP", 1e9 + 600)
+    # tuning switched off for a while: its calls (v1.3 rules, a lean call here) never count toward "since v1.4"
+    ct_off = CallTracker(TradingCfg(), store)
+    for i in range(130):
+        ct_off.step(2e9 + i, "OFF", pred(0.6, 0.6), 900 - i if i == 0 else 125 - i, 300 + i, 180)
+    store.settle_call("OFF", "DOWN", 2e9 + 900)
+    s = CallTracker(t, store).state()
+    assert (s["record"]["wins"], s["record"]["losses"]) == (1, 2)
     assert (s["record_rules"]["wins"], s["record_rules"]["losses"]) == (1, 0)
     assert CallTracker(t, store).rules_since == ct.rules_since  # remembered across restarts
     assert "record_rules" not in CallTracker(TradingCfg(), Store(":memory:")).state()  # untagged: no second record
+
+
+def test_no_call_says_why_when_kalshi_held_it_back():
+    for p_market, disagree, why in ((0.52, True, "engine and Kalshi too far apart"), (None, False, "no fresh Kalshi odds")):
+        ct = tuned("wti")
+        for i in range(900):
+            p = Prediction(0.95, 0.95, 0.95, p_market, 0.0, 0.004, None, None, 600, 0.0, 0.1, "lean", 0.0, disagree=disagree)
+            assert ct.step(1000 + i, "W", p, 900 - i, i, 300) is None
+        assert ct.watch["status"] == f"no call this window ({why})"
+
+
+def test_overrides_are_read_forgivingly_and_bad_values_are_ignored(caplog):
+    o = {"enabled": "false", "WTI": {"call_prob": 90, "late_call": "true"}, "gold": {"call_prob": 1.7, "blend_market": "x"},
+         "natural_gas": {"call_prob": 0.9}}
+    assert not tuning.enabled(o)
+    wti = tuning.for_market("wti", o)
+    assert wti.call_prob == 0.9 and wti.late_call is True  # [tuning.WTI] counts; 90 means 90%
+    gold = tuning.for_market("gold", o)
+    assert gold.call_prob == 0.88 and gold.blend_market == 0.0  # out of range / not a number: built-in kept
+    assert tuning.check(o, ["wti", "gold", "natgas"]) == ["natural_gas"]
+    assert "matches no market" in caplog.text
+
+
+def test_engines_take_the_boards_report_settings(tmp_path):
+    cfg = Config()
+    cfg.storage.data_dir = str(tmp_path)
+    cfg.notify.desktop = cfg.notify.sound = False
+    cfg.board.extra_events = {"gold": ["2026-11-06 08:30 Jobs report"]}
+    board = Board(cfg, sim={"window_s": 900, "warmup_minutes": 10})
+    asyncio.run(board.build())
+    gold = board.desk("gold").engine
+    assert [name for _, name in gold._extra_events] == ["Jobs report"] and gold.cfg.trading.call_block_events
+    cfg2 = Config()
+    cfg2.storage.data_dir = str(tmp_path / "b")
+    cfg2.trading.event_entries = "allow"
+    cfg2.tuning = {"enabled": False}
+    board2 = Board(cfg2, sim={"window_s": 900, "warmup_minutes": 10})
+    asyncio.run(board2.build())
+    t = board2.desk("wti").engine.cfg.trading
+    assert t.event_entries == "allow" and not t.call_block_events and t.call_prob == 0.72  # v1.3's rules
 
 
 def test_engines_make_no_call_in_a_report_window(tmp_path):

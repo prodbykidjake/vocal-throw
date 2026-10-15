@@ -507,7 +507,8 @@ class Engine:
             # on the board (v1.4): no new settlement call in a window that holds a scheduled report, like the board's
             # own desks (on two months of history the windows opening at a release won only 64%)
             events = self._vol_info.get("events") or []
-            blocked = bool(events) and self.cfg.trading.event_entries == "block" and self.calls.call is None
+            t = self.cfg.trading
+            blocked = bool(events) and t.call_block_events and t.event_entries == "block" and self.calls.call is None
             made = self.calls.step(now, m.ticker, None if blocked else pred, tau, elapsed, self._study_len(), quotes)
             if blocked:
                 self.calls.watch = {"status": f"no call this window ({events[0]['name']} at {events[0]['at']})"}

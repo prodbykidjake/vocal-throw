@@ -77,7 +77,8 @@ class Store:
             if col not in have:
                 self.conn.execute(f"ALTER TABLE plans ADD COLUMN {col} {typ}")
         have = {row[1] for row in self.conn.execute("PRAGMA table_info(calls)")}
-        for col, typ in (("ask", "REAL"), ("bid", "REAL")):  # v12: Kalshi's price at the moment of the call
+        for col, typ in (("ask", "REAL"), ("bid", "REAL"),  # v12: Kalshi's price at the moment of the call
+                         ("rules", "TEXT")):  # board v1.4: the rules the call was made under (e.g. "v1.4")
             if col not in have:
                 self.conn.execute(f"ALTER TABLE calls ADD COLUMN {col} {typ}")
 
@@ -177,9 +178,9 @@ class Store:
 
     # ------------------------------------------------------------------ settlement calls
     def add_call(self, ticker: str, side: str, p_side: float, p_market_side: float | None, ts: float, seconds_left: float,
-                 kind: str, ask: float | None = None, bid: float | None = None):
-        self.conn.execute("INSERT OR IGNORE INTO calls (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid) "
-                          "VALUES (?,?,?,?,?,?,?,?,?)", (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid))
+                 kind: str, ask: float | None = None, bid: float | None = None, rules: str | None = None):
+        self.conn.execute("INSERT OR IGNORE INTO calls (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid, rules) "
+                          "VALUES (?,?,?,?,?,?,?,?,?,?)", (ticker, side, p_side, p_market_side, ts, seconds_left, kind, ask, bid, rules))
 
     def call_for(self, ticker: str) -> dict | None:
         row = self.conn.execute("SELECT * FROM calls WHERE ticker=?", (ticker,)).fetchone()
@@ -194,9 +195,10 @@ class Store:
                                  "WHERE c.result IS NULL AND w.result IN ('yes','no')").fetchall()
         return [dict(r) for r in rows]
 
-    def call_record(self, recent: int = 20, since_ts: float = 0.0) -> dict:
-        rows = [dict(r) for r in self.conn.execute("SELECT * FROM calls WHERE result IS NOT NULL AND COALESCE(ts, 0) >= ? "
-                                                   "ORDER BY ts DESC", (since_ts,)).fetchall()]
+    def call_record(self, recent: int = 20, rules: str | None = None) -> dict:
+        """Settled calls; with `rules`, only the calls made under those rules (board v1.4: the since-v1.4 record)."""
+        q = "SELECT * FROM calls WHERE result IS NOT NULL" + (" AND rules = ?" if rules else "") + " ORDER BY ts DESC"
+        rows = [dict(r) for r in self.conn.execute(q, (rules,) if rules else ()).fetchall()]
         out: dict = {"wins": 0, "losses": 0, "market_expected": 0.0, "model_expected": 0.0, "n_market": 0, "by_kind": {}}
         for r in rows:
             win = bool(r["correct"])

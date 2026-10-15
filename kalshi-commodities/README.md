@@ -66,8 +66,8 @@ about 1 time in 4. Nothing under 1:00 left: by then the losing side often has no
 
 It is a safety net, not a money maker. Selling at the alarm gets the few cents the losing side still bids (about 2-3¢
 a contract on history; maybe more if you sell within seconds) instead of riding it to zero, and about 2 alarms in 100
-will be on a call that comes back. The box keeps its own record ("PULL OUT right N of M"). Alarms are kept in
-`data/pullouts.db`.
+will be on a call that comes back. After the close, the box shows how the last alarm ended ("last window: right ✓")
+once Kalshi settles it, and keeps its own record ("PULL OUT right N of M"). Alarms are kept in `data/pullouts.db`.
 
 ## EDGE: the buy signal (v1.2, tightened in v1.3)
 
