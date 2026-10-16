@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Fonts.h"
 #include "Theme.h"
 
 namespace vox
@@ -30,5 +31,6 @@ public:
 
 private:
     const Theme& theme;
+    juce::SharedResourcePointer<fonts::Typefaces> typefaces; // keeps DM Sans loaded while the UI exists
 };
 } // namespace vox

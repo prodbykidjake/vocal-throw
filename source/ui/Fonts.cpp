@@ -12,20 +12,26 @@ namespace
 
     juce::Typeface::Ptr typefaceFor (int weight)
     {
-        static const auto regular = load (BinaryData::DMSansRegular_ttf, BinaryData::DMSansRegular_ttfSize);
-        static const auto medium = load (BinaryData::DMSansMedium_ttf, BinaryData::DMSansMedium_ttfSize);
-        static const auto semibold = load (BinaryData::DMSansSemiBold_ttf, BinaryData::DMSansSemiBold_ttfSize);
-        static const auto bold = load (BinaryData::DMSansBold_ttf, BinaryData::DMSansBold_ttfSize);
-
+        // Not a static: typefaces destroyed when the plugin library unloads outlive JUCE's font system and
+        // crash the host. The shared set lives as long as something (the look-and-feel) holds it.
+        const juce::SharedResourcePointer<Typefaces> set;
         if (weight >= 650)
-            return bold;
+            return set->bold;
         if (weight >= 550)
-            return semibold;
+            return set->semibold;
         if (weight >= 450)
-            return medium;
-        return regular;
+            return set->medium;
+        return set->regular;
     }
 } // namespace
+
+Typefaces::Typefaces()
+    : regular (load (BinaryData::DMSansRegular_ttf, BinaryData::DMSansRegular_ttfSize)),
+      medium (load (BinaryData::DMSansMedium_ttf, BinaryData::DMSansMedium_ttfSize)),
+      semibold (load (BinaryData::DMSansSemiBold_ttf, BinaryData::DMSansSemiBold_ttfSize)),
+      bold (load (BinaryData::DMSansBold_ttf, BinaryData::DMSansBold_ttfSize))
+{
+}
 
 juce::Font make (int weight, float px, float tracking)
 {
