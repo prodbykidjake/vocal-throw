@@ -170,12 +170,13 @@
     const box = f(card, "edge-box"), note = f(card, "edge-note");
     if (sig) {
       const res = sig.result == null ? "" : sig.correct ? " · WIN ✓" : " · LOSS ✗";
-      const strong = sig.tier === "strong", wide = sig.tier === "wide";  // v1.6: how big the gap is (cm15m/edge.py)
-      box.textContent = `${strong ? "STRONG " : ""}EDGE · BUY ${sig.side} at ${cents(sig.ask)} or less${res}`;
-      box.className = "edge-box sig " + (sig.side === "UP" ? "up" : "down") + (strong ? " strong" : "") + (sig.result == null ? "" : sig.correct ? " win" : " loss");
-      note.textContent = (strong ? "size up: about 2× your normal size (12–19 pt gaps paid about twice as much a contract) · " : "") +
-        `model ${pct(sig.p)} vs ask ${cents(sig.ask)} (+${Math.round(sig.gap * 100)} pts) at minute ${sig.minute} · hold to settlement` +
-        (wide ? " · wide gap: keep your normal size (the market may know something)" : "") +
+      // v1.6: a gap of 12+ points means Kalshi's price disagrees a lot; show how those have done here (cm15m/edge.py)
+      const big = sig.tier === "big", bt = (((state || {}).edge || {}).tiers || {}).big, nt = (((state || {}).edge || {}).tiers || {}).normal;
+      const rec = (t) => t && t.n ? `${t.wins}–${t.losses}, ${t.pnl < 0 ? "−" : "+"}${Math.abs(100 * t.pnl / t.n).toFixed(1)}¢ a signal` : "none yet";
+      box.textContent = `EDGE · BUY ${sig.side} at ${cents(sig.ask)} or less${big ? " · BIG GAP" : ""}${res}`;
+      box.className = "edge-box sig " + (sig.side === "UP" ? "up" : "down") + (big ? " big" : "") + (sig.result == null ? "" : sig.correct ? " win" : " loss");
+      note.textContent = `model ${pct(sig.p)} vs ask ${cents(sig.ask)} (+${Math.round(sig.gap * 100)} pts) at minute ${sig.minute} · hold to settlement` +
+        (big ? ` · big gap: Kalshi's price disagrees a lot, keep your normal size · big gaps here: ${rec(bt)} (normal: ${rec(nt)})` : "") +
         (sig.result != null ? ` · ${money(sig.pnl)} per contract` : "");
     } else if (w.side) {
       const gp = w.gap == null ? "--" : `${w.gap >= 0 ? "+" : ""}${Math.round(w.gap * 100)} pts`;
@@ -187,9 +188,9 @@
     } else {
       box.textContent = "EDGE · waiting for a window"; box.className = "edge-box"; note.textContent = "";
     }
-    const n = (r.wins || 0) + (r.losses || 0), st = (r.tiers || {}).strong;
+    const n = (r.wins || 0) + (r.losses || 0), bg = (r.tiers || {}).big;
     f(card, "edge-rec").textContent = n ? `Edge ${r.wins}–${r.losses} · ${money(r.pnl)} per contract in total` +
-      (st && st.n ? ` · strong ${st.wins}–${st.losses}, ${money(st.pnl)}` : "") : "Edge: no settled signals yet";
+      (bg && bg.n ? ` · big gaps ${bg.wins}–${bg.losses}, ${money(bg.pnl)}` : "") : "Edge: no settled signals yet";
   }
 
   function renderMeter(card, c, call, w, rules) {
@@ -243,9 +244,9 @@
     const er = s.edge || {}, en = (er.wins || 0) + (er.losses || 0);
     $("edge-record").textContent = `${er.wins || 0}–${er.losses || 0}`;
     $("edge-pnl").textContent = en ? money(er.pnl) : "--";  // the total for one contract on every signal, fees included
-    const perSig = (pnl, k) => `${pnl < 0 ? "−" : "+"}${Math.abs(100 * pnl / k).toFixed(1)}¢`, est = (er.tiers || {}).strong;
-    $("edge-note").textContent = en ? `${perSig(er.pnl, en)} a signal` + (est && est.n ? ` · strong ${perSig(est.pnl, est.n)}` : "") : "";
-    $("edge-note").title = "profit per signal for one contract each, fees included; strong = signals 12-19 points over the ask";
+    const perSig = (pnl, k) => `${pnl < 0 ? "−" : "+"}${Math.abs(100 * pnl / k).toFixed(1)}¢`, ebg = (er.tiers || {}).big;
+    $("edge-note").textContent = en ? `${perSig(er.pnl, en)} a signal` + (ebg && ebg.n ? ` · big gaps ${perSig(ebg.pnl, ebg.n)}` : "") : "";
+    $("edge-note").title = "profit per signal for one contract each, fees included; big gaps = signals 12+ points over the ask";
     const live = markets.find((m) => m.countdown && m.seconds_left != null);
     $("clock").textContent = live ? live.countdown : "--:--";
     const colors = Object.fromEntries(markets.map((m) => [m.key, m.color]));

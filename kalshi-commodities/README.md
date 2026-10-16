@@ -22,24 +22,27 @@ records with the WTI, natural gas or gold coaches, and they keep running as they
 
 It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
-## v1.6: EARLY calls and STRONG EDGE signals
+## v1.6: EARLY calls and BIG-GAP EDGE signals
 
-Two things the history says are worth acting on, now marked on the cards. Neither changes when a call or a signal
-happens; they only show which ones paid best.
+Two marks on the cards. Neither changes when a call or a signal happens.
 
 - **EARLY** (a gold tag on the call): the call was made with **6:30 or more left**. A call that early needs the price
   to be clearly past the target already, so it only happens in some windows (in Strict, about a third of its calls,
   typically around 8:25 left). At Strict's level, tested on later days than the settings were chosen on, those early
   calls won as often as the later ones (94.7% against 95.3%) and cost less to buy (about 93¢ instead of 95¢): about
-  **+1.4¢ a call** at the fill, against +0.3¢ for the later ones. Each card shows its early record ("early calls:
+  **+1.4¢ a call** at the fill, against +0.3¢ for the later ones. The live board agrees: since v1.4 its early calls won
+  91.7% (+3.5¢ a call at the ask) and its later ones 92.5% (+2.5¢). Each card shows its early record ("early calls:
   W–L"). The other windows cannot be called at 95% that early: with 7 minutes left their price can still cross the
   target, and nothing tested (a separate early bar, momentum, gold's moves, more weight on Kalshi's odds) got more
   windows to 95% that early.
-- **STRONG EDGE**: the EDGE signal's gap is **12 to 19 points** over the ask (as shown on the card). Those paid about **twice as much per
-  contract** as 8-12-point signals, in both halves of the history (+14.6¢ vs +7.8¢, then +9.6¢ vs +4.0¢, fills a minute
-  later, fees included), so the box says to size up (about 2× your normal size). A gap of **20+ points** says to keep
-  normal size: those were not reliable (+18.6¢, then -2.3¢); the market often knows something the model does not.
-  The card's EDGE record and the top strip show the strong signals' own results.
+- **BIG GAP** (a dashed gold EDGE box): the EDGE signal is **12 or more points** over the ask (as shown on the card).
+  In the history replays those paid about twice as much per contract as smaller gaps, but on the live board they did
+  the opposite: 23–12 (66% won, while the model said 86%), about -7.5¢ a signal, against 136–22 (86%), +9.5¢ for the
+  normal ones. The history only has Kalshi's prices once a minute, so a big gap there was often a quote that had not
+  caught up yet; live, a big gap usually means Kalshi's price knows something the model does not. So there is **no
+  size-up advice**: the box says to keep your normal size and shows how big-gap signals have done on your board so
+  far, next to the normal ones (also on the card's EDGE record and the top strip). If they keep losing, they can be
+  switched off.
 
 Also tested and not used: gold's last 1-3 minutes as a lead for silver, copper, platinum and palladium (no help: each
 metal's own price already moves with gold). Order flow and resting limit orders under the ask could not be tested

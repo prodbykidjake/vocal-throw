@@ -219,12 +219,14 @@ class Board:
         sig = tr.step(now, d.state)
         if sig and not self.is_muted(d.spec.key):
             ask_c = round(sig["ask"] * 100)
-            strong = sig.get("tier") == "strong"
-            size = (" · STRONG: size up (about 2x normal)" if strong else
-                    " · wide gap: normal size, the market may know something" if sig.get("tier") == "wide" else "")
-            self.notifier.notify(f"{d.spec.name.upper()} {'STRONG ' if strong else ''}EDGE: BUY {sig['side']}",
+            big = ""
+            if sig.get("tier") == "big":  # v1.6: say how big-gap signals have done on this board so far
+                b = self.edge_store.record(recent=0)["tiers"]["big"]
+                big = (" · BIG GAP: Kalshi's price disagrees a lot, keep your normal size" +
+                       (f" (big gaps so far {b['wins']}-{b['losses']}, {100 * b['pnl'] / b['n']:+.1f}¢ a signal)" if b["n"] else ""))
+            self.notifier.notify(f"{d.spec.name.upper()} EDGE: BUY {sig['side']}",
                                  f"model {round(sig['p'] * 100)}% vs ask {ask_c}¢ (+{edge_points(sig['gap'])} pts) · "
-                                 f"buy at {ask_c}¢ or less, hold to settlement{size}", "Glass")
+                                 f"buy at {ask_c}¢ or less, hold to settlement{big}", "Glass")
         if settle:
             store = self._window_store(d)
             if store is not None:

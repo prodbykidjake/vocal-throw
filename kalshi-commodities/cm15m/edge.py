@@ -14,11 +14,12 @@ take the model's favoured side; if its chance is at least `min_p` and at least `
 live book, fresh quotes, the live price from Kalshi's own series), signal BUY that side. At most one signal per
 window; it is scored at settlement against the ask at the signal, with the taker fee of a 100-contract order.
 
-v1.6, how big a gap is worth: on the same history (Aug to Oct 15, all seven markets, fills a minute later, fees
-included) signals 12 to 20 points over the ask made about twice as much per contract as 8-12-point ones, in both halves
-of the data (+14.6c vs +7.8c, then +9.6c vs +4.0c). Gaps of 20 points or more were not reliable (+18.6c, then -2.3c, few
-signals: the market often knows something the model does not). The card marks a 12-19-point signal STRONG with a hint to
-size up, and a 20+ one as a wide gap to keep at normal size. Nothing else about the signal changes.
+v1.6, big gaps: in the history replays signals 12+ points over the ask paid about twice as much per contract as
+8-11-point ones. On the live board they did the opposite: 23-12 (66% won while the model said 86%), -7.5c a signal,
+against 136-22 (86%), +9.5c for the normal ones (Oct 12-15, all seven markets). The history only has Kalshi's prices
+once a minute, so a big gap there was often just a quote that had not caught up yet; live, with the book read every
+second, a big gap usually means Kalshi's price knows something the model does not. So the card marks a signal 12+
+points over the ask as a BIG GAP with that tier's own live record, and no size advice; the signal itself is unchanged.
 """
 from __future__ import annotations
 
@@ -33,8 +34,8 @@ CREATE TABLE IF NOT EXISTS edges (market TEXT, ticker TEXT, ts REAL, minute INTE
 """
 
 
-STRONG_GAP = (0.12, 0.20)  # v1.6: a gap from 12 up to (not including) 20 points is STRONG; 20+ is "wide"
-TIERS = ("normal", "strong", "wide")
+BIG_GAP = 0.12  # v1.6: a signal 12 or more points over the ask is a BIG GAP (see above)
+TIERS = ("normal", "big")
 
 
 def points(gap: float) -> int:
@@ -43,16 +44,10 @@ def points(gap: float) -> int:
 
 
 def tier(gap: float | None) -> str:
-    """normal (8-11 points), strong (12-19) or wide (20+), on the whole points shown, so the label always matches the
-    number next to it."""
+    """normal (under 12 points) or big (12+), on the whole points shown, so the label always matches the number."""
     if gap is None:
         return "normal"
-    pts = points(gap)
-    if pts >= round(STRONG_GAP[1] * 100):
-        return "wide"
-    if pts >= round(STRONG_GAP[0] * 100):
-        return "strong"
-    return "normal"
+    return "big" if points(gap) >= round(BIG_GAP * 100) else "normal"
 
 
 def taker_fee_per_contract(price: float, count: int = 100) -> float:
@@ -179,5 +174,5 @@ class EdgeTracker:
     def state(self) -> dict:
         return {"watch": self.watch, "record": self.store.record(self.market),
                 "rules": {"gap": self.gap, "min_p": self.min_p, "from_min": self.first_min, "to_min": self.last_min,
-                          "strong": list(STRONG_GAP)}}
+                          "big_gap": BIG_GAP}}
 

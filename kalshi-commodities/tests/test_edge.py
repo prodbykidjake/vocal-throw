@@ -83,13 +83,12 @@ def test_an_old_config_with_the_v12_rule_gets_the_tighter_one(tmp_path):
     assert config.load(str(path)).board.edge_gap == 0.10
 
 
-def test_a_gap_of_12_to_19_points_is_strong_and_20_or_more_is_wide_on_the_points_shown():
+def test_a_gap_of_12_or_more_points_shown_is_a_big_gap():
     from cm15m.edge import points, tier
-    gaps = (None, 0.08, 0.1149, 0.115, 0.12, 0.15, 0.1949, 0.195, 0.1996, 0.20, 0.31)
-    assert [tier(g) for g in gaps] == ["normal", "normal", "normal", "strong", "strong", "strong", "strong", "wide",
-                                       "wide", "wide", "wide"]
-    assert [points(g) for g in (0.1149, 0.115, 0.1196, 0.1949, 0.195, 0.1996)] == [11, 12, 12, 19, 20, 20]
-    assert tier(0.87 - 0.75) == "strong" and tier(0.95 - 0.75) == "wide"  # float sums land on the right side
+    gaps = (None, 0.08, 0.1149, 0.115, 0.12, 0.1996, 0.31)
+    assert [tier(g) for g in gaps] == ["normal", "normal", "normal", "big", "big", "big", "big"]
+    assert [points(g) for g in (0.1149, 0.115, 0.1196, 0.1996)] == [11, 12, 12, 20]
+    assert tier(0.87 - 0.75) == "big" and tier(0.86 - 0.75) == "normal"  # float sums land on the right side
 
 
 def test_the_record_splits_by_gap_size_and_a_signal_carries_its_tier():
@@ -97,8 +96,8 @@ def test_the_record_splits_by_gap_size_and_a_signal_carries_its_tier():
     for tk, gap, up in (("A", 0.09, True), ("B", 0.15, True), ("C", 0.16, False), ("D", 0.25, True)):
         s.add("gold", tk, 1000.0, 5, "UP", 0.80, 0.80 - gap, gap)
         s.settle("gold", tk, up, 2000.0)
-    assert s.get("gold", "B")["tier"] == "strong" and s.get("gold", "D")["tier"] == "wide"
+    assert s.get("gold", "A")["tier"] == "normal" and s.get("gold", "D")["tier"] == "big"
     t = s.record()["tiers"]
-    assert (t["normal"]["n"], t["strong"]["wins"], t["strong"]["losses"], t["wide"]["n"]) == (1, 1, 1, 1)
-    want = (1 - 0.65 - taker_fee_per_contract(0.65)) + (0 - 0.64 - taker_fee_per_contract(0.64))
-    assert abs(t["strong"]["pnl"] - round(want, 2)) < 1e-9
+    assert (t["normal"]["n"], t["big"]["wins"], t["big"]["losses"], t["big"]["n"]) == (1, 2, 1, 3)
+    want = sum((1.0 if up else 0.0) - a - taker_fee_per_contract(a) for a, up in ((0.65, True), (0.64, False), (0.55, True)))
+    assert abs(t["big"]["pnl"] - round(want, 2)) < 1e-9
