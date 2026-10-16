@@ -30,6 +30,9 @@ public:
     bool isDrawerOpen() const noexcept { return drawerOpen; }
     void showPopover (Popover::Kind kind);
 
+    /** Switches the look and remembers it in the session (what the look chips in Settings do). */
+    void setLook (Look look);
+
     SpectrumView& getSpectrum() noexcept { return spectrum; }
     BandEditor& getBandEditor() noexcept { return bandEditor; }
 

@@ -6,7 +6,6 @@ namespace vox
 {
 namespace
 {
-    juce::Colour rgba (int r, int g, int b, float a) { return juce::Colour::fromFloatRGBA ((float) r / 255.0f, (float) g / 255.0f, (float) b / 255.0f, a); }
     juce::String utf8 (const char* s) { return juce::String (juce::CharPointer_UTF8 (s)); }
 
     constexpr int F = layout::frame;
@@ -14,6 +13,8 @@ namespace
     constexpr int utilW = layout::utilityRailWidth;
     constexpr int workX = F + railW + utilW; // 422
     constexpr int bodyH = layout::designHeight - 2 * F - layout::bottomBarHeight; // 808
+
+    static_assert (PluginProcessor::numLooks == numLooks);
 }
 
 EditorContent::EditorContent (PluginProcessor& p, Theme& t)
@@ -61,6 +62,10 @@ EditorContent::EditorContent (PluginProcessor& p, Theme& t)
             onScaleRequested (s);
         popover.show (popover.getKind(), s);
     };
+    popover.onLook = [this] (Look look) {
+        setLook (look);
+        popover.show (popover.getKind(), processor.getUiScale());
+    };
 
     topBar.onAdvanced = [this] { toggleDrawer(); };
     topBar.onHelp = [this] { togglePopover (Popover::Kind::help); };
@@ -77,6 +82,7 @@ EditorContent::EditorContent (PluginProcessor& p, Theme& t)
         spectrum.setSelectedBand (bell ? 1 : first);
     }
 
+    theme.setLook ((Look) processor.getLook());
     theme.addChangeListener (this);
     deltaAttachment.sendInitialUpdate();
     bypassAttachment.sendInitialUpdate();
@@ -91,6 +97,12 @@ EditorContent::~EditorContent()
 void EditorContent::updateTheme()
 {
     theme.setState (deltaOn, bypassOn);
+}
+
+void EditorContent::setLook (Look look)
+{
+    processor.setLook ((int) look);
+    theme.setLook (look);
 }
 
 void EditorContent::toggleDrawer()
@@ -174,8 +186,8 @@ void EditorContent::resized()
 void EditorContent::paint (juce::Graphics& g)
 {
     const auto& pal = theme.p();
-    const auto sectionBorder = rgba (72, 100, 112, 0.13f);
-    const auto railBorder = rgba (69, 91, 103, 0.12f);
+    const auto sectionBorder = pal.shade.withAlpha (0.13f);
+    const auto railBorder = pal.shade.withAlpha (0.12f);
 
     g.fillAll (pal.graph);
 
@@ -183,20 +195,20 @@ void EditorContent::paint (juce::Graphics& g)
     const juce::Rectangle<int> mainRail (F, F, railW, bodyH);
     g.setColour (pal.rail);
     g.fillRect (mainRail);
-    g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.15f), (float) F, 0.0f, juce::Colours::white.withAlpha (0.0f), (float) (F + railW / 2), 0.0f, false));
+    g.setGradientFill (juce::ColourGradient (theme.sheen (0.15f), (float) F, 0.0f, theme.sheen (0.0f), (float) (F + railW / 2), 0.0f, false));
     g.fillRect (mainRail);
     g.setColour (railBorder);
     g.fillRect (F + railW - 1, F, 1, bodyH);
 
     // brand
     icons::stroke (g, icons::wave(), juce::Rectangle<float> (26.0f, 12.0f, 34.0f, 18.0f), pal.accent, 2.0f);
-    fonts::draw (g, "VOX SMOOVE", { 26.0f, 31.0f, 232.0f, 26.0f }, fonts::make (700, 26.0f, 0.09f), theme.adj (juce::Colour (0xff33444d)), juce::Justification::centredLeft);
+    fonts::draw (g, "VOX SMOOVE", { 26.0f, 31.0f, 232.0f, 26.0f }, fonts::make (700, 26.0f, 0.09f), pal.title, juce::Justification::centredLeft);
     fonts::draw (g, utf8 ("PLAYBOX AUDIO \xc2\xb7 ") + VERSION, { 26.0f, 64.0f, 232.0f, 13.5f }, fonts::make (400, 10.0f, 0.12f), pal.muted, juce::Justification::centredLeft);
 
     // stereo section
-    g.setColour (rgba (71, 99, 111, 0.13f));
+    g.setColour (pal.shade.withAlpha (0.13f));
     g.fillRect (26, 549, 232, 1);
-    fonts::draw (g, "STEREO", { 26.0f, 563.0f, 200.0f, 24.0f }, fonts::make (700, 10.0f, 0.08f), theme.adj (juce::Colour (0xff58707c)), juce::Justification::centredLeft);
+    fonts::draw (g, "STEREO", { 26.0f, 563.0f, 200.0f, 24.0f }, fonts::make (700, 10.0f, 0.08f), pal.label, juce::Justification::centredLeft);
     fonts::draw (g, "MODE", { 26.0f, 598.0f, 100.0f, 13.5f }, fonts::make (400, 10.0f, 0.08f), pal.muted, juce::Justification::centredLeft);
 
     // utility rail
@@ -206,14 +218,14 @@ void EditorContent::paint (juce::Graphics& g)
     g.setColour (railBorder);
     g.fillRect (F + railW + utilW - 1, F, 1, bodyH);
 
-    g.setColour (rgba (103, 137, 151, 0.1f));
+    g.setColour (pal.tint.withAlpha (0.1f));
     g.fillRect (F + railW, F, utilW, 29);
-    const auto titleColour = theme.adj (juce::Colour (0xff58707c));
+    const auto titleColour = pal.label;
     const auto titleFont = fonts::make (700, 10.0f, 0.08f);
     fonts::draw (g, "SPEED", { 292.0f, 10.0f, 120.0f, 15.0f }, titleFont, titleColour, juce::Justification::centredLeft);
 
     auto section = [&] (int top, int height) {
-        g.setColour (rgba (133, 164, 177, 0.2f));
+        g.setColour (pal.tint.withAlpha (0.15f));
         g.fillRect (F + railW, top, utilW - 1, height);
         g.setColour (sectionBorder);
         g.fillRect (F + railW, top, utilW - 1, 1);
@@ -233,14 +245,14 @@ void EditorContent::paint (juce::Graphics& g)
     const juce::Rectangle<int> bottom (F, F + bodyH, layout::designWidth - 2 * F, layout::bottomBarHeight);
     g.setColour (pal.bottomBar);
     g.fillRect (bottom);
-    const auto dim = juce::Colour (0xff77878f);
+    const auto dim = pal.barDim;
     fonts::draw (g, "PLAYBOX AUDIO", bottom.toFloat().withTrimmedLeft (16.0f), fonts::make (400, 8.0f, 0.12f), dim, juce::Justification::centredLeft);
-    fonts::draw (g, "VOX SMOOVE", bottom.toFloat(), fonts::make (700, 18.0f, 0.07f), juce::Colour (0xffedf4f6));
+    fonts::draw (g, "VOX SMOOVE", bottom.toFloat(), fonts::make (700, 18.0f, 0.07f), pal.barText);
     fonts::draw (g, theme.isBypassed() ? "BYPASSED" : (theme.isDelta() ? "DELTA" : "ACTIVE"), bottom.toFloat().withTrimmedRight (18.0f),
         fonts::make (400, 8.0f, 0.12f), dim, juce::Justification::centredRight);
 
     // the light frame around the plugin
-    g.setColour (rgba (236, 245, 248, 0.72f));
+    g.setColour (pal.frame.withAlpha (0.72f));
     g.drawRect (0, 0, layout::designWidth, layout::designHeight, F);
 }
 } // namespace vox

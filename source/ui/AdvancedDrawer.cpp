@@ -42,23 +42,24 @@ void AdvancedDrawer::resized()
 
 void AdvancedDrawer::paint (juce::Graphics& g)
 {
+    const auto& pal = theme.p();
     const auto area = getLocalBounds().toFloat();
     juce::Path p;
     p.addRoundedRectangle (area.getX(), area.getY(), area.getWidth() + 12.0f, area.getHeight(), 10.0f);
-    juce::DropShadow (juce::Colour::fromFloatRGBA (58.0f / 255.0f, 81.0f / 255.0f, 91.0f / 255.0f, 0.22f), 30, { -4, 12 }).drawForPath (g, p);
+    juce::DropShadow (pal.shade.withAlpha (0.22f), 30, { -4, 12 }).drawForPath (g, p);
 
-    g.setColour (juce::Colour::fromFloatRGBA (196.0f / 255.0f, 214.0f / 255.0f, 221.0f / 255.0f, 0.97f));
+    g.setColour (pal.panel.withAlpha (0.97f));
     g.fillPath (p);
-    g.setColour (juce::Colours::white.withAlpha (0.25f));
+    g.setColour (theme.sheen (0.25f));
     g.strokePath (p, juce::PathStrokeType (1.0f));
 
-    const auto ink = theme.adj (juce::Colour (0xff58707c));
+    const auto ink = pal.label;
     fonts::draw (g, "ADVANCED", { (float) pad, 16.0f, 200.0f, 14.0f }, fonts::make (700, 10.0f, 0.08f), ink, juce::Justification::centredLeft);
     fonts::draw (g, "TILT", { (float) pad, 126.0f, 200.0f, 14.0f }, fonts::make (700, 10.0f, 0.08f), ink, juce::Justification::centredLeft);
     fonts::draw (g, "Low acts below 500 Hz, high above 2 kHz.", { (float) pad, 138.0f, (float) width - 2.0f * pad, 14.0f },
-        fonts::make (400, 10.0f), theme.adj (juce::Colour (0xff667c87)), juce::Justification::centredLeft);
+        fonts::make (400, 10.0f), pal.soft, juce::Justification::centredLeft);
 
-    g.setColour (juce::Colour::fromFloatRGBA (71.0f / 255.0f, 99.0f / 255.0f, 111.0f / 255.0f, 0.13f));
+    g.setColour (pal.shade.withAlpha (0.13f));
     g.fillRect (pad, 114, width - 2 * pad, 1);
 }
 } // namespace vox

@@ -3,18 +3,25 @@
 
 namespace vox
 {
-namespace
+VoxLookAndFeel::VoxLookAndFeel (Theme& themeToUse) : theme (themeToUse)
 {
-    juce::Colour rgba (int r, int g, int b, float a) { return juce::Colour::fromFloatRGBA ((float) r / 255.0f, (float) g / 255.0f, (float) b / 255.0f, a); }
+    applyThemeColours();
+    theme.addChangeListener (this);
 }
 
-VoxLookAndFeel::VoxLookAndFeel (const Theme& themeToUse) : theme (themeToUse)
+VoxLookAndFeel::~VoxLookAndFeel()
 {
-    setColour (juce::PopupMenu::backgroundColourId, juce::Colour (0xfff2f7f9));
-    setColour (juce::PopupMenu::textColourId, juce::Colour (0xff3e515b));
-    setColour (juce::PopupMenu::highlightedBackgroundColourId, juce::Colour (0xff32a9ae));
-    setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
-    setColour (juce::PopupMenu::headerTextColourId, juce::Colour (0xff6e838f));
+    theme.removeChangeListener (this);
+}
+
+void VoxLookAndFeel::applyThemeColours()
+{
+    const auto& pal = theme.p();
+    setColour (juce::PopupMenu::backgroundColourId, pal.popover);
+    setColour (juce::PopupMenu::textColourId, pal.ink);
+    setColour (juce::PopupMenu::highlightedBackgroundColourId, pal.accent);
+    setColour (juce::PopupMenu::highlightedTextColourId, pal.onAccent);
+    setColour (juce::PopupMenu::headerTextColourId, pal.muted);
 }
 
 juce::Font VoxLookAndFeel::getPopupMenuFont()
@@ -25,7 +32,7 @@ juce::Font VoxLookAndFeel::getPopupMenuFont()
 void VoxLookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int width, int height)
 {
     g.fillAll (findColour (juce::PopupMenu::backgroundColourId));
-    g.setColour (rgba (64, 82, 93, 0.25f));
+    g.setColour (theme.p().shade.withAlpha (0.25f));
     g.drawRect (0, 0, width, height);
 }
 
@@ -58,22 +65,22 @@ void VoxLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int widt
     juce::Path progress;
     butt.createStrokedPath (progress, arc (startAngle, valueAngle));
     shadowShape.addPath (progress);
-    juce::DropShadow (rgba (54, 77, 87, 0.17f), 5, { 4, 5 }).drawForPath (g, shadowShape);
+    juce::DropShadow (pal.shade.withAlpha (0.17f), 5, { 4, 5 }).drawForPath (g, shadowShape);
 
     // the inner disc hides the shadow inside the ring, as the design's ::before does
     g.setColour (background);
     g.fillEllipse (area.withSizeKeepingCentre (d * 0.78f, d * 0.78f));
 
-    g.setColour (rgba (83, 112, 125, 0.18f));
+    g.setColour (pal.shade.withAlpha (0.18f));
     g.strokePath (arc (valueAngle, endAngle), butt);
-    g.setColour (pal.white);
+    g.setColour (pal.knobArc);
     g.strokePath (arc (startAngle, valueAngle), butt);
 
     // the face
     const auto face = area.withSizeKeepingCentre (d * 0.68f, d * 0.68f);
     juce::Path facePath;
     facePath.addEllipse (face);
-    juce::DropShadow (rgba (54, 76, 86, 0.25f), 10, { 6, 8 }).drawForPath (g, facePath);
+    juce::DropShadow (pal.shade.withAlpha (0.25f), 10, { 6, 8 }).drawForPath (g, facePath);
     g.setColour (pal.charcoal);
     g.fillEllipse (face);
     {
@@ -83,7 +90,7 @@ void VoxLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int widt
         juce::Path clip;
         clip.addEllipse (face);
         g.reduceClipRegion (clip);
-        g.setColour (juce::Colours::white.withAlpha (0.08f));
+        g.setColour (juce::Colours::white.withAlpha (0.08f)); // the face is always dark
         g.fillEllipse (face);
         g.setColour (pal.charcoal);
         g.fillEllipse (face.translated (0.0f, 1.0f));
@@ -97,7 +104,7 @@ void VoxLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int widt
     const auto inner = outer - length;
     const juce::Point<float> a (centre.x + std::sin (valueAngle) * outer, centre.y - std::cos (valueAngle) * outer);
     const juce::Point<float> b (centre.x + std::sin (valueAngle) * inner, centre.y - std::cos (valueAngle) * inner);
-    g.setColour (juce::Colours::white);
+    g.setColour (pal.barText);
     g.drawLine (juce::Line<float> (a, b), 2.0f);
     g.fillEllipse (juce::Rectangle<float> (2.0f, 2.0f).withCentre (a));
     g.fillEllipse (juce::Rectangle<float> (2.0f, 2.0f).withCentre (b));
@@ -110,7 +117,7 @@ void VoxLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int widt
     const auto area = juce::Rectangle<float> ((float) x, (float) y, (float) width, (float) height).expanded ((float) getSliderThumbRadius (slider), 0.0f);
     const auto cy = area.getCentreY();
 
-    g.setColour (rgba (73, 101, 113, 0.23f));
+    g.setColour (pal.shade.withAlpha (0.23f));
     g.fillRoundedRectangle (area.getX(), cy - 2.0f, area.getWidth(), 4.0f, 2.0f);
 
     const auto accent = slider.getProperties().contains ("accent")
@@ -120,8 +127,8 @@ void VoxLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int widt
     const auto thumb = juce::Rectangle<float> (12.0f, 12.0f).withCentre ({ sliderPos, cy });
     juce::Path thumbPath;
     thumbPath.addEllipse (thumb);
-    juce::DropShadow (rgba (47, 71, 80, 0.3f), 5, { 0, 2 }).drawForPath (g, thumbPath);
-    g.setColour (juce::Colours::white);
+    juce::DropShadow (pal.shade.withAlpha (0.3f), 5, { 0, 2 }).drawForPath (g, thumbPath);
+    g.setColour (pal.barText);
     g.fillEllipse (thumb);
     g.setColour (accent);
     g.fillEllipse (thumb.reduced (2.0f));

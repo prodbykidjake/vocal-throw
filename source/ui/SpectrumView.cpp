@@ -14,7 +14,6 @@ namespace
 
     const char* const shapeNames[] = { "Low Cut", "Low Shelf", "High Shelf", "High Cut", "Bell", "Bandpass", "Band Reject", "Tilt" };
 
-    juce::Colour rgba (int r, int g, int b, float a) { return juce::Colour::fromFloatRGBA ((float) r / 255.0f, (float) g / 255.0f, (float) b / 255.0f, a); }
 
     juce::String frequencyLabel (float hz) { return hz >= 1000.0f ? juce::String (juce::roundToInt (hz / 1000.0f)) + "k" : juce::String (juce::roundToInt (hz)); }
 }
@@ -185,11 +184,11 @@ void SpectrumView::paint (juce::Graphics& g)
     auto tone = [&] (juce::Colour c) { return bypassed ? c.withSaturation (0.0f) : c; };
 
     g.fillAll (tone (pal.graph));
-    g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.14f), 0.0f, 0.0f, juce::Colours::white.withAlpha (0.0f), 0.0f, h * 0.38f, false));
+    g.setGradientFill (juce::ColourGradient (theme.sheen (0.14f), 0.0f, 0.0f, theme.sheen (0.0f), 0.0f, h * 0.38f, false));
     g.fillRect (0.0f, 0.0f, w, h * 0.38f);
 
     // grid: 6 dB steps, and the standard frequencies
-    g.setColour (rgba (245, 251, 252, 0.22f));
+    g.setColour (tone (pal.graphInk.withAlpha (0.22f)));
     for (int i = -3; i <= 3; ++i)
         if (i != 0)
             g.fillRect (0.0f, zeroY - (float) i * dbPerGrid * ppd - 0.5f, w, 1.0f);
@@ -197,7 +196,7 @@ void SpectrumView::paint (juce::Graphics& g)
         g.fillRect (xForHz (hz) - 0.5f, 0.0f, 1.0f, h);
 
     // frequency labels along the top
-    const auto labelColour = tone (rgba (252, 255, 255, 0.88f));
+    const auto labelColour = tone (pal.graphInk.withAlpha (0.88f));
     for (const float hz : { 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f, 20000.0f })
         fonts::draw (g, frequencyLabel (hz), juce::Rectangle<float> (40.0f, freqLabelHeight).withCentre ({ xForHz (hz), freqLabelHeight * 0.5f }),
             fonts::make (400, 12.0f), labelColour);
@@ -209,7 +208,7 @@ void SpectrumView::paint (juce::Graphics& g)
         const auto db = i * (int) dbPerGrid;
         const auto text = db > 0 ? "+" + juce::String (db) : (db < 0 ? minus + juce::String (-db) : juce::String ("0"));
         fonts::draw (g, text, juce::Rectangle<float> (w - 11.0f - 22.0f, zeroY - (float) i * dbPerGrid * ppd - 8.0f, 22.0f, 16.0f),
-            fonts::make (400, 11.0f), tone (rgba (247, 252, 253, 0.86f)), juce::Justification::centredLeft);
+            fonts::make (400, 11.0f), tone (pal.graphInk.withAlpha (0.86f)), juce::Justification::centredLeft);
     }
 
     // zero line
@@ -234,19 +233,17 @@ void SpectrumView::paint (juce::Graphics& g)
         wash.lineTo (w, zeroY);
         wash.closeSubPath();
 
-        const auto top = theme.isDelta() ? juce::Colour (0xfff3ad8a) : juce::Colour (0xffc6e8eb);
-        const auto bottom = theme.isDelta() ? juce::Colour (0xffeb8663) : juce::Colour (0xff77b3bf);
-        g.setGradientFill (juce::ColourGradient (tone (top).withAlpha (0.75f), 0.0f, zeroY, tone (bottom).withAlpha (0.08f), 0.0f, juce::jmax (zeroY + 20.0f, deepest), false));
+        g.setGradientFill (juce::ColourGradient (tone (pal.reductionTop).withAlpha (0.75f), 0.0f, zeroY, tone (pal.reductionBottom).withAlpha (0.08f), 0.0f, juce::jmax (zeroY + 20.0f, deepest), false));
         g.fillPath (wash);
 
         // soft glow, then the line itself. With nothing being reduced it would just hide the coral zero line.
         if (deepest - zeroY > 0.75f)
         {
-            g.setColour (juce::Colours::white.withAlpha (0.14f));
+            g.setColour (tone (pal.graphInk.withAlpha (0.14f)));
             g.strokePath (line, juce::PathStrokeType (9.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-            g.setColour (juce::Colours::white.withAlpha (0.2f));
+            g.setColour (tone (pal.graphInk.withAlpha (0.2f)));
             g.strokePath (line, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-            g.setColour (rgba (251, 255, 255, 0.95f));
+            g.setColour (tone (pal.graphInk.withAlpha (0.95f)));
             g.strokePath (line, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
     }
@@ -270,7 +267,7 @@ void SpectrumView::paint (juce::Graphics& g)
         juce::Path dashed;
         const float dashes[] = { 5.0f, 4.0f };
         juce::PathStrokeType (1.5f).createDashedStroke (dashed, curve, dashes, 2);
-        g.setColour (tone (rgba (60, 85, 97, 0.62f)));
+        g.setColour (tone (pal.curve.withAlpha (0.62f)));
         g.fillPath (dashed);
     }
 
@@ -293,19 +290,19 @@ void SpectrumView::paint (juce::Graphics& g)
 
         if (b == selected)
         {
-            g.setColour (juce::Colours::white.withAlpha (0.23f));
+            g.setColour (tone (pal.graphInk.withAlpha (0.23f)));
             g.fillEllipse (circle.expanded (7.0f));
         }
 
         juce::Path shadowShape;
         shadowShape.addEllipse (circle);
-        juce::DropShadow (rgba (53, 75, 84, 0.25f), 5, { 0, 2 }).drawForPath (g, shadowShape);
+        juce::DropShadow (pal.shade.withAlpha (0.25f), 5, { 0, 2 }).drawForPath (g, shadowShape);
 
         if (s.enabled)
         {
             g.setColour (colour);
             g.fillEllipse (circle);
-            g.setColour (rgba (255, 255, 255, 0.86f));
+            g.setColour (tone (pal.graphInk.withAlpha (0.86f)));
             g.drawEllipse (circle.reduced (1.0f), 2.0f);
         }
         else
@@ -313,7 +310,7 @@ void SpectrumView::paint (juce::Graphics& g)
             // bypassed: hollow and dim
             g.setColour (colour.withAlpha (0.28f));
             g.fillEllipse (circle);
-            g.setColour (rgba (255, 255, 255, 0.6f));
+            g.setColour (tone (pal.graphInk.withAlpha (0.6f)));
             juce::Path ring;
             ring.addEllipse (circle.reduced (1.0f));
             juce::Path dashedRing;
@@ -326,11 +323,11 @@ void SpectrumView::paint (juce::Graphics& g)
     // "+" add band
     {
         const auto area = addButtonArea();
-        g.setColour (rgba (81, 112, 126, overAdd ? 0.3f : 0.17f));
+        g.setColour (pal.tint.withAlpha (overAdd ? 0.3f : 0.17f));
         g.fillEllipse (area);
-        g.setColour (rgba (255, 255, 255, 0.65f));
+        g.setColour (tone (pal.graphInk.withAlpha (0.65f)));
         g.drawEllipse (area.reduced (0.5f), 1.0f);
-        icons::stroke (g, icons::plus(), area.withSizeKeepingCentre (14.0f, 14.0f), juce::Colours::white, 1.6f);
+        icons::stroke (g, icons::plus(), area.withSizeKeepingCentre (14.0f, 14.0f), tone (pal.graphInk), 1.6f);
     }
 
     // read-out for the node being dragged or hovered
@@ -345,9 +342,9 @@ void SpectrumView::paint (juce::Graphics& g)
         const auto pos = nodePosition (info);
         auto box = juce::Rectangle<float> (176.0f, 22.0f).withCentre ({ pos.x, pos.y - 34.0f });
         box = box.withX (juce::jlimit (4.0f, w - 4.0f - box.getWidth(), box.getX())).withY (juce::jmax (freqLabelHeight, box.getY()));
-        g.setColour (rgba (52, 67, 75, 0.94f));
+        g.setColour (pal.charcoal.withAlpha (0.94f));
         g.fillRoundedRectangle (box, 5.0f);
-        fonts::draw (g, text, box, fonts::make (500, 11.0f), juce::Colours::white);
+        fonts::draw (g, text, box, fonts::make (500, 11.0f), pal.barText);
     }
 
     if (bypassed)

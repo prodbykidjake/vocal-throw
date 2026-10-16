@@ -47,7 +47,7 @@ float TopBarButton::getIdealWidth() const
 
 void TopBarButton::paintButton (juce::Graphics& g, bool over, bool)
 {
-    const auto base = juce::Colour::fromFloatRGBA (244.0f / 255.0f, 249.0f / 255.0f, 250.0f / 255.0f, over ? 1.0f : 0.88f);
+    const auto base = theme.p().topBarInk.withAlpha (over ? 1.0f : 0.88f);
     const auto colour = muted ? base.withMultipliedAlpha (0.38f / 0.88f) : base;
     const auto area = getLocalBounds().toFloat();
 
@@ -63,7 +63,7 @@ void TopBarButton::paintButton (juce::Graphics& g, bool over, bool)
     fonts::draw (g, getButtonText(), area, fonts::make (weight, fontPx), colour);
     if (activeLook)
     {
-        g.setColour (juce::Colours::white);
+        g.setColour (theme.p().topBarInk);
         g.fillRect (area.getX(), area.getCentreY() + 10.0f, area.getWidth(), 1.0f);
     }
 }
@@ -79,7 +79,7 @@ LockButton::LockButton (Theme& t, juce::AudioProcessorValueTreeState& state)
 
 void LockButton::paintButton (juce::Graphics& g, bool over, bool)
 {
-    const auto colour = theme.adj (over ? juce::Colour (0xff3e515b) : juce::Colour (0xff607884));
+    const auto colour = over ? theme.p().ink : theme.p().soft;
     icons::stroke (g, icons::lock (getToggleState()), getLocalBounds().toFloat().withSizeKeepingCentre (15.0f, 15.0f), colour, 1.4f);
 }
 
@@ -114,7 +114,7 @@ void MiniMeter::paint (juce::Graphics& g)
     {
         const auto active = i < lit;
         const auto h = active ? (i % 3 == 2 ? 10.0f : 6.0f) : 3.0f;
-        g.setColour (active ? pal.accent : juce::Colour::fromFloatRGBA (68.0f / 255.0f, 94.0f / 255.0f, 106.0f / 255.0f, 0.18f));
+        g.setColour (active ? pal.accent : pal.shade.withAlpha (0.18f));
         g.fillRoundedRectangle ((float) i * (w + gap), (float) getHeight() - h, w, h, 2.0f);
     }
 }

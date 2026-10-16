@@ -21,8 +21,7 @@ public:
 
     void paintButton (juce::Graphics& g, bool over, bool) override
     {
-        juce::ignoreUnused (theme);
-        const auto colour = juce::Colour::fromFloatRGBA (244.0f / 255.0f, 249.0f / 255.0f, 250.0f / 255.0f, over ? 1.0f : 0.88f);
+        const auto colour = theme.p().topBarInk.withAlpha (over ? 1.0f : 0.88f);
         const auto area = getLocalBounds().toFloat();
         fonts::draw (g, juce::CharPointer_UTF8 ("\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2"), area.withWidth (dotsWidth()), fonts::make (500, 16.0f, 0.13f), colour, juce::Justification::centredLeft);
         fonts::draw (g, processor.getProgramName (processor.getCurrentProgram()), area.withTrimmedLeft (dotsWidth() + 11.0f), fonts::make (500, 16.0f, 0.03f), colour, juce::Justification::centredLeft);

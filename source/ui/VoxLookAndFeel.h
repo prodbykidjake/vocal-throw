@@ -10,10 +10,11 @@ namespace vox
 
     Slider properties (set with getProperties().set): "bg" (ARGB int) is the colour the knob ring sits on,
     "accent" (ARGB int) overrides the thumb colour of a linear slider. */
-class VoxLookAndFeel : public juce::LookAndFeel_V4
+class VoxLookAndFeel : public juce::LookAndFeel_V4, private juce::ChangeListener
 {
 public:
-    explicit VoxLookAndFeel (const Theme& themeToUse);
+    explicit VoxLookAndFeel (Theme& themeToUse);
+    ~VoxLookAndFeel() override;
 
     void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height, float sliderPosProportional,
         float rotaryStartAngle, float rotaryEndAngle, juce::Slider&) override;
@@ -30,7 +31,10 @@ public:
     static constexpr float rotaryEnd = juce::MathConstants<float>::pi * 2.75f;
 
 private:
-    const Theme& theme;
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { applyThemeColours(); }
+    void applyThemeColours();
+
+    Theme& theme;
     juce::SharedResourcePointer<fonts::Typefaces> typefaces; // keeps DM Sans loaded while the UI exists
 };
 } // namespace vox

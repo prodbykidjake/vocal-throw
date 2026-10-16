@@ -11,8 +11,6 @@ namespace
     constexpr int headingW = 95;
     constexpr int sliderW = 104;
     constexpr int shapesW = 236;
-
-    juce::Colour rgba (int r, int g, int b, float a) { return juce::Colour::fromFloatRGBA ((float) r / 255.0f, (float) g / 255.0f, (float) b / 255.0f, a); }
 }
 
 class BandEditor::ShapeButton : public juce::Button
@@ -36,12 +34,12 @@ public:
         }
         else if (over)
         {
-            g.setColour (rgba (111, 152, 167, 0.15f));
+            g.setColour (theme.p().tint.withAlpha (0.15f));
             g.fillRoundedRectangle (area, 4.0f);
         }
 
         icons::stroke (g, icons::bandShape (shape), area.withSizeKeepingCentre (18.0f, 17.0f),
-            selected ? juce::Colours::white : theme.adj (juce::Colour (0xff6e98a7)), 1.8f);
+            selected ? theme.p().onAccent : theme.p().muted, 1.8f);
     }
 
 private:
@@ -219,23 +217,24 @@ void BandEditor::resized()
 
 void BandEditor::paint (juce::Graphics& g)
 {
+    const auto& pal = theme.p();
     const auto area = getLocalBounds().toFloat().reduced (1.0f);
     juce::Path p;
     p.addRoundedRectangle (area, 10.0f);
-    juce::DropShadow (rgba (58, 81, 91, 0.17f), 35, { 0, 15 }).drawForPath (g, p);
+    juce::DropShadow (pal.shade.withAlpha (0.17f), 35, { 0, 15 }).drawForPath (g, p);
 
-    g.setColour (rgba (196, 214, 221, 0.91f));
+    g.setColour (pal.panel.withAlpha (0.91f));
     g.fillPath (p);
-    g.setColour (rgba (255, 255, 255, 0.25f));
+    g.setColour (theme.sheen (0.25f));
     g.strokePath (p, juce::PathStrokeType (1.0f));
 
     const auto active = band >= 0 && shownActive;
     const auto text = band >= 0 ? "BAND " + juce::String (band + 1) : juce::String ("NO BAND");
     fonts::draw (g, text, { (float) padX + 30.0f, 19.0f, 80.0f, 22.0f }, fonts::make (700, 10.0f, 0.07f),
-        theme.adj (juce::Colour (0xff40525d)).withMultipliedAlpha (active && shownEnabled ? 1.0f : 0.35f), juce::Justification::centredLeft);
+        pal.ink.withMultipliedAlpha (active && shownEnabled ? 1.0f : 0.35f), juce::Justification::centredLeft);
 
     if (! active)
         fonts::draw (g, "Double-click the graph to add a band", { (float) padX + headingW + colGap, 8.0f, 400.0f, 14.0f }, fonts::make (400, 10.0f),
-            theme.adj (juce::Colour (0xff667c87)), juce::Justification::centredLeft);
+            pal.soft, juce::Justification::centredLeft);
 }
 } // namespace vox

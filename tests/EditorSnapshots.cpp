@@ -96,3 +96,48 @@ TEST_CASE ("The editor renders at the design size in every state", "[editor][sna
         CHECK (h.plugin.getUiScale() == Catch::Approx (0.7f).margin (0.01f));
     }
 }
+
+TEST_CASE ("Every look renders in each state and is saved with the session", "[editor][snapshot]")
+{
+    for (int i = 0; i < vox::numLooks; ++i)
+    {
+        const auto look = (vox::Look) i;
+        const auto name = "look-" + juce::String (vox::lookName (look)).toLowerCase();
+
+        Harness h;
+        h.editor->getContent().setLook (look);
+        CHECK (h.plugin.getLook() == i);
+
+        // some resonant material, so the graph shows the look's reduction colours
+        auto signal = testing_helpers::whiteNoise (24000, 0.05f);
+        testing_helpers::addSine (signal, 350.0, 0.3f);
+        testing_helpers::addSine (signal, 2800.0, 0.25f);
+        testing_helpers::addSine (signal, 6500.0, 0.15f);
+        testing_helpers::run (h.plugin, signal);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (150);
+
+        auto image = h.snapshot();
+        save (image, name);
+
+        testing_helpers::setParam (h.plugin, ParamIDs::delta, 1.0f);
+        auto delta = h.snapshot();
+        save (delta, name + "-delta");
+        CHECK (delta.getPixelAt (200, 540) != image.getPixelAt (200, 540));
+        testing_helpers::setParam (h.plugin, ParamIDs::delta, 0.0f);
+
+        testing_helpers::setParam (h.plugin, ParamIDs::bypass, 1.0f);
+        save (h.snapshot(), name + "-bypass");
+        testing_helpers::setParam (h.plugin, ParamIDs::bypass, 0.0f);
+
+        h.editor->getContent().setDrawerOpen (true, false);
+        h.editor->getContent().showPopover (vox::Popover::Kind::settings);
+        save (h.snapshot(), name + "-panels");
+
+        // the look comes back with the session, and a new editor opens in it
+        juce::MemoryBlock state;
+        h.plugin.getStateInformation (state);
+        PluginProcessor restored;
+        restored.setStateInformation (state.getData(), (int) state.getSize());
+        CHECK (restored.getLook() == i);
+    }
+}

@@ -15,6 +15,7 @@ public:
 
     std::function<void (float)> onScale; // 0.7, 0.85 or 1.0
     std::function<void()> onClose;
+    std::function<void (Look)> onLook;
 
     void show (Kind kind, float currentScale);
     Kind getKind() const noexcept { return kind; }
@@ -26,10 +27,12 @@ public:
 
 private:
     class Link;
+    class LookChip;
 
     Theme& theme;
     Kind kind = Kind::help;
     float scale = 0.85f;
     std::unique_ptr<Link> closeLink, small, medium, large;
+    std::array<std::unique_ptr<LookChip>, numLooks> looks;
 };
 } // namespace vox

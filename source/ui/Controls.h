@@ -20,7 +20,7 @@ namespace fmt
 }
 
 /** Draws the rounded value read-out used under knobs and sliders. */
-void drawPill (juce::Graphics& g, juce::Rectangle<float> area, const juce::String& text, float fontPx);
+void drawPill (juce::Graphics& g, const Theme& theme, juce::Rectangle<float> area, const juce::String& text, float fontPx);
 
 /** A knob with its caption above and a value pill below. */
 class Knob : public juce::Component
