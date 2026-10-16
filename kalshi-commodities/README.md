@@ -61,6 +61,19 @@ is. Each market gets its own bars, fitted to how that market moves:
   call on that price (the standalone WTI coach has worked this way since v12.4); the meter keeps showing, and the card
   says why. EDGE and PULL OUT already skipped it.
 
+**Checked on days nothing was tuned on.** Fresh Kalshi history from Oct 13 evening to Oct 15 (1,195 windows over
+the seven markets, after every setting above was fixed) was replayed through the board's own code in each mode:
+
+| mode | windows called | won | predicted | profit at the fill, fees included |
+| --- | --- | --- | --- | --- |
+| **Standard** | 84% | 92.3% | 89-91% | +2.3¢ a call |
+| **Strict** | 74% | 95.2% | 93.5-95% | +1.4¢ a call |
+| **Very strict** | 62% | 97.6% | 96.5-98% | +1.2¢ a call |
+
+The replay matches the live board: of 266 live v1.4 calls in the same windows, it made 263, on the same side in 259,
+with the same 242 wins. Natural gas was the weakest market in every mode (87.1%, 89.4% and 94.9%). PULL OUT fired 7
+times and was right all 7; EDGE went 80-20 (+2¢ a signal at the next minute's price).
+
 ## v1.4: surer calls, and a PULL OUT alarm
 
 **Fewer, surer settlement calls.** Each market now has its own rules (`cm15m/tuning.py`), chosen on the first 60% of
