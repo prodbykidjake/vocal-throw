@@ -270,6 +270,28 @@ void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
         // plain parameter state (older sessions)
         apvts.replaceState (juce::ValueTree::fromXml (*xml));
     }
+
+    announceAllParameters();
+}
+
+void PluginProcessor::announceAllParameters()
+{
+    // A host can leave a switch at a raw value such as 0.8 (it reads as "on"). Restoring "on" changes nothing
+    // in the state, so the parameter would keep reporting 0.8 to the host. Make every parameter exactly the
+    // restored value; anything that was already exact is left alone.
+    for (auto* param : getParameters())
+    {
+        auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param);
+        if (ranged == nullptr)
+            continue;
+
+        if (const auto* restored = apvts.getRawParameterValue (ranged->getParameterID()))
+        {
+            const auto target = ranged->convertTo0to1 (restored->load());
+            if (! juce::approximatelyEqual (target, ranged->getValue()))
+                ranged->setValueNotifyingHost (target);
+        }
+    }
 }
 
 void PluginProcessor::switchToSlot (int slot)

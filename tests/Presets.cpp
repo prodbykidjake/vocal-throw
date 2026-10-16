@@ -205,3 +205,35 @@ TEST_CASE ("Older plain parameter states still load", "[presets][state]")
     target.setStateInformation (legacy.getData(), (int) legacy.getSize());
     CHECK (depthOf (target) == Catch::Approx (61.0f).margin (0.2f));
 }
+
+TEST_CASE ("Restoring a state tells the host every parameter's value", "[presets][state]")
+{
+    // pluginval's state restoration test (and hosts) read parameters back after setStateInformation. A bool
+    // set to 0.8 by the host stays "on" inside the plugin; restoring "on" changes nothing, so without an
+    // explicit notification the host would keep reading 0.8.
+    struct Recorder : juce::AudioProcessorParameter::Listener
+    {
+        std::map<int, float> last;
+        void parameterValueChanged (int index, float value) override { last[index] = value; }
+        void parameterGestureChanged (int, bool) override {}
+    };
+
+    PluginProcessor plugin;
+    auto* active = plugin.apvts.getParameter (ParamIDs::bandParamID (2, BandParam::active));
+    REQUIRE (active != nullptr);
+    active->setValueNotifyingHost (1.0f);
+
+    juce::MemoryBlock state;
+    plugin.getStateInformation (state);
+
+    Recorder recorder;
+    active->addListener (&recorder);
+    active->setValueNotifyingHost (0.8f); // still "on"
+    recorder.last.clear();
+
+    plugin.setStateInformation (state.getData(), (int) state.getSize());
+    active->removeListener (&recorder);
+
+    REQUIRE (recorder.last.count (active->getParameterIndex()) == 1);
+    CHECK (recorder.last[active->getParameterIndex()] == Catch::Approx (1.0f));
+}

@@ -32,6 +32,9 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    env:
+      # true once the Apple Developer ID secrets are added to the repo; until then macOS builds are unsigned
+      HAS_SIGNING: ${{ secrets.DEV_ID_APP_CERT != '' }}
     strategy:
       fail-fast: false # show all errors for each platform (vs. cancel jobs on error)
       matrix:
@@ -40,12 +43,12 @@ jobs:
             os: ubuntu-22.04
             pluginval-binary: ./pluginval
             extra-flags: -G Ninja -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld
-          # macOS and Windows are disabled during early development to save CI minutes.
-          # Re-enable them (and the macOS/Windows signing steps below) when preparing a release.
-          # - name: macOS
-          #   os: macos-14
-          #   pluginval-binary: pluginval.app/Contents/MacOS/pluginval
-          #   extra-flags: -G Ninja -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          # Apple Silicon only for now. For a release, use -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" (universal).
+          - name: macOS
+            os: macos-14
+            pluginval-binary: pluginval.app/Contents/MacOS/pluginval
+            extra-flags: -G Ninja -DCMAKE_OSX_ARCHITECTURES=arm64
+          # Windows is disabled for now; re-enable it when preparing a release.
           # - name: Windows
           #   os: windows-latest
           #   pluginval-binary: ./pluginval.exe
@@ -127,7 +130,7 @@ jobs:
       - name: Import Certificates (macOS)
         uses: sudara/basic-macos-keychain-action@v1
         id: keychain
-        if: ${{ runner.os == 'macOS'}}
+        if: ${{ runner.os == 'macOS' && env.HAS_SIGNING == 'true' }}
         with:
           dev-id-app-cert: ${{ secrets.DEV_ID_APP_CERT }}
           dev-id-app-password: ${{ secrets.DEV_ID_APP_PASSWORD }}
@@ -135,7 +138,7 @@ jobs:
           dev-id-installer-password: ${{ secrets.DEV_ID_INSTALLER_PASSWORD }}
 
       - name: Codesign (macOS)
-        if: ${{ runner.os == 'macOS' }}
+        if: ${{ runner.os == 'macOS' && env.HAS_SIGNING == 'true' }}
         timeout-minutes: 5
         run: |
           # Each plugin must be code signed
@@ -145,7 +148,7 @@ jobs:
           codesign --force --keychain ${{ steps.keychain.outputs.keychain-path }} -s "${{ secrets.DEVELOPER_ID_APPLICATION}}" -v "${{ env.STANDALONE_PATH }}" --deep --strict --options=runtime --timestamp
 
       - name: Add Custom Icons (macOS)
-        if: ${{ runner.os == 'macOS' }}
+        if: ${{ runner.os == 'macOS' && env.HAS_SIGNING == 'true' }}
         run: |
           # add the icns as its own icon resource (meta!)
           sips -i packaging/pamplejuce.icns
@@ -164,7 +167,7 @@ jobs:
           SetFile -a C "${{ env.CLAP_PATH }}"
 
       - name: pkgbuild, Productbuild and Notarize
-        if: ${{ runner.os == 'macOS' }}
+        if: ${{ runner.os == 'macOS' && env.HAS_SIGNING == 'true' }}
         timeout-minutes: 5
         run: |
           pkgbuild --identifier "${{ env.BUNDLE_ID }}.au.pkg" --version $VERSION --component "${{ env.AU_PATH }}" --install-location "/Library/Audio/Plug-Ins/Components"  "packaging/${{ env.PRODUCT_NAME }}.au.pkg"
@@ -182,6 +185,38 @@ jobs:
 
           xcrun notarytool submit "${{ env.ARTIFACT_NAME }}.pkg" --apple-id ${{ secrets.NOTARIZATION_USERNAME }} --password ${{ secrets.NOTARIZATION_PASSWORD }} --team-id ${{ secrets.TEAM_ID }} --wait
           xcrun stapler staple "${{ env.ARTIFACT_NAME }}.pkg"
+
+      - name: Validate AU (macOS)
+        if: ${{ runner.os == 'macOS' }}
+        run: |
+          # the build copied the component to ~/Library/Audio/Plug-Ins/Components
+          killall -9 AudioComponentRegistrar || true
+          auval -strict -v aufx Vxsm Pbxa
+
+      - name: Package unsigned plugins (macOS)
+        if: ${{ runner.os == 'macOS' && env.HAS_SIGNING != 'true' }}
+        run: |
+          # Apple Silicon won't load unsigned code; an ad-hoc signature is enough to try it on your own Mac
+          codesign --force --deep --sign - "${{ env.AU_PATH }}"
+          codesign --force --deep --sign - "${{ env.VST3_PATH }}"
+          codesign --verify --deep --strict "${{ env.AU_PATH }}"
+          codesign --verify --deep --strict "${{ env.VST3_PATH }}"
+
+          DIST="${{ env.PRODUCT_NAME }} macOS"
+          mkdir -p "$DIST"
+          cp -R "${{ env.AU_PATH }}" "$DIST/"
+          cp -R "${{ env.VST3_PATH }}" "$DIST/"
+          cp packaging/INSTALL-macOS.txt "$DIST/INSTALL.txt"
+          # ditto keeps the bundles' permissions and symlinks; upload-artifact on its own would not
+          ditto -c -k --keepParent "$DIST" "Vox-Smoove-macOS-arm64.zip"
+          unzip -l "Vox-Smoove-macOS-arm64.zip"
+
+      - name: Upload unsigned plugins (macOS)
+        if: ${{ runner.os == 'macOS' && env.HAS_SIGNING != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: Vox-Smoove-macOS-arm64
+          path: Vox-Smoove-macOS-arm64.zip
 
       - name: Zip
         if: ${{ runner.os == 'Linux' }}
@@ -235,7 +270,7 @@ jobs:
           path: "${{ env.ARTIFACTS_PATH }}/${{ env.ARTIFACT_NAME }}.zip"
 
       - name: Upload pkg (macOS)
-        if: ${{ runner.os == 'macOS' }}
+        if: ${{ runner.os == 'macOS' && env.HAS_SIGNING == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT_NAME }}.pkg

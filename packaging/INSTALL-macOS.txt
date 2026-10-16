@@ -1,0 +1,23 @@
+Vox Smoove - installing on your Mac (Apple Silicon)
+====================================================
+
+These builds are not signed with an Apple Developer ID yet, so macOS needs one extra step.
+
+1. Copy the plug-ins into place (in Finder press Cmd+Shift+G and paste each folder path):
+
+     Vox Smoove.component  ->  ~/Library/Audio/Plug-Ins/Components/
+     Vox Smoove.vst3       ->  ~/Library/Audio/Plug-Ins/VST3/
+
+2. Open Terminal and paste this (one line), then press Return:
+
+     xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Vox Smoove.component" ~/Library/Audio/Plug-Ins/VST3/"Vox Smoove.vst3"
+
+   This removes the "downloaded from the internet" flag. Without it macOS says the plug-in
+   is damaged or can't be opened.
+
+3. Restart your DAW (or rescan plug-ins). The plug-in is listed under Playbox Audio.
+   In Logic: Audio FX > Audio Units > Playbox Audio > Vox Smoove.
+
+If Logic doesn't show it, quit Logic and run in Terminal:
+     killall -9 AudioComponentRegistrar
+then open Logic again (it rescans Audio Units).

@@ -62,6 +62,7 @@ public:
 
 private:
     vs::SuppressorParams readParams() const noexcept;
+    void announceAllParameters();
 
     int currentProgram = 0;
     float uiScale = 0.85f;
