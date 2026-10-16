@@ -22,6 +22,33 @@ records with the WTI, natural gas or gold coaches, and they keep running as they
 
 It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
+## v1.6: EARLY calls and STRONG EDGE signals
+
+Two things the history says are worth acting on, now marked on the cards. Neither changes when a call or a signal
+happens; they only show which ones paid best.
+
+- **EARLY** (a gold tag on the call): the call was made with **6:30 or more left**. A call that early needs the price
+  to be clearly past the target already, so it only happens in some windows (in Strict, about a third of its calls,
+  typically around 8:25 left). At Strict's level, tested on later days than the settings were chosen on, those early
+  calls won as often as the later ones (94.7% against 95.3%) and cost less to buy (about 93¢ instead of 95¢): about
+  **+1.4¢ a call** at the fill, against +0.3¢ for the later ones. Each card shows its early record ("early calls:
+  W–L"). The other windows cannot be called at 95% that early: with 7 minutes left their price can still cross the
+  target, and nothing tested (a separate early bar, momentum, gold's moves, more weight on Kalshi's odds) got more
+  windows to 95% that early.
+- **STRONG EDGE**: the EDGE signal's gap is **12 to 19 points** over the ask (as shown on the card). Those paid about **twice as much per
+  contract** as 8-12-point signals, in both halves of the history (+14.6¢ vs +7.8¢, then +9.6¢ vs +4.0¢, fills a minute
+  later, fees included), so the box says to size up (about 2× your normal size). A gap of **20+ points** says to keep
+  normal size: those were not reliable (+18.6¢, then -2.3¢); the market often knows something the model does not.
+  The card's EDGE record and the top strip show the strong signals' own results.
+
+Also tested and not used: gold's last 1-3 minutes as a lead for silver, copper, platinum and palladium (no help: each
+metal's own price already moves with gold). Order flow and resting limit orders under the ask could not be tested
+(no trade history yet). This downloads Kalshi's trades with the history, so they can be:
+
+```bash
+cd ~/kalshi-wti && for s in KXWTI15M KXGOLD15M KXSILVER15M KXCOPPER15M KXNATGAS15M KXPALLADIUM15M KXPLATINUM15M; do python3 tools/backfill.py --series $s --out data/history-$s.db --rps 5 --trades; done
+```
+
 ## v1.5: what testing found, and a strictness switch
 
 Each market's engine was re-tested on its own terms against two months of history. Settings were always chosen on
@@ -210,7 +237,7 @@ phone out and get a new link.
 ## Setup (macOS, next to the other coaches)
 
 ```bash
-unzip -o ~/Downloads/kalshi-commodities-v1.5.1.zip -d ~
+unzip -o ~/Downloads/kalshi-commodities-v1.6.zip -d ~
 cd ~/kalshi-commodities
 source ~/.venv/bin/activate
 python -m cm15m probe     # first time: lists the 15-minute series and each live target (paste it to Claude)

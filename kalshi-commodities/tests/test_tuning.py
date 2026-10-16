@@ -294,3 +294,43 @@ def test_the_background_modes_skip_the_backup_price_too(tmp_path):
         live.step(types.SimpleNamespace(engine=engine("live")), 1000 + i)
         backup.step(types.SimpleNamespace(engine=engine("FALLBACK (live)")), 1000 + i)
     assert live.calls.call is not None and backup.calls.call is None
+
+
+def test_early_calls_are_counted_under_the_current_rules_only(tmp_path):
+    cfg = Config()
+    cfg.storage.data_dir = str(tmp_path)
+    cfg.notify.desktop = cfg.notify.sound = False
+    cfg.board.markets = ["silver", "wti"]
+    board = Board(cfg, sim={"window_s": 900, "warmup_minutes": 10})
+    asyncio.run(board.build())
+    rows = (("T1", 420.0, "UP", "UP", "v1.4"),     # 7:00 left, won: early
+            ("T2", 390.0, "UP", "DOWN", "v1.4"),   # exactly 6:30 left, lost: early
+            ("T3", 300.0, "UP", "UP", "v1.4"),     # 5:00 left: not early
+            ("T4", 500.0, "UP", "UP", "strict"),   # early, but made in another mode
+            ("T5", 600.0, "UP", None, "v1.4"),     # early, not settled yet
+            ("T6", 700.0, "DOWN", "DOWN", None))   # early, made with tuning off (no rules tag)
+    for key in ("silver", "wti"):  # the board's own desk and a coach engine
+        d = board.desk(key)
+        store = board._window_store(d)
+        for tk, left, side, result, rules in rows:
+            store.add_call(tk, side, 0.9, 0.85, 1000.0, left, "confident", 0.9, 0.88, rules)
+            if result:
+                store.settle_call(tk, result, 2000.0)
+        board._early_step(d)
+        assert d.state["early"] == {"wins": 1, "losses": 1, "tag": "v1.4"}
+    board.set_mode("strict")
+    for key in ("silver", "wti"):
+        board._early_step(board.desk(key))
+        assert (board.desk(key).state["early"]["wins"], board.desk(key).state["early"]["losses"]) == (1, 0)
+    for key in ("silver", "wti"):  # tuning off: only the untagged calls count
+        d = board.desk(key)
+        (getattr(d, "engine", None) or d).cfg.trading.rules_tag = ""
+        board._early_step(d)
+        assert d.state["early"] == {"wins": 1, "losses": 0, "tag": ""}
+    assert board._build_state()["early_left_s"] == tuning.EARLY_LEFT_S == 390.0
+
+
+def test_the_demo_scales_the_early_line_with_its_short_windows(tmp_path):
+    cfg = Config()
+    cfg.storage.data_dir = str(tmp_path)
+    assert Board(cfg, sim={"window_s": 120}).early_left_s() == 52.0  # 6:30 of 15:00 = 52 s of a 2-minute window

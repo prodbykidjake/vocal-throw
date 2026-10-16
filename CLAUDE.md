@@ -182,5 +182,6 @@ check, validated on two months of history) and a private phone link (`serve --ph
 (`cm15m/pullout.py`: engine + Kalshi average <= 3% for the called side with 1:00+ left; ~98% right on history).
 v1.5 keeps v1.4's engines (per-market recipes did not beat them in fair walk-forward tests) and adds a strictness
 switch (Standard / Strict / Very strict, per-market bars in `cm15m/tuning.py`), with all three modes run on the same
-windows in the background (`cm15m/shadow.py`) so their live records can be compared.
+windows in the background (`cm15m/shadow.py`) so their live records can be compared. v1.6 marks EARLY calls (made
+with 6:30+ left, `tuning.EARLY_LEFT_S`) and STRONG EDGE signals (12-19 point gap, `edge.tier`) on the cards.
 See `kalshi-commodities/README.md`; tests: `cd kalshi-commodities && pytest`.

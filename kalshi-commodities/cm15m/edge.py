@@ -13,6 +13,12 @@ The rule: at each whole minute from 3:00 to 13:00 into the window (checked in th
 take the model's favoured side; if its chance is at least `min_p` and at least `gap` above that side's ask (Kalshi's
 live book, fresh quotes, the live price from Kalshi's own series), signal BUY that side. At most one signal per
 window; it is scored at settlement against the ask at the signal, with the taker fee of a 100-contract order.
+
+v1.6, how big a gap is worth: on the same history (Aug to Oct 15, all seven markets, fills a minute later, fees
+included) signals 12 to 20 points over the ask made about twice as much per contract as 8-12-point ones, in both halves
+of the data (+14.6c vs +7.8c, then +9.6c vs +4.0c). Gaps of 20 points or more were not reliable (+18.6c, then -2.3c, few
+signals: the market often knows something the model does not). The card marks a 12-19-point signal STRONG with a hint to
+size up, and a 20+ one as a wide gap to keep at normal size. Nothing else about the signal changes.
 """
 from __future__ import annotations
 
@@ -25,6 +31,28 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS edges (market TEXT, ticker TEXT, ts REAL, minute INTEGER, side TEXT, p REAL, ask REAL,
   gap REAL, result TEXT, correct INTEGER, pnl REAL, settled_ts REAL, PRIMARY KEY (market, ticker));
 """
+
+
+STRONG_GAP = (0.12, 0.20)  # v1.6: a gap from 12 up to (not including) 20 points is STRONG; 20+ is "wide"
+TIERS = ("normal", "strong", "wide")
+
+
+def points(gap: float) -> int:
+    """The gap in whole points, rounded the way the card and the notification show it (half up, like JS Math.round)."""
+    return math.floor(gap * 100 + 0.5 + 1e-9)
+
+
+def tier(gap: float | None) -> str:
+    """normal (8-11 points), strong (12-19) or wide (20+), on the whole points shown, so the label always matches the
+    number next to it."""
+    if gap is None:
+        return "normal"
+    pts = points(gap)
+    if pts >= round(STRONG_GAP[1] * 100):
+        return "wide"
+    if pts >= round(STRONG_GAP[0] * 100):
+        return "strong"
+    return "normal"
 
 
 def taker_fee_per_contract(price: float, count: int = 100) -> float:
@@ -55,7 +83,7 @@ class EdgeStore:
 
     def get(self, market: str, ticker: str) -> dict | None:
         row = self.conn.execute("SELECT * FROM edges WHERE market=? AND ticker=?", (market, ticker)).fetchone()
-        return dict(row) if row else None
+        return {**dict(row), "tier": tier(row["gap"])} if row else None
 
     def open_edges(self, market: str) -> list[dict]:
         return [dict(r) for r in self.conn.execute("SELECT * FROM edges WHERE market=? AND result IS NULL", (market,))]
@@ -74,8 +102,16 @@ class EdgeStore:
         q = "SELECT * FROM edges WHERE result IS NOT NULL" + (" AND market=?" if market else "") + " ORDER BY ts DESC"
         rows = [dict(r) for r in self.conn.execute(q, (market,) if market else ())]
         wins = sum(r["correct"] for r in rows)
+        tiers = {t: {"wins": 0, "losses": 0, "n": 0, "pnl": 0.0} for t in TIERS}  # v1.6: the record by gap size
+        for r in rows:
+            t = tiers[tier(r["gap"])]
+            t["n"] += 1
+            t["wins" if r["correct"] else "losses"] += 1
+            t["pnl"] += r["pnl"]
+        for t in tiers.values():
+            t["pnl"] = round(t["pnl"], 2)
         return {"wins": wins, "losses": len(rows) - wins, "pnl": round(sum(r["pnl"] for r in rows), 2), "n": len(rows),
-                "avg_ask": round(sum(r["ask"] for r in rows) / len(rows), 3) if rows else None,
+                "tiers": tiers, "avg_ask": round(sum(r["ask"] for r in rows) / len(rows), 3) if rows else None,
                 "recent": [{"ticker": r["ticker"], "side": r["side"], "correct": bool(r["correct"]), "p": r["p"], "ask": r["ask"]}
                            for r in rows[:recent]]}
 
@@ -142,5 +178,6 @@ class EdgeTracker:
 
     def state(self) -> dict:
         return {"watch": self.watch, "record": self.store.record(self.market),
-                "rules": {"gap": self.gap, "min_p": self.min_p, "from_min": self.first_min, "to_min": self.last_min}}
+                "rules": {"gap": self.gap, "min_p": self.min_p, "from_min": self.first_min, "to_min": self.last_min,
+                          "strong": list(STRONG_GAP)}}
 

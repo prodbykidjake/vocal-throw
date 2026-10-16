@@ -67,6 +67,9 @@ MODE_BARS = {
     "platinum": {"strict": 0.925, "very_strict": 0.962},
 }
 MODE_DEFAULT_BARS = {"strict": 0.93, "very_strict": 0.97}  # a market Kalshi adds later
+# v1.6: a call made with this much left is EARLY. In Strict about a third of the calls come that early (median ~8:25 left);
+# they won as often as the later ones (94.7% vs 95.3%) at a lower ask (~93c vs ~95c): +1.4c a call against +0.3c
+EARLY_LEFT_S = 390.0
 
 
 @dataclass(frozen=True)

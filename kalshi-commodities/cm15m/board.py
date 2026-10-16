@@ -17,7 +17,7 @@ import time
 from . import tuning
 from .config import Config
 from .desk import Desk
-from .edge import EdgeStore, EdgeTracker
+from .edge import EdgeStore, EdgeTracker, points as edge_points
 from .engines import ENGINES, EngineDesk
 from .feeds.kalshi_live import KalshiLiveFeed, event_ticker_for
 from .kalshi import KalshiClient, RateLimiter
@@ -206,6 +206,10 @@ class Board:
                 self._shadow_step(d, now, settle)
             except Exception:
                 log.exception("desk %s shadow step failed", d.spec.key)
+            try:
+                self._early_step(d)
+            except Exception:
+                log.exception("desk %s early record failed", d.spec.key)
         self.state = self._build_state()
 
     def _edge_step(self, d, now: float, settle: bool):
@@ -215,9 +219,12 @@ class Board:
         sig = tr.step(now, d.state)
         if sig and not self.is_muted(d.spec.key):
             ask_c = round(sig["ask"] * 100)
-            self.notifier.notify(f"{d.spec.name.upper()} EDGE: BUY {sig['side']}",
-                                 f"model {round(sig['p'] * 100)}% vs ask {ask_c}¢ (+{round(sig['gap'] * 100)} pts) · "
-                                 f"buy at {ask_c}¢ or less, hold to settlement", "Glass")
+            strong = sig.get("tier") == "strong"
+            size = (" · STRONG: size up (about 2x normal)" if strong else
+                    " · wide gap: normal size, the market may know something" if sig.get("tier") == "wide" else "")
+            self.notifier.notify(f"{d.spec.name.upper()} {'STRONG ' if strong else ''}EDGE: BUY {sig['side']}",
+                                 f"model {round(sig['p'] * 100)}% vs ask {ask_c}¢ (+{edge_points(sig['gap'])} pts) · "
+                                 f"buy at {ask_c}¢ or less, hold to settlement{size}", "Glass")
         if settle:
             store = self._window_store(d)
             if store is not None:
@@ -242,6 +249,22 @@ class Board:
                                  f"the {alarm['side']} call has flipped: engine {_pct(alarm['p_model'])}{kalshi} with "
                                  f"{int(left // 60)}:{int(left % 60):02d} left · sell your {alarm['side']} now{bid}", "Basso")
         d.state["pullout"] = tr.state()
+
+    def early_left_s(self) -> float:
+        """Seconds left from which a call counts as EARLY (6:30; the demo's short windows scale it like every clock)."""
+        return tuning.EARLY_LEFT_S * (1.0 if self.sim is None else self.sim.get("window_s", 900) / 900.0)
+
+    def _early_step(self, d):
+        """v1.6: the record of the calls made EARLY under the desk's current rules (its rules tag; none = untagged)."""
+        store = self._window_store(d)
+        src = getattr(d, "engine", None) or d
+        if store is None or getattr(src, "cfg", None) is None:
+            return
+        tag = src.cfg.trading.rules_tag or ""
+        q = ("SELECT COUNT(*), COALESCE(SUM(correct), 0) FROM calls WHERE result IS NOT NULL AND seconds_left >= ? AND "
+             + ("rules = ?" if tag else "rules IS NULL"))
+        n, wins = store.conn.execute(q, (self.early_left_s(), tag) if tag else (self.early_left_s(),)).fetchone()
+        d.state["early"] = {"wins": int(wins), "losses": int(n) - int(wins), "tag": tag}
 
     def _shadow_step(self, d, now: float, settle: bool):
         shadows = self.shadows.get(d.spec.key)
@@ -287,6 +310,7 @@ class Board:
                 "markets": markets, "record": total, "lines": lines, "edge": self.edge_store.record(recent=0),
                 "pullout": self.pullout_store.record(recent=0), "record_rules": rules_total, "modes": modes_total,
                 "mode": self.mode, "mode_labels": tuning.MODE_LABELS, "modes_on": tuning.enabled(self.cfg.tuning),
+                "early_left_s": self.early_left_s(),
                 "requests": None if self.sim is not None else (getattr(self.client, "requests", 0) or 0)
                 + sum(d.requests for d in self.desks if isinstance(d, EngineDesk)),
                 "throttled": self.limiter.throttled}

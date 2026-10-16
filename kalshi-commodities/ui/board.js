@@ -73,7 +73,10 @@
     card.classList.toggle("called-down", !!call && call.side === "DOWN" && call.result == null);
     if (call) {
       const res = call.result == null ? "" : call.correct ? " · WIN ✓" : " · LOSS ✗";
-      box.textContent = `${call.side === "UP" ? "▲" : "▼"} ${call.side} AT SETTLEMENT${res}`;
+      // v1.6: EARLY = made with 6:30+ left: as accurate as the later calls and cheaper to buy (see cm15m/tuning.py)
+      const early = call.seconds_left != null && call.seconds_left >= ((state && state.early_left_s) || 390);
+      box.innerHTML = esc(`${call.side === "UP" ? "▲" : "▼"} ${call.side} AT SETTLEMENT${res}`) +
+        (early ? ` <span class="early-tag" title="called with ${esc(mmss(call.seconds_left))} left: early calls won as often as later ones, at a lower price">EARLY</span>` : "");
       box.className = "callbox " + (call.side === "UP" ? "up" : "down") + (call.result == null ? "" : call.correct ? " win" : " loss");
     } else if (w.status === "studying" || w.status === "watching") {
       box.textContent = (w.status === "studying" ? `STUDYING · ${mmss(w.study_left_s)}` : "WATCHING") + (w.confirming_s != null && rules.hold_s ? ` · confirming ${w.confirming_s}/${rules.hold_s}s` : "");
@@ -98,6 +101,8 @@
       const nn = (rr.wins || 0) + (rr.losses || 0);
       bench += ` · since ${tag}: ${rr.wins || 0}–${rr.losses || 0}` + (nn ? ` (${Math.round(100 * rr.wins / nn)}%)` : "");
     }
+    const er = m.early, en = er ? (er.wins || 0) + (er.losses || 0) : 0;
+    if (en) bench += ` · early calls: ${er.wins}–${er.losses} (${Math.round(100 * er.wins / en)}%)`;
     f(card, "bench").textContent = bench;
     // the three strictness modes on the same windows (cm15m/shadow.py)
     const md = m.modes || {}, labels = (state && state.mode_labels) || {};
@@ -165,9 +170,12 @@
     const box = f(card, "edge-box"), note = f(card, "edge-note");
     if (sig) {
       const res = sig.result == null ? "" : sig.correct ? " · WIN ✓" : " · LOSS ✗";
-      box.textContent = `EDGE · BUY ${sig.side} at ${cents(sig.ask)} or less${res}`;
-      box.className = "edge-box sig " + (sig.side === "UP" ? "up" : "down") + (sig.result == null ? "" : sig.correct ? " win" : " loss");
-      note.textContent = `model ${pct(sig.p)} vs ask ${cents(sig.ask)} (+${Math.round(sig.gap * 100)} pts) at minute ${sig.minute} · hold to settlement` +
+      const strong = sig.tier === "strong", wide = sig.tier === "wide";  // v1.6: how big the gap is (cm15m/edge.py)
+      box.textContent = `${strong ? "STRONG " : ""}EDGE · BUY ${sig.side} at ${cents(sig.ask)} or less${res}`;
+      box.className = "edge-box sig " + (sig.side === "UP" ? "up" : "down") + (strong ? " strong" : "") + (sig.result == null ? "" : sig.correct ? " win" : " loss");
+      note.textContent = (strong ? "size up: about 2× your normal size (12–19 pt gaps paid about twice as much a contract) · " : "") +
+        `model ${pct(sig.p)} vs ask ${cents(sig.ask)} (+${Math.round(sig.gap * 100)} pts) at minute ${sig.minute} · hold to settlement` +
+        (wide ? " · wide gap: keep your normal size (the market may know something)" : "") +
         (sig.result != null ? ` · ${money(sig.pnl)} per contract` : "");
     } else if (w.side) {
       const gp = w.gap == null ? "--" : `${w.gap >= 0 ? "+" : ""}${Math.round(w.gap * 100)} pts`;
@@ -179,8 +187,9 @@
     } else {
       box.textContent = "EDGE · waiting for a window"; box.className = "edge-box"; note.textContent = "";
     }
-    const n = (r.wins || 0) + (r.losses || 0);
-    f(card, "edge-rec").textContent = n ? `Edge ${r.wins}–${r.losses} · ${money(r.pnl)} per contract in total` : "Edge: no settled signals yet";
+    const n = (r.wins || 0) + (r.losses || 0), st = (r.tiers || {}).strong;
+    f(card, "edge-rec").textContent = n ? `Edge ${r.wins}–${r.losses} · ${money(r.pnl)} per contract in total` +
+      (st && st.n ? ` · strong ${st.wins}–${st.losses}, ${money(st.pnl)}` : "") : "Edge: no settled signals yet";
   }
 
   function renderMeter(card, c, call, w, rules) {
@@ -234,7 +243,9 @@
     const er = s.edge || {}, en = (er.wins || 0) + (er.losses || 0);
     $("edge-record").textContent = `${er.wins || 0}–${er.losses || 0}`;
     $("edge-pnl").textContent = en ? money(er.pnl) : "--";  // the total for one contract on every signal, fees included
-    $("edge-note").textContent = en ? `${er.pnl < 0 ? "−" : "+"}${Math.abs(100 * er.pnl / en).toFixed(1)}¢ a signal · 1 contract each` : "";
+    const perSig = (pnl, k) => `${pnl < 0 ? "−" : "+"}${Math.abs(100 * pnl / k).toFixed(1)}¢`, est = (er.tiers || {}).strong;
+    $("edge-note").textContent = en ? `${perSig(er.pnl, en)} a signal` + (est && est.n ? ` · strong ${perSig(est.pnl, est.n)}` : "") : "";
+    $("edge-note").title = "profit per signal for one contract each, fees included; strong = signals 12-19 points over the ask";
     const live = markets.find((m) => m.countdown && m.seconds_left != null);
     $("clock").textContent = live ? live.countdown : "--:--";
     const colors = Object.fromEntries(markets.map((m) => [m.key, m.color]));
