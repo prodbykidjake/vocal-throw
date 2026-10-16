@@ -133,8 +133,9 @@ settlement prices for 1,600-4,100 windows per market) replayed through each card
   faster (the ask barely moves in the minute after a signal).
 
 The EDGE box under each card's meter shows what it is watching (model vs ask, the gap, the next minute check), a
-signal when one fires (one per window), and its result; the top strip shows the EDGE record and profit per contract
-across all markets. Signals are kept in `data/edges.db`. The margin and minimum are `[board] edge_gap` (0.08) and
+signal when one fires (one per window), and its result; the top strip shows the EDGE record and the EDGE profit across
+all markets: the total for buying one contract on every signal at its ask, fees included, with the average per signal
+under it. Signals are kept in `data/edges.db`. The margin and minimum are `[board] edge_gap` (0.08) and
 `edge_min_p` (0.75).
 
 ### On your phone

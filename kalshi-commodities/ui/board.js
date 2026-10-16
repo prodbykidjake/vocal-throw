@@ -233,7 +233,8 @@
     renderBanner(markets);
     const er = s.edge || {}, en = (er.wins || 0) + (er.losses || 0);
     $("edge-record").textContent = `${er.wins || 0}–${er.losses || 0}`;
-    $("edge-pnl").textContent = en ? money(er.pnl) : "--";
+    $("edge-pnl").textContent = en ? money(er.pnl) : "--";  // the total for one contract on every signal, fees included
+    $("edge-note").textContent = en ? `${er.pnl < 0 ? "−" : "+"}${Math.abs(100 * er.pnl / en).toFixed(1)}¢ a signal · 1 contract each` : "";
     const live = markets.find((m) => m.countdown && m.seconds_left != null);
     $("clock").textContent = live ? live.countdown : "--:--";
     const colors = Object.fromEntries(markets.map((m) => [m.key, m.color]));
