@@ -509,10 +509,17 @@ class Engine:
             events = self._vol_info.get("events") or []
             t = self.cfg.trading
             blocked = bool(events) and t.call_block_events and t.event_entries == "block" and self.calls.call is None
-            made = self.calls.step(now, m.ticker, None if blocked else pred, tau, elapsed, self._study_len(), quotes)
+            # on the board (v1.5.1), as in the WTI coach since v12.4: no new settlement call while the price comes from
+            # the backup feed (Hyperliquid sat 3-17c away from the Pyth price Kalshi settles on)
+            on_backup = "FALLBACK" in str(health.mode).upper() and self.calls.call is None
+            made = self.calls.step(now, m.ticker, None if (blocked or on_backup) else pred, tau, elapsed,
+                                   self._study_len(), quotes)
             if blocked:
                 self.calls.watch = {"status": f"no call this window ({events[0]['name']} at {events[0]['at']})"}
                 self.calls._update_meter(now, pred, tau)  # still show what the model sees
+            elif on_backup:
+                self.calls.watch = {"status": "no new call while on the backup price (Kalshi's price feed is out)"}
+                self.calls._update_meter(now, pred, tau)
             if made:
                 when = f"{int(made['seconds_left'] // 60)}:{int(made['seconds_left'] % 60):02d} left"
                 text = (f"settlement call: {made['side']} on {m.ticker} · model {round(made['p_side'] * 100)}% "

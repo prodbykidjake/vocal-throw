@@ -19,8 +19,18 @@ from .store import Store
 QUOTE_MAX_AGE_S = 10.0
 
 
+def on_backup(src) -> bool:
+    """True while a desk reads its backup price (only the WTI engine has one): no new call then, as on the card."""
+    feed = getattr(src, "feed", None)
+    try:
+        return "FALLBACK" in str(feed.health().mode).upper()
+    except Exception:  # a desk or test double without a feed health
+        return False
+
+
 def desk_inputs(d, now: float):
-    """(ticker, prediction, seconds left, seconds elapsed, quotes, report window?) for either kind of desk."""
+    """(ticker, prediction, seconds left, seconds elapsed, quotes, no new call: report window or backup price?)
+    for either kind of desk."""
     src = getattr(d, "engine", None) or d
     m = src.tracker.current
     pred = getattr(src, "pred", None)
@@ -31,7 +41,7 @@ def desk_inputs(d, now: float):
     fresh = src.tracker.quotes_fresh(QUOTE_MAX_AGE_S, now)
     quotes = Quotes.from_market(m) if fresh else Quotes()
     events = (getattr(src, "_vol_info", None) or {}).get("events") or []
-    return m.ticker, pred, tau, elapsed, quotes, bool(events)
+    return m.ticker, pred, tau, elapsed, quotes, bool(events) or on_backup(src)
 
 
 class ShadowCalls:
@@ -49,7 +59,7 @@ class ShadowCalls:
     def step(self, d, now: float | None = None):
         now = time.time() if now is None else now
         ticker, pred, tau, elapsed, quotes, blocked = desk_inputs(d, now)
-        if blocked and self.calls.call is None:  # no new call in a report window, as on the card
+        if blocked and self.calls.call is None:  # no new call in a report window or on the backup price, as on the card
             pred = None
         self.calls.step(now, ticker, pred, tau, elapsed, self.cfg.study_s, quotes)
 

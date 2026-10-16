@@ -56,6 +56,10 @@ is. Each market gets its own bars, fitted to how that market moves:
   numbers show which mode suits you.
 - **Switching:** the switch applies to every card from the next call on. A call already made stays as it is. The
   choice is remembered (`data/board.json`), and `[board] call_mode = "strict"` in `config.toml` sets the starting mode.
+- **v1.5.1: no WTI call on the backup price.** When Kalshi's price feed is out for more than 8 seconds, the WTI
+  card reads Hyperliquid's price instead, which has sat 3-17¢ away from the price Kalshi settles on. It now makes no new
+  call on that price (the standalone WTI coach has worked this way since v12.4); the meter keeps showing, and the card
+  says why. EDGE and PULL OUT already skipped it.
 
 ## v1.4: surer calls, and a PULL OUT alarm
 
@@ -192,7 +196,7 @@ phone out and get a new link.
 ## Setup (macOS, next to the other coaches)
 
 ```bash
-unzip -o ~/Downloads/kalshi-commodities-v1.5.zip -d ~
+unzip -o ~/Downloads/kalshi-commodities-v1.5.1.zip -d ~
 cd ~/kalshi-commodities
 source ~/.venv/bin/activate
 python -m cm15m probe     # first time: lists the 15-minute series and each live target (paste it to Claude)

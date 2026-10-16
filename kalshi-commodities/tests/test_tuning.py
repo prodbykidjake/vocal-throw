@@ -243,3 +243,54 @@ def test_each_mode_records_its_own_calls_on_the_same_windows(tmp_path):
     std.settle_from(lambda t: {"result": "yes"})
     assert (std.state()["wins"], std.state()["losses"], vs.state()["wins"]) == (1, 0, 0)
     assert (tmp_path / "shadow" / "silver-standard.db").exists() and (tmp_path / "shadow" / "silver-very_strict.db").exists()
+
+
+def test_wti_makes_no_call_on_its_backup_price(tmp_path):
+    import dataclasses
+
+    cfg = Config()
+    cfg.storage.data_dir = str(tmp_path)
+    cfg.notify.desktop = cfg.notify.sound = False
+    cfg.trading.min_warmup_minutes = 1
+    cfg.board.markets = ["wti"]
+    board = Board(cfg, sim={"window_s": 120, "warmup_minutes": 10})
+
+    async def run():
+        await board.build()
+        eng = board.desk("wti").engine
+        real = eng.feed.health
+        eng.feed.health = lambda: dataclasses.replace(real(), mode="FALLBACK (live)")  # Kalshi's price is out
+        stop = asyncio.Event()
+        task = asyncio.create_task(board.run(stop))
+        await asyncio.sleep(3)
+        stop.set()
+        await task
+
+    asyncio.run(run())
+    c = board.state["markets"][0]["call"]
+    assert c["watch"]["status"].startswith("no new call while on the backup price") and c["call"] is None and c["meter"]
+
+
+def test_the_background_modes_skip_the_backup_price_too(tmp_path):
+    import datetime as dt
+    import types
+
+    from cm15m import clock
+    from cm15m.shadow import ShadowCalls
+
+    now = dt.datetime.now(clock.UTC)
+    mk = types.SimpleNamespace(ticker="W1", yes_bid=0.88, yes_ask=0.90, no_bid=0.10, no_ask=0.12,
+                               open_time=now - dt.timedelta(seconds=400), close_time=now + dt.timedelta(seconds=500),
+                               seconds_left=lambda at: 500.0, seconds_elapsed=lambda at: 400.0)
+
+    def engine(mode):
+        return types.SimpleNamespace(tracker=types.SimpleNamespace(current=mk, quotes_fresh=lambda a, b: True),
+                                     pred=pred(0.92, 0.89), _vol_info={"events": []},
+                                     feed=types.SimpleNamespace(health=lambda: types.SimpleNamespace(mode=mode)))
+
+    live = ShadowCalls("wti", "standard", TradingCfg(), str(tmp_path / "a"))
+    backup = ShadowCalls("wti", "standard", TradingCfg(), str(tmp_path / "b"))
+    for i in range(12):
+        live.step(types.SimpleNamespace(engine=engine("live")), 1000 + i)
+        backup.step(types.SimpleNamespace(engine=engine("FALLBACK (live)")), 1000 + i)
+    assert live.calls.call is not None and backup.calls.call is None
