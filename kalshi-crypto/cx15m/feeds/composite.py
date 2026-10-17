@@ -58,6 +58,11 @@ class FallbackFeed(PriceFeed):
                 return a
         return None
 
+    @property
+    def avg_source(self):
+        """Kalshi's average, when the backup carries it (the desk measures volatility on it)."""
+        return getattr(self.backup, "avg_source", None)
+
     def _backup_matched(self) -> bool:
         kal = getattr(self.backup, "kalshi_avg", None)
         return getattr(self.backup, "offset", None) is not None and kal is not None and kal() is not None

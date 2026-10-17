@@ -22,7 +22,7 @@ from .fees import FeeSchedule
 from .feeds.base import PRINT_MAX_AGE_S, PriceFeed, Tick, on_backup, second_average
 from .kalshi import Market, MarketTracker
 from .markets import MarketSpec, Scale
-from .model import Calibrator, Model, Prediction
+from .model import AvgVolEstimator, Calibrator, Model, Prediction
 from .notify import Notifier
 from .quotes import Quotes
 from .store import Store
@@ -60,6 +60,13 @@ class Desk:
         self.model = Model(calibrator=Calibrator.from_json(store.get_state("calibrator")), tie_adj=self.scale.tie_adj,
                            min_warmup_s=t.min_warmup_minutes * 60, confident_margin=t.confident_margin,
                            stale_after_s=cfg.feed.stale_after_s, settle_avg_s=t.settle_avg_s)
+        # with Kalshi's own average available, volatility is measured on it (as in the history the call bars were
+        # chosen on), not on the exchanges' price, which moves less over a few seconds than the index really does
+        self.avg_feed = getattr(feed, "avg_source", None)
+        if self.avg_feed is not None:
+            self.model.vol = AvgVolEstimator(window_s=t.settle_avg_s or 60.0)
+            self.avg_feed.subscribe(self.on_avg_tick)
+            self.avg_feed.subscribe_warmup(self.model.vol.seed_from_closes)
         self._apply_scale()
         self.fees = FeeSchedule()
         self.tracker = MarketTracker(client, spec.series, cfg.kalshi.poll_s, on_event=self.on_market_event)
@@ -129,12 +136,17 @@ class Desk:
         if closes:
             self.scale.observe_price(closes[-1][1])
             self._apply_scale()
-        self.model.vol.seed_from_closes(closes)
+        if self.avg_feed is None:
+            self.model.vol.seed_from_closes(closes)
 
     def on_tick(self, tick: Tick):
         if self.scale.price is None or abs(tick.price / self.scale.price - 1) > 0.2:
             self.scale.observe_price(tick.price)
             self._apply_scale()
+        if self.avg_feed is None:
+            self.model.vol.update(tick.ts, tick.price)
+
+    def on_avg_tick(self, tick: Tick):
         self.model.vol.update(tick.ts, tick.price)
 
     # ------------------------------------------------------------------ market callbacks
@@ -333,6 +345,13 @@ class Desk:
 
     def _measure_window(self, ticker: str, open_ts: float, close_ts: float, source: str) -> bool:
         start = open_ts + self._study_len()
+        if self.avg_feed is not None:  # measured like the forecast: on Kalshi's average
+            pts = [(tk.ts, tk.price) for tk in self.avg_feed.buffer.since(start - 60) if tk.ts <= close_ts]
+            sigma, n = volcal.realized_sigma_avg(pts, start, close_ts, self.cfg.trading.settle_avg_s or 60.0)
+            if sigma is None:
+                return False
+            self.store.set_window_realized(ticker, sigma, n)
+            return True
         ticks = [(tk.ts, tk.price) for tk in self.feed.buffer.since(start) if tk.ts <= close_ts]
         if len(ticks) < 20:
             ticks = self.store.ticks_between(start, close_ts, source)

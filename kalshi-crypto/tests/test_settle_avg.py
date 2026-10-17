@@ -131,3 +131,50 @@ def test_desk_measures_its_closing_minute_average_against_the_settlement(tmp_pat
     # 30 s into the settlement minute: the prints so far (none of the old price)
     assert d._avg_sofar(close + 30, close) == pytest.approx(80_060.0)
     assert d._avg_sofar(close + 120, close) is None  # not inside the minute yet
+
+
+def test_volatility_is_measured_on_kalshis_average_like_the_index_itself():
+    import numpy as np
+
+    from cx15m.model import AvgVolEstimator
+    from cx15m.volcal import realized_sigma_avg
+
+    rng = np.random.default_rng(7)
+    S = 80_000 + np.cumsum(rng.normal(0, 2.0, 30000))  # a price, always positive
+    cs = np.r_[0, np.cumsum(S)]
+    M = (cs[60:] - cs[:-60]) / 60  # Kalshi's average: point i = mean of the 60 prints ending there
+    v = AvgVolEstimator(floor=0.01, cap=100)
+    pts = [(float(i), float(m)) for i, m in enumerate(M)]
+    est = []
+    for t, m in pts:
+        v.update(t, m)
+        if t > 3000 and t % 300 == 0:
+            est.append(v.sigma_slow())
+    assert abs(np.mean(est) - 2.0) < 0.12  # the index's own sigma per sqrt(second), unbiased within noise
+    real, n = realized_sigma_avg(pts, 1000.0, 29000.0)
+    assert abs(real - 2.0) < 0.06 and n > 5000
+    v.update(5.0, 100.0)  # an old point (a second warm-up) is ignored
+    assert v.last_ts == pts[-1][0]
+
+
+def test_desks_on_the_matched_feed_measure_volatility_on_kalshis_average(tmp_path):
+    from cx15m.board import Board
+    from cx15m.config import Config
+    from cx15m.markets import KNOWN
+    from cx15m.model import AvgVolEstimator
+    from cx15m.store import Store
+    from cx15m.desk import Desk
+
+    cfg = Config()
+    cfg.storage.data_dir = str(tmp_path)
+    board = Board(cfg, client=object())
+    feed = board._make_feed(KNOWN[0])
+    d = Desk(KNOWN[0], board._desk_cfg("btc"), Store(":memory:"), object(), feed)
+    assert isinstance(d.model.vol, AvgVolEstimator) and d.avg_feed is feed.avg
+    import time
+    now = time.time()
+    feed.avg._publish(now - 40, 80000.0)
+    feed.avg._publish(now - 5, 80010.0)
+    assert d.model.vol.last_ts == now - 5  # Kalshi's average points reach the estimator
+    feed.raw._publish(now - 1, 79990.0)
+    assert d.model.vol.last_ts == now - 5  # the exchanges' price does not

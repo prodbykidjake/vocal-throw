@@ -174,19 +174,24 @@
   function renderEdge(card, m) {
     const e = m.edge || {}, w = e.watch || {}, r = e.record || {}, sig = w.signal;
     const box = f(card, "edge-box"), note = f(card, "edge-note");
+    const mode = (state && state.edge_mode) || "on", test = mode === "watch";
+    card.querySelector(".edge").classList.toggle("hidden", mode === "off" || e.off === true);
+    if (mode === "off" || e.off === true) return;
     if (sig) {
       const res = sig.result == null ? "" : sig.correct ? " · WIN ✓" : " · LOSS ✗";
       // v1.6: a gap of 12+ points means Kalshi's price disagrees a lot; show how those have done here (cx15m/edge.py)
       const big = sig.tier === "big", bt = (((state || {}).edge || {}).tiers || {}).big, nt = (((state || {}).edge || {}).tiers || {}).normal;
       const rec = (t) => t && t.n ? `${t.wins}–${t.losses}, ${t.pnl < 0 ? "−" : "+"}${Math.abs(100 * t.pnl / t.n).toFixed(1)}¢ a signal` : "none yet";
-      box.textContent = `EDGE · BUY ${sig.side} at ${cents(sig.ask)} or less${big ? " · BIG GAP" : ""}${res}`;
-      box.className = "edge-box sig " + (sig.side === "UP" ? "up" : "down") + (big ? " big" : "") + (sig.result == null ? "" : sig.correct ? " win" : " loss");
-      note.textContent = `model ${pct(sig.p)} vs ask ${cents(sig.ask)} (+${Math.round(sig.gap * 100)} pts) at minute ${sig.minute} · hold to settlement` +
+      box.textContent = test ? `EDGE TEST · would buy ${sig.side} at ${cents(sig.ask)}${big ? " · BIG GAP" : ""}${res}`
+        : `EDGE · BUY ${sig.side} at ${cents(sig.ask)} or less${big ? " · BIG GAP" : ""}${res}`;
+      box.className = "edge-box sig " + (sig.side === "UP" ? "up" : "down") + (big ? " big" : "") + (test ? " test" : "") + (sig.result == null ? "" : sig.correct ? " win" : " loss");
+      note.textContent = (test ? "test only, not a buy signal: on crypto history it lost money on later days · " : "") +
+        `model ${pct(sig.p)} vs ask ${cents(sig.ask)} (+${Math.round(sig.gap * 100)} pts) at minute ${sig.minute}` + (test ? "" : " · hold to settlement") +
         (big ? ` · big gap: Kalshi's price disagrees a lot, keep your normal size · big gaps here: ${rec(bt)} (normal: ${rec(nt)})` : "") +
         (sig.result != null ? ` · ${money(sig.pnl)} per contract` : "");
     } else if (w.side) {
       const gp = w.gap == null ? "--" : `${w.gap >= 0 ? "+" : ""}${Math.round(w.gap * 100)} pts`;
-      box.textContent = w.window_over ? "EDGE · none this window" : `EDGE · watching · ${w.side} ${pct(w.p)} vs ask ${cents(w.ask)} (${gp})`;
+      box.textContent = (test ? "EDGE TEST" : "EDGE") + (w.window_over ? " · none this window" : ` · watching · ${w.side} ${pct(w.p)} vs ask ${cents(w.ask)} (${gp})`);
       box.className = "edge-box";
       note.textContent = w.window_over ? "no edge at any minute check this window: skipping is the right trade" :
         `buys only at ${Math.round(((e.rules || {}).min_p || 0.75) * 100)}%+ and +${Math.round((w.need || 0.08) * 100)} pts over the ask, at a minute check` + (w.next_check_in_s != null ? ` · next check in ${mmss(w.next_check_in_s)}` : "") +
@@ -195,7 +200,7 @@
       box.textContent = "EDGE · waiting for a window"; box.className = "edge-box"; note.textContent = "";
     }
     const n = (r.wins || 0) + (r.losses || 0), bg = (r.tiers || {}).big;
-    f(card, "edge-rec").textContent = n ? `Edge ${r.wins}–${r.losses} · ${money(r.pnl)} per contract in total` +
+    f(card, "edge-rec").textContent = n ? `${test ? "Edge test" : "Edge"} ${r.wins}–${r.losses} · ${money(r.pnl)} per contract in total` +
       (bg && bg.n ? ` · big gaps ${bg.wins}–${bg.losses}, ${money(bg.pnl)}` : "") : "Edge: no settled signals yet";
   }
 
@@ -247,6 +252,10 @@
     const po = s.pullout || {};
     $("po-record").textContent = po.n ? `${po.right}/${po.n}` : "--";
     renderBanner(markets);
+    const em = s.edge_mode || "on";
+    document.querySelectorAll(".edge-stat").forEach((x) => x.classList.toggle("hidden", em === "off"));
+    $("edge-record").previousElementSibling.textContent = em === "watch" ? "EDGE test record" : "EDGE record";
+    $("edge-pnl").previousElementSibling.textContent = em === "watch" ? "EDGE test profit" : "EDGE profit";
     const er = s.edge || {}, en = (er.wins || 0) + (er.losses || 0);
     $("edge-record").textContent = `${er.wins || 0}–${er.losses || 0}`;
     $("edge-pnl").textContent = en ? money(er.pnl) : "--";  // the total for one contract on every signal, fees included

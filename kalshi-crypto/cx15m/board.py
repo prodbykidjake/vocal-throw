@@ -258,8 +258,11 @@ class Board:
         tr = self.edges.get(d.spec.key)
         if tr is None:
             tr = self.edges[d.spec.key] = EdgeTracker(d.spec.key, self.edge_store, self.cfg.board.edge_gap, self.cfg.board.edge_min_p)
+        if self.edge_mode() == "off":
+            d.state["edge"] = {"off": True}
+            return
         sig = tr.step(now, d.state)
-        if sig and not self.is_muted(d.spec.key):
+        if sig and self.edge_mode() == "on" and not self.is_muted(d.spec.key):
             ask_c = round(sig["ask"] * 100)
             big = ""
             if sig.get("tier") == "big":  # v1.6: say how big-gap signals have done on this board so far
@@ -293,6 +296,11 @@ class Board:
                                  f"the {alarm['side']} call has flipped: engine {_pct(alarm['p_model'])}{kalshi} with "
                                  f"{int(left // 60)}:{int(left % 60):02d} left · sell your {alarm['side']} now{bid}", "Basso")
         d.state["pullout"] = tr.state()
+
+    def edge_mode(self) -> str:
+        """on | watch | off ([board] edge): on crypto EDGE is watched, not alerted, until it proves itself live."""
+        mode = str(self.cfg.board.edge or "watch").strip().lower()
+        return mode if mode in ("on", "watch", "off") else "watch"
 
     def early_left_s(self) -> float:
         """Seconds left from which a call counts as EARLY (6:30; the demo's short windows scale it like every clock)."""
@@ -354,7 +362,7 @@ class Board:
                 "markets": markets, "record": total, "lines": lines, "edge": self.edge_store.record(recent=0),
                 "pullout": self.pullout_store.record(recent=0), "record_rules": rules_total, "modes": modes_total,
                 "mode": self.mode, "mode_labels": tuning.MODE_LABELS, "modes_on": tuning.enabled(self.cfg.tuning),
-                "early_left_s": self.early_left_s(),
+                "early_left_s": self.early_left_s(), "edge_mode": self.edge_mode(),
                 "requests": None if self.sim is not None else (getattr(self.client, "requests", 0) or 0),
                 "throttled": self.limiter.throttled, "feed_source": None if self.sim is not None else self.feed_source()}
 

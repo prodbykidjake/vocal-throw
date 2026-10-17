@@ -48,6 +48,26 @@ def realized_sigma(ticks: list[tuple[float, float]], start: float, end: float, s
     return math.sqrt(ss / dt_sum), n
 
 
+def realized_sigma_avg(points: list[tuple[float, float]], start: float, end: float, window_s: float = 60.0,
+                       step_s: float = 5.0, min_n: int = 10) -> tuple[float | None, int]:
+    """Realized σ per √second over [start, end] measured like AvgVolEstimator: from W-second changes of the running
+    average (Var = σ²·2W/3), sampled every step_s seconds. `points` are (ts, average) in time order."""
+    import bisect
+    ts = [t for t, _ in points]
+    ss, n = 0.0, 0
+    t = start + window_s
+    while t <= end:
+        i, j = bisect.bisect_right(ts, t) - 1, bisect.bisect_right(ts, t - window_s) - 1
+        if i >= 0 and j >= 0 and t - ts[i] <= step_s and t - window_s - ts[j] <= step_s:
+            r = points[i][1] - points[j][1]
+            ss += r * r
+            n += 1
+        t += step_s
+    if n < min_n:
+        return None, n
+    return math.sqrt(ss / n / (2.0 * window_s / 3.0)), n
+
+
 def parse_extra_events(items: list[str] | None) -> list[tuple[float, str]]:
     """'2026-11-27 11:00 EIA inventories (holiday)' -> (epoch, name), times in ET. Bad lines are skipped."""
     out = []

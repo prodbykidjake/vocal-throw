@@ -67,7 +67,10 @@ class BoardCfg:
     extra_events: dict = field(default_factory=dict)  # {"btc": ["2026-11-06 08:30 Jobs report"], ...}, ET
     muted: list = field(default_factory=list)  # markets whose calls do not notify (also switchable on each card)
     edge_gap: float = 0.08  # EDGE: buy only when the model's chance for its side beats that side's ask by this much ...
-    edge_min_p: float = 0.75  # ... and is at least this (checked at each whole minute 3:00-13:00; see cm15m/edge.py)
+    edge_min_p: float = 0.75  # ... and is at least this (checked at each whole minute 3:00-13:00; see cx15m/edge.py)
+    # watch = the EDGE box keeps a live record but sends no buy alerts and says it is only being tested (the default:
+    # on 60 days of crypto history it lost money on the later days, see cx15m/edge.py) | on = a buy signal | off
+    edge: str = "watch"
     call_mode: str = "standard"  # settlement-call strictness: standard | strict | very_strict (the page's switch wins)
 
 

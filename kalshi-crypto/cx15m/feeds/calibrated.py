@@ -77,6 +77,11 @@ class CalibratedFeed(PriceFeed):
         self.n += 1
         self._last_cmp_ts = t
 
+    @property
+    def avg_source(self) -> PriceFeed:
+        """Kalshi's average itself (the desk measures volatility on it)."""
+        return self.avg
+
     def kalshi_avg(self, now: float | None = None) -> tuple[float, float] | None:
         """(ts, value) of Kalshi's latest average point, if fresh."""
         last = self.avg.latest()

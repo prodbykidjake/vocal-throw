@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections import deque
 from dataclasses import dataclass, field
 from statistics import NormalDist
 
@@ -149,6 +150,59 @@ class VolEstimator:
         if not slow or not fast:
             return 0.0
         return clamp(math.log(fast / slow), -2.0, 2.0)
+
+
+class AvgVolEstimator(VolEstimator):
+    """σ of the index measured on Kalshi's own 60-second average (the series the market settles on), the same way in
+    the history replays and on the live board.
+
+    A change of a W-second running average over L <= W seconds has the variance of L²(W - L/3)/W² seconds of the
+    index (L = W: 2W/3). So every `step_s` seconds the squared L-second change of the average, divided by that, is one
+    reading of σ² per second, fed to the same fast/slow EWMA (L = 30 s: about 9% noise on a 15-minute half-life,
+    simulated; 60 s gives 10%). Measured on the average (BTC, 166 hours), σ matches the index's own over 60 s to 15 min
+    within 0.3%, while the exchanges' prices move less over a few seconds than the index does (Bitcoin about 0.6x over
+    5 s, Solana about 0.3x), which would make the odds too sure."""
+
+    def __init__(self, window_s: float = 60.0, lag_s: float = 30.0, **kw):
+        super().__init__(**kw)
+        self.window_s = window_s
+        self.lag_s = min(lag_s, window_s)
+        self._factor = self.lag_s ** 2 * (window_s - self.lag_s / 3.0) / window_s ** 2
+        self._pts: deque[tuple[float, float]] = deque()
+
+    def _at(self, ts: float) -> float | None:
+        """The average's point at or just before ts (within one step)."""
+        best = None
+        for t, m in self._pts:
+            if t <= ts:
+                best = (t, m)
+            else:
+                break
+        return best[1] if best is not None and ts - best[0] <= self.step_s else None
+
+    def update(self, ts: float, price: float):
+        if price <= 0 or (self.last_ts is not None and ts <= self.last_ts):
+            return
+        if self.first_ts is None:
+            self.first_ts = ts
+        self.last_ts = ts
+        self._pts.append((ts, price))
+        while self._pts and self._pts[0][0] < ts - self.lag_s - 2 * self.step_s:
+            self._pts.popleft()
+        bucket = int(ts // self.step_s)
+        if bucket == self._bucket:
+            return
+        self._bucket = bucket
+        past = self._at(ts - self.lag_s)
+        if past is None:
+            return
+        r = price - past
+        self._update_var(r * r / self._factor, self.step_s)
+
+    def seed_from_closes(self, closes: list[tuple[float, float]]):
+        """Seed from the average's own history (Kalshi's chart series at start-up, a point every few seconds)."""
+        for ts, px in closes:
+            self.update(ts, px)
 
 
 # ----------------------------------------------------------------------------- base model
