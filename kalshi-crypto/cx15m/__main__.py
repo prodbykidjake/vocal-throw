@@ -1,4 +1,4 @@
-"""CLI: python -m cx15m {serve|demo|probe|probe-index}"""
+"""CLI: python -m cx15m {serve|demo|probe|setup-key|probe-index}"""
 from __future__ import annotations
 
 import argparse
@@ -28,6 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--data", default="data-demo", help="folder for the demo's databases")
     sub.add_parser("probe", help="list Kalshi's 15-minute crypto series, each window's target and settlement, and the "
                                  "exchanges' prices next to them")
+    sk = sub.add_parser("setup-key", help="use your Kalshi API key for the exact index: moves the key file from Downloads "
+                                         "to ~/kalshi-key.pem, asks for the Key ID, writes config.toml, tests it")
+    sk.add_argument("--key-id", help="the Key ID (otherwise it asks)")
     pi = sub.add_parser("probe-index", help="with a Kalshi API key: print the exact index messages for a few seconds")
     pi.add_argument("--seconds", type=float, default=12.0)
     return p
@@ -192,6 +195,16 @@ def main(argv=None) -> int:
         return asyncio.run(probe(cfg))
     if args.cmd == "probe-index":
         return asyncio.run(probe_index(cfg, args.seconds))
+    if args.cmd == "setup-key":
+        import pathlib
+
+        from . import keysetup
+        app_dir = pathlib.Path(__file__).resolve().parents[1]
+        rc = keysetup.run(app_dir, key_id=args.key_id)
+        if rc:
+            return rc
+        print("checking the connection to Kalshi (12 seconds)...")
+        return asyncio.run(probe_index(config.load(str(app_dir / "config.toml")), 12.0))
     if args.cmd == "serve":
         try:
             run_server(cfg, Board(cfg), cfg.server.open_browser and not args.no_browser, args.phone or cfg.server.phone)

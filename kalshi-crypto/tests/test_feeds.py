@@ -1,6 +1,7 @@
 """The coins' live prices: the exchanges' median midpoint (no key), Kalshi's exact index (with an API key), and the
 switch to the exchanges, marked FALLBACK, when the index goes quiet."""
 import base64
+import pathlib
 import json
 import time
 
@@ -123,3 +124,59 @@ def test_api_key_settings_and_the_signed_handshake(tmp_path, monkeypatch):
                                       serialization.NoEncryption()))
     from cx15m.feeds.kalshi_index import load_private_key
     assert load_private_key(str(pem)).key_size == 2048
+
+
+def test_ed25519_keys_sign_the_same_handshake():
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from cx15m.feeds.kalshi_index import key_kind
+
+    key = ed25519.Ed25519PrivateKey.generate()
+    h = sign_headers("abc-123", key, ts_ms=1_760_000_000_000)
+    key.public_key().verify(base64.b64decode(h["KALSHI-ACCESS-SIGNATURE"]), b"1760000000000GET/trade-api/ws/v2")
+    assert key_kind(key) == "ed25519"
+    with pytest.raises(ValueError):
+        key_kind(object())
+
+
+def test_setup_key_moves_the_key_and_writes_the_config(tmp_path):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from cx15m import config, keysetup
+
+    home, app = tmp_path / "home", tmp_path / "app"
+    (home / "Downloads").mkdir(parents=True)
+    app.mkdir()
+    pem = ed25519.Ed25519PrivateKey.generate().private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                                           serialization.NoEncryption())
+    (home / "Downloads" / "notes.pem").write_text("not a key")
+    (home / "Downloads" / "kalshi-key.pem").write_bytes(pem)
+    example = pathlib.Path(__file__).resolve().parents[1] / "config.example.toml"
+    (app / "config.example.toml").write_text(example.read_text())
+    said = []
+    assert keysetup.run(app, home, key_id=' "Key ID: 1a2b3c4d-5e6f-7a8b-9c0d-112233445566" ', say=said.append) == 0
+    dest = home / "kalshi-key.pem"
+    assert dest.read_bytes() == pem and not (home / "Downloads" / "kalshi-key.pem").exists()
+    assert oct(dest.stat().st_mode & 0o777) == "0o600"
+    assert not any("PRIVATE" in line for line in said)  # the key's contents are never printed
+    cfg = config.load(str(app / "config.toml"))
+    assert cfg.kalshi.api_key_id == "1a2b3c4d-5e6f-7a8b-9c0d-112233445566" and cfg.kalshi.private_key_path == "~/kalshi-key.pem"
+    assert cfg.server.port == 8792 and cfg.kalshi.category == "Crypto"  # the rest of the example kept
+    # run again with a new ID: replaced in place, not duplicated; the key already in place is found
+    assert keysetup.run(app, home, key_id="ffff0000-1111", say=said.append) == 0
+    text = (app / "config.toml").read_text()
+    assert text.count("api_key_id =") == 1 and 'api_key_id = "ffff0000-1111"' in text
+
+
+def test_setup_key_refuses_a_pasted_private_key_and_a_missing_file(tmp_path):
+    from cx15m import keysetup
+
+    with pytest.raises(ValueError):
+        keysetup.clean_key_id("-----BEGIN PRIVATE KEY----- MC4C...")
+    with pytest.raises(ValueError):
+        keysetup.clean_key_id("hello world")
+    said = []
+    assert keysetup.run(tmp_path, tmp_path, key_id="1a2b3c4d-5e6f", say=said.append) == 2 and "No Kalshi private key" in said[0]
+    out = keysetup.write_config(tmp_path / "c.toml", tmp_path / "none.toml", "1a2b3c4d-5e6f")
+    assert out.startswith('[kalshi]\napi_key_id = "1a2b3c4d-5e6f"')

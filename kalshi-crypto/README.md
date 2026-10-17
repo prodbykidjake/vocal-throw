@@ -44,15 +44,15 @@ each settlement value.
 ### Getting a Kalshi API key (optional, for exact prices)
 
 1. On kalshi.com: **Account & security → API Keys → Create Key**. Kalshi shows a **Key ID** and downloads a
-   **private key file** (`.pem` or `.txt`). It is shown only once.
-2. Move that file to your home folder, e.g. `~/kalshi-key.pem`.
-3. In `~/kalshi-crypto/config.toml` (copy `config.example.toml` if you have none):
-   ```toml
-   [kalshi]
-   api_key_id = "the Key ID"
-   private_key_path = "~/kalshi-key.pem"
+   **private key file** (`.pem` or `.txt`; RSA or Ed25519, both work). The file is offered only once.
+2. Run, from the board's folder:
+   ```bash
+   cd ~/kalshi-crypto && source ~/.venv/bin/activate && python -m cx15m setup-key
    ```
-4. Check it: `python -m cx15m probe-index` prints a few seconds of index messages (no secrets in them).
+   It finds the key file in your Downloads, moves it to `~/kalshi-key.pem` (readable by you only), asks you to paste
+   the **Key ID**, writes both into `config.toml`, and tests the connection for 12 seconds. To do it by hand instead,
+   copy `config.example.toml` to `config.toml` and fill in `api_key_id` and `private_key_path` under `[kalshi]`.
+3. Restart the board (`python -m cx15m serve`). The start-up line says `prices: kalshi-index`.
 
 **Treat the private key like your password.** It can trade on your account, so never paste it into a chat, an email or
 a screenshot, and never send it to anyone (Claude included). The board reads it from the file on your own computer,

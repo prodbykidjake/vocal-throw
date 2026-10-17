@@ -8,7 +8,8 @@ file on your computer; it is read when the board starts and never written, logge
 signature of the handshake is).
 
 Handshake (Kalshi's docs): headers KALSHI-ACCESS-KEY (the key ID), KALSHI-ACCESS-TIMESTAMP (milliseconds) and
-KALSHI-ACCESS-SIGNATURE = base64(RSA-PSS-SHA256(timestamp + "GET" + "/trade-api/ws/v2")).
+KALSHI-ACCESS-SIGNATURE = base64(signature of timestamp + "GET" + "/trade-api/ws/v2"): RSA-PSS-SHA256 for an RSA key
+file, Ed25519 for an Ed25519 one (Kalshi has issued both).
 Subscribe: {"id": 1, "cmd": "subscribe", "params": {"channels": ["cfbenchmarks_value"], "index_ids": ["BRTI", ...]}}
 A value message carries the index ID, the raw CF frame (`data`, a JSON string: {"type": "value", "id": "BRTI",
 "time": <ms>, "value": "80056.35"}), the trailing 60-second average, and in the last minute before each quarter hour
@@ -51,13 +52,28 @@ def load_private_key(path: str):
         return serialization.load_pem_private_key(fh.read(), password=None)
 
 
+def key_kind(private_key) -> str:
+    """"rsa" or "ed25519": Kalshi has issued both kinds of key file."""
+    from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
+    if isinstance(private_key, rsa.RSAPrivateKey):
+        return "rsa"
+    if isinstance(private_key, ed25519.Ed25519PrivateKey):
+        return "ed25519"
+    raise ValueError(f"unsupported key type {type(private_key).__name__}: Kalshi keys are RSA or Ed25519")
+
+
 def sign_headers(key_id: str, private_key, ts_ms: int | None = None) -> dict:
+    """The signed handshake: an RSA key signs with RSA-PSS (SHA-256, digest-length salt), as Kalshi's docs show; an
+    Ed25519 key signs the same message with Ed25519 (no hash or padding to choose)."""
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding
     ts = str(int(time.time() * 1000) if ts_ms is None else ts_ms)
-    sig = private_key.sign((ts + "GET" + WS_PATH).encode(),
-                           padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH),
-                           hashes.SHA256())
+    message = (ts + "GET" + WS_PATH).encode()
+    if key_kind(private_key) == "rsa":
+        sig = private_key.sign(message, padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                                                    salt_length=padding.PSS.DIGEST_LENGTH), hashes.SHA256())
+    else:
+        sig = private_key.sign(message)
     return {"KALSHI-ACCESS-KEY": key_id, "KALSHI-ACCESS-TIMESTAMP": ts,
             "KALSHI-ACCESS-SIGNATURE": base64.b64encode(sig).decode()}
 
