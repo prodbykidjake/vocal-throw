@@ -10,7 +10,7 @@ The project is derived from the [Pamplejuce](https://github.com/sudara/pamplejuc
 
 Builds default to **Debug** (faster builds, better debugging). If you're making music with the plugin and hear dropouts or high CPU, build **Release** (`-DCMAKE_BUILD_TYPE=Release`).
 
-CI (`.github/workflows/build_and_test.yml`) builds and tests Linux and macOS (Apple Silicon only, `-DCMAKE_OSX_ARCHITECTURES=arm64`), runs pluginval at strictness 10 on the VST3 and `auval` on the AU. Windows and IPP are commented out. The macOS signing, notarisation and pkg steps only run when the Developer ID secrets exist (`HAS_SIGNING`); until then the macOS job ad-hoc signs the `.component` and `.vst3` and uploads them, with `packaging/INSTALL-macOS.txt`, as the `Vox-Smoove-macOS-arm64` artifact. For a release, switch macOS to a universal build and add the signing secrets.
+CI (`.github/workflows/build_and_test.yml`) builds and tests Linux and macOS (universal arm64 + x86_64; `PamplejuceMacOS.cmake` also forces this for Release builds on CI), runs pluginval at strictness 10 on the VST3 and `auval` on the AU. Windows and IPP are commented out. The macOS signing, notarisation and pkg steps only run when the Developer ID secrets exist (`HAS_SIGNING`); until then the macOS job ad-hoc signs the `.component` and `.vst3` and uploads them, with `packaging/INSTALL-macOS.txt`, as the `Vox-Smoove-macOS-arm64` artifact (universal despite the name), plus a VST3-only `Vox-Smoove-VST3-Mac` artifact with `packaging/INSTALL-VST3-macOS.txt` for sharing. For a release, add the signing secrets.
 
 ### DSP overview (`source/dsp/`)
 

@@ -43,11 +43,11 @@ jobs:
             os: ubuntu-22.04
             pluginval-binary: ./pluginval
             extra-flags: -G Ninja -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld
-          # Apple Silicon only for now. For a release, use -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" (universal).
+          # Universal (Apple Silicon + Intel), so the unsigned builds run on any Mac
           - name: macOS
             os: macos-14
             pluginval-binary: pluginval.app/Contents/MacOS/pluginval
-            extra-flags: -G Ninja -DCMAKE_OSX_ARCHITECTURES=arm64
+            extra-flags: -G Ninja -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           # Windows is disabled for now; re-enable it when preparing a release.
           # - name: Windows
           #   os: windows-latest
@@ -211,12 +211,29 @@ jobs:
           ditto -c -k --keepParent "$DIST" "Vox-Smoove-macOS-arm64.zip"
           unzip -l "Vox-Smoove-macOS-arm64.zip"
 
+          # a VST3-only package with install notes for FL Studio and other VST3 hosts
+          lipo -info "${{ env.VST3_PATH }}/Contents/MacOS/${{ env.PRODUCT_NAME }}"
+          lipo "${{ env.VST3_PATH }}/Contents/MacOS/${{ env.PRODUCT_NAME }}" -verify_arch arm64 x86_64
+          VST3_DIST="${{ env.PRODUCT_NAME }} VST3 (Mac)"
+          mkdir -p "$VST3_DIST"
+          cp -R "${{ env.VST3_PATH }}" "$VST3_DIST/"
+          cp packaging/INSTALL-VST3-macOS.txt "$VST3_DIST/INSTALL.txt"
+          ditto -c -k --keepParent "$VST3_DIST" "Vox-Smoove-VST3-Mac.zip"
+          unzip -l "Vox-Smoove-VST3-Mac.zip"
+
       - name: Upload unsigned plugins (macOS)
         if: ${{ runner.os == 'macOS' && env.HAS_SIGNING != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: Vox-Smoove-macOS-arm64
           path: Vox-Smoove-macOS-arm64.zip
+
+      - name: Upload VST3 for sharing (macOS)
+        if: ${{ runner.os == 'macOS' && env.HAS_SIGNING != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: Vox-Smoove-VST3-Mac
+          path: Vox-Smoove-VST3-Mac.zip
 
       - name: Zip
         if: ${{ runner.os == 'Linux' }}

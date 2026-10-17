@@ -1,0 +1,24 @@
+Vox Smoove (VST3) - installing on a Mac for FL Studio
+=====================================================
+
+Works on macOS 10.14 or newer, on Apple Silicon (M1 and later) and Intel Macs.
+
+This build isn't signed with an Apple Developer ID yet, so macOS needs one extra step.
+
+1. Copy "Vox Smoove.vst3" into your VST3 folder. In Finder press Cmd+Shift+G, paste this
+   path and press Return, then drag the file in:
+
+     ~/Library/Audio/Plug-Ins/VST3/
+
+2. Open Terminal (Applications > Utilities), paste this line and press Return:
+
+     xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Vox Smoove.vst3"
+
+   It removes the "downloaded from the internet" flag. Without it macOS says the plug-in
+   is damaged or can't be opened. No output means it worked.
+
+3. In FL Studio: Options > Manage plugins > Find more plugins (or Find installed plugins).
+   Vox Smoove (Playbox Audio) then shows up under Plugin database > Effects, and in the
+   mixer's effect slots.
+
+To pick a colour theme, click the gear at the top right of the plug-in.
