@@ -252,7 +252,7 @@ def test_no_call_while_the_exact_index_is_down(tmp_path):
 
     asyncio.run(run())
     c = board.state["markets"][0]["call"]
-    assert c["watch"]["status"].startswith("no new call while the exact index is down") and c["call"] is None and c["meter"]
+    assert c["watch"]["status"].startswith("no new call: the exact index is down") and c["call"] is None and c["meter"]
 
 
 

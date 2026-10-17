@@ -165,6 +165,7 @@ def test_setup_key_moves_the_key_and_writes_the_config(tmp_path):
     assert cfg.server.port == 8792 and cfg.kalshi.category == "Crypto"  # the rest of the example kept
     # run again with a new ID: replaced in place, not duplicated; the key already in place is found
     assert keysetup.run(app, home, key_id="ffff0000-1111", say=said.append) == 0
+    assert (app / "config.toml").read_text().count("[kalshi]") == 1
     text = (app / "config.toml").read_text()
     assert text.count("api_key_id =") == 1 and 'api_key_id = "ffff0000-1111"' in text
 
@@ -180,3 +181,49 @@ def test_setup_key_refuses_a_pasted_private_key_and_a_missing_file(tmp_path):
     assert keysetup.run(tmp_path, tmp_path, key_id="1a2b3c4d-5e6f", say=said.append) == 2 and "No Kalshi private key" in said[0]
     out = keysetup.write_config(tmp_path / "c.toml", tmp_path / "none.toml", "1a2b3c4d-5e6f")
     assert out.startswith('[kalshi]\napi_key_id = "1a2b3c4d-5e6f"')
+
+
+def test_setup_key_prefers_a_newer_download_and_asks_before_taking_other_key_files(tmp_path):
+    import os
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from cx15m import keysetup
+
+    def pem():
+        return ed25519.Ed25519PrivateKey.generate().private_bytes(serialization.Encoding.PEM,
+                                                                serialization.PrivateFormat.PKCS8,
+                                                                serialization.NoEncryption())
+    home, app = tmp_path / "home", tmp_path / "app"
+    (home / "Downloads").mkdir(parents=True)
+    app.mkdir()
+    old, new = pem(), pem()
+    (home / "kalshi-key.pem").write_bytes(old)
+    os.utime(home / "kalshi-key.pem", (1_000_000_000, 1_000_000_000))
+    (home / "Downloads" / "Kalshi API key.txt").write_bytes(new)
+    assert keysetup.run(app, home, key_id="1a2b3c4d-0000", say=lambda *a: None) == 0
+    assert (home / "kalshi-key.pem").read_bytes() == new and (home / "kalshi-key.old.pem").read_bytes() == old
+    # an AWS-style key in Downloads is not taken without a yes
+    home2 = tmp_path / "home2"
+    (home2 / "Downloads").mkdir(parents=True)
+    (home2 / "Downloads" / "ec2-server.pem").write_bytes(pem())
+    said = []
+    assert keysetup.run(app, home2, key_id="1a2b3c4d-0000", ask=lambda q: "n", say=said.append) == 2
+    assert (home2 / "Downloads" / "ec2-server.pem").exists() and not (home2 / "kalshi-key.pem").exists()
+    assert keysetup.run(app, home2, key_id="1a2b3c4d-0000", ask=lambda q: "y", say=said.append) == 0
+
+
+def test_setup_key_never_breaks_the_config(tmp_path):
+    from cx15m import keysetup
+
+    cfgp = tmp_path / "config.toml"
+    cfgp.write_text("[kalshi]   # my settings\ncategory = \"Crypto\"\n\n[server]\nport = 8792\n")
+    keysetup.write_config(cfgp, tmp_path / "none", "1a2b3c4d-5e6f")
+    text = cfgp.read_text()
+    assert text.count("[kalshi]") == 1 and 'api_key_id = "1a2b3c4d-5e6f"' in text and "port = 8792" in text
+    cfgp.write_text("[kalshi\nbroken")
+    with pytest.raises(ValueError):
+        keysetup.write_config(cfgp, tmp_path / "none", "1a2b3c4d-5e6f")
+    assert cfgp.read_text() == "[kalshi\nbroken"  # left as it was
+    with pytest.raises(ValueError):
+        keysetup.clean_key_id("MC4CAQAwBQYDK2VwBCIEIabcdefghij")  # a line of a pasted key: no dash

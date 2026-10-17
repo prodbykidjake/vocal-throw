@@ -484,7 +484,8 @@ def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--days", type=float, default=60)
     p.add_argument("--series", default="KXBTC15M", help="a series ticker, several separated by commas, or all")
-    p.add_argument("--out", default=None, help="default data/history-<SERIES>.db")
+    p.add_argument("--out", default=None, help="one series only (default data/history-<SERIES>.db); with several "
+                                               "series each goes to data/history-<SERIES>.db")
     p.add_argument("--rps", type=float, default=8.0)
     p.add_argument("--trades", action="store_true")
     p.add_argument("--no-livedata", dest="livedata", action="store_false",

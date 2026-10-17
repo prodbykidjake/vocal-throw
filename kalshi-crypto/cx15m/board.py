@@ -1,8 +1,8 @@
 """The board: one settlement-calling desk per 15-minute crypto market, sharing one rate-limited Kalshi connection.
 
-Each desk polls its own window list and order book on a staggered 2-second rhythm, so nine markets cost about
-5 requests a second, under the 14/s the shared limiter allows (Kalshi's public tier is ~20/s, and the commodities
-board needs its share). The coins' prices come from one shared connection per exchange (feeds/exchanges.py), or from
+Each desk polls its own order book every 2 seconds, its window list every 10 and Kalshi's 60-second average every 5,
+staggered, so nine markets cost about 7 requests a second, under the 10/s the shared limiter allows (Kalshi's public
+tier is ~20/s per connection, and the commodities board on the same computer uses about 8). The coins' prices come from one shared connection per exchange (feeds/exchanges.py), or from
 Kalshi's exact index with an API key (feeds/kalshi_index.py). One 1 Hz loop steps every desk and publishes the
 combined state.
 """
@@ -20,6 +20,7 @@ from . import tuning
 from .config import Config
 from .desk import Desk
 from .edge import EdgeStore, EdgeTracker, points as edge_points
+from .feeds.calibrated import CalibratedFeed
 from .feeds.composite import FallbackFeed
 from .feeds.exchanges import ExchangeFeed, ExchangeHub
 from .feeds.kalshi_index import KalshiIndexFeed, KalshiIndexHub, has_key, key_settings
@@ -58,6 +59,7 @@ class Board:
         self.shadows: dict[str, dict[str, ShadowCalls]] = {}  # every mode on the same windows (cx15m/shadow.py)
         self.exchange_hub: ExchangeHub | None = None  # one connection per exchange for every coin
         self.index_hub: KalshiIndexHub | None = None  # the exact index (with a Kalshi API key)
+        self._source: str | None = None  # the price source, worked out once (feed_source)
 
     # ------------------------------------------------------------------ mutes (per card, remembered)
     def _load_saved(self) -> dict:
@@ -128,39 +130,47 @@ class Board:
             return Desk(spec, cfg, store, client, feed, self.notifier, self.is_muted)
         feed = self._make_feed(spec)
         desk = Desk(spec, cfg, store, self.client, feed, self.notifier, self.is_muted)
-        if isinstance(feed, KalshiLiveFeed):
-            feed.event_ticker_fn = lambda d=desk: (event_ticker_for(d.tracker.current.ticker, d.tracker.current.event_ticker)
+        for live in _kalshi_series_feeds(feed):  # Kalshi's average follows the desk's current window
+            live.event_ticker_fn = lambda d=desk: (event_ticker_for(d.tracker.current.ticker, d.tracker.current.event_ticker)
                                                    if d.tracker.current else None)
         return desk
 
     def feed_source(self) -> str:
-        """auto -> kalshi-index with an API key, else exchanges (see [feed] source in config.example.toml)."""
+        """The live price each card reads ([feed] source, see config.example.toml), worked out once:
+        kalshi-index (with an API key) | calibrated (the exchanges matched to Kalshi's own average) | exchanges."""
+        if self._source is not None:
+            return self._source
         src = str(self.cfg.feed.source or "auto").strip().lower()
-        if src not in ("auto", "exchanges", "kalshi-index", "kalshi-live"):
-            log.warning("config: [feed] source = %r is not auto/exchanges/kalshi-index/kalshi-live; using auto", src)
+        if src == "kalshi-live":
+            src = "calibrated"  # older name: Kalshi's chart series is the 60-second average, so it calibrates
+        if src not in ("auto", "exchanges", "kalshi-index", "calibrated"):
+            log.warning("config: [feed] source = %r is not auto/calibrated/exchanges/kalshi-index; using auto", src)
             src = "auto"
         if src == "kalshi-index" and not has_key(self.cfg.kalshi):
             log.warning("config: [feed] source = kalshi-index needs [kalshi] api_key_id and private_key_path; "
-                        "using the exchanges' price")
-            return "exchanges"
+                        "using the exchanges matched to Kalshi's average")
+            src = "calibrated"
         if src == "auto":
-            return "kalshi-index" if has_key(self.cfg.kalshi) else "exchanges"
+            src = "kalshi-index" if has_key(self.cfg.kalshi) else "calibrated"
+        self._source = src
         return src
 
     def _make_feed(self, spec: MarketSpec):
         src = self.feed_source()
-        if src == "kalshi-live":
-            return KalshiLiveFeed(self.cfg.kalshi.base_url, poll_s=self.cfg.kalshi.poll_s, client=self.client,
-                                  symbol=f"{spec.name} ({spec.index or 'index'} via Kalshi's chart)")
         if self.exchange_hub is None:
             self.exchange_hub = ExchangeHub(list(self.cfg.feed.exchanges), self.cfg.feed.quote_max_age_s)
         exchanges = ExchangeFeed(self.exchange_hub, spec.badge, spec.name)
-        if src == "exchanges" or not spec.index:
+        if src == "exchanges":
             return exchanges
+        average = KalshiLiveFeed(self.cfg.kalshi.base_url, poll_s=self.cfg.kalshi.average_poll_s, client=self.client,
+                                 symbol=f"{spec.name}: Kalshi's 60-second average")
+        calibrated = CalibratedFeed(exchanges, average)
+        if src == "calibrated" or not spec.index:
+            return calibrated
         if self.index_hub is None:
             key_id, path = key_settings(self.cfg.kalshi)
             self.index_hub = KalshiIndexHub(self.cfg.kalshi.ws_url, key_id, path)
-        return FallbackFeed(KalshiIndexFeed(self.index_hub, spec.index, spec.name), exchanges)
+        return FallbackFeed(KalshiIndexFeed(self.index_hub, spec.index, spec.name), calibrated)
 
     def _make_pullout(self, key: str) -> PulloutTracker:
         tr = PulloutTracker(key, self.pullout_store)
@@ -347,6 +357,16 @@ class Board:
                 "early_left_s": self.early_left_s(),
                 "requests": None if self.sim is not None else (getattr(self.client, "requests", 0) or 0),
                 "throttled": self.limiter.throttled, "feed_source": None if self.sim is not None else self.feed_source()}
+
+
+def _kalshi_series_feeds(feed):
+    """Every KalshiLiveFeed inside a (possibly composite) feed: they need the desk's current event."""
+    if isinstance(feed, KalshiLiveFeed):
+        yield feed
+    for attr in ("primary", "backup", "raw", "avg"):
+        inner = getattr(feed, attr, None)
+        if inner is not None and inner is not feed:
+            yield from _kalshi_series_feeds(inner)
 
 
 def _pct(p: float | None) -> str:

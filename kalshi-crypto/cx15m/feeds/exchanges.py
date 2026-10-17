@@ -34,6 +34,7 @@ KRAKEN_WS = "wss://ws.kraken.com/v2"
 BITSTAMP_TICKERS = "https://www.bitstamp.net/api/v2/ticker/"
 COINBASE_CANDLES = "https://api.exchange.coinbase.com/products/{product}/candles"
 KRAKEN_OHLC = "https://api.kraken.com/0/public/OHLC"
+PRINT_MAX_QUOTE_AGE_S = 8.0  # no print once even the freshest exchange quote is this old (the card's stale limit)
 OUTLIER = 0.005  # with 3+ exchanges, a midpoint more than 0.5% from the others' median is left out (a broken book)
 NAMES = {"coinbase": "Coinbase", "kraken": "Kraken", "bitstamp": "Bitstamp"}
 KRAKEN_REST = {"BTC": "XBT", "DOGE": "XDG"}  # Kraken's REST names (its WebSocket v2 uses BTC/USD, DOGE/USD)
@@ -189,12 +190,15 @@ class ExchangeHub:
     async def _forever(self, name: str, runner):
         failures = 0
         while True:
+            began = time.monotonic()
             try:
                 await runner()
                 failures = 0
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                if time.monotonic() - began > 120:
+                    failures = 0  # a connection that worked for minutes and then dropped starts the back-off afresh
                 failures += 1
                 self.errors[name] = str(exc)[:160]
                 if failures in (1, 10) or failures % 100 == 0:
@@ -311,6 +315,10 @@ class ExchangeFeed(PriceFeed):
         now = time.time() if now is None else now
         price, used = self.hub.mid(self.asset, now)
         self.used = used
+        quotes = self.hub.quotes.get(self.asset, {})
+        newest = max((quotes[e][0] for e in used if e in quotes), default=None)
+        if newest is not None and now - newest > PRINT_MAX_QUOTE_AGE_S:
+            price = None  # every exchange has gone quiet: stop printing, so the card says the price is stale
         if price is None:
             self.mode = "waiting for exchange prices"
             self.connected = False

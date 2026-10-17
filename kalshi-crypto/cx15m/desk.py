@@ -54,7 +54,7 @@ class Desk:
         self.notifier = notifier or Notifier(False, False)
         self.is_muted = is_muted
         t = cfg.trading
-        self.scale = Scale(decimals=spec.decimals)
+        self.scale = Scale(decimals=spec.decimals, cents=spec.cents)
         for row in store.recent_windows(40):  # targets seen before: the decimals Kalshi writes them with
             self.scale.observe_target(row.get("strike"))
         self.model = Model(calibrator=Calibrator.from_json(store.get_state("calibrator")), tie_adj=self.scale.tie_adj,
@@ -166,13 +166,19 @@ class Desk:
         return avg
 
     def _avg_sofar(self, close_ts: float, now: float) -> float | None:
-        """Inside the settlement minute: the average of the prints already in (None before it, or without prints)."""
+        """Inside the settlement minute: the average of the prints already in (None before it, or without prints).
+        After the close, until Kalshi settles: the whole minute's average, so the card keeps showing where the
+        settlement landed instead of the live price."""
         w = self.cfg.trading.settle_avg_s
-        if w <= 0 or not close_ts - w <= now < close_ts:
+        if w <= 0 or now < close_ts - w or now > close_ts + 600:
             return None
-        exact = getattr(self.feed, "settle_avg", None)  # Kalshi's own running average, with the exact index
-        if exact is not None and exact(now):
-            return exact(now)
+        if now >= close_ts:
+            return self._feed_avg(close_ts)
+        exact = getattr(self.feed, "settle_avg", None)  # from Kalshi's own running average, when the feed has it
+        if exact is not None:
+            a = exact(now, close_ts)
+            if a is not None:
+                return a
         start = close_ts - w
         ticks = [(t.ts, t.price) for t in self.feed.buffer.since(start - PRINT_MAX_AGE_S)]
         return second_average(ticks, start, math.floor(now) + 1.0, min_share=0.0)
@@ -303,10 +309,10 @@ class Desk:
             mean = statistics.fmean(recent)
             t_stat = abs(mean) / (sd / math.sqrt(n)) if sd > 0 else (float("inf") if abs(mean) > 0 else 0.0)
         consistent = n >= t.basis_min_windows and t_stat >= t.basis_min_t and abs(bias) > self.scale.match_tol
-        applied = round(bias, 6) if consistent else 0.0
+        applied = round(bias, 10) if consistent else 0.0  # Dogecoin's offsets are millionths of a dollar
         self.store.set_state(f"basis_error:{source}", str(basis))
         self.store.set_state(f"basis_signed:{source}", str(applied))
-        self.store.set_state(f"basis_raw:{source}", str(round(bias, 6)))
+        self.store.set_state(f"basis_raw:{source}", str(round(bias, 10)))
         self.store.set_state(f"basis_n:{source}", str(n))
         self.store.set_state(f"basis_consistent:{source}", "1" if consistent else "0")
         if source == self._basis_source:
@@ -340,8 +346,9 @@ class Desk:
         open_ts = m.open_time.timestamp() if m.open_time else now
         close_ts = m.close_time.timestamp() if m.close_time else now
         events = self._window_events(open_ts, close_ts)
+        moving = [e for e in events if e[1] != "Kalshi maintenance"]  # maintenance blocks calls but moves nothing
         if self.cfg.trading.vol_profile:
-            mult, note, n = self.vol_profile.mult(open_ts, events)
+            mult, note, n = self.vol_profile.mult(open_ts, moving)
         else:
             mult, note, n = 1.0, "learned correction off", 0
         self.model.vol_mult, self.model.vol_note = mult, note
@@ -356,7 +363,8 @@ class Desk:
         if (elapsed is not None and elapsed >= study and m.ticker not in self._forecast_done and elapsed <= study + 120
                 and tau and tau > 0 and pred.sigma_raw > 0 and pred.confidence not in ("warming_up", "stale")):
             self._forecast_done.add(m.ticker)
-            self.store.set_window_forecast(m.ticker, pred.sigma_raw, events[0][1] if events else "")
+            moving = [e for e in events if e[1] != "Kalshi maintenance"]
+            self.store.set_window_forecast(m.ticker, pred.sigma_raw, moving[0][1] if moving else "")
 
     # ------------------------------------------------------------------ per second
     def step(self):
@@ -409,7 +417,7 @@ class Desk:
     @staticmethod
     def _blocked_text(events: list, backup: bool) -> str:
         if backup:
-            return "no new call while the exact index is down (reading the exchanges' backup price)"
+            return "no new call: the exact index is down and the backup price is not matched to Kalshi's average yet"
         name = events[0][1]
         if name == "Kalshi maintenance":
             return "no call this window (Kalshi's weekly maintenance, Thursday 3:00-5:00 AM ET)"

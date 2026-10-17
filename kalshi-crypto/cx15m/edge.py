@@ -142,7 +142,8 @@ class EdgeTracker:
         ask = ya if side == "UP" else (None if yb is None else 1.0 - yb)
         usable = (st.get("quotes_fresh") and ask is not None and 0 < ask < 1 and yb is not None and ya is not None
                   and ya - yb <= 0.30 and "FALLBACK" not in str((st.get("feed") or {}).get("mode", "")).upper()
-                  and pred.get("confidence") not in ("warming_up", "stale", "no_target"))
+                  and pred.get("confidence") not in ("warming_up", "stale", "no_target")
+                  and not any(e.get("name") == "Kalshi maintenance" for e in (st.get("vol") or {}).get("events") or []))
         unit = max(1.0, (close_ts - open_ts) / 15.0)  # one minute of a 15-minute window (the demo's windows are shorter)
         elapsed = now - open_ts
         minute = int(elapsed // unit)

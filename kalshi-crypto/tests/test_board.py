@@ -83,7 +83,10 @@ async def test_discovery_keeps_the_known_nine_and_adds_new_15_minute_coins():
     class Client:
         async def list_series_raw(self, category):
             return [{"ticker": "KXBTC15M"}, {"ticker": "KXBTCD"}, {"ticker": "KXADA15M", "title": "Cardano 15 min"},
-                    {"ticker": "KXBTC15MLEAD"}]
+                    {"ticker": "KXCRYPTOLEAD15M"}, {"ticker": "KXCRYPTOCOMP15M"}, {"ticker": "KXTON15M"}]
+
+        async def get_markets_raw(self, series, status=None):
+            return [{"ticker": series + "-X"}] if series == "KXADA15M" else []  # TON is dormant
     specs = await discover(Client())
     assert [s.series for s in specs] == [m.series for m in KNOWN] + ["KXADA15M"]
 
@@ -133,6 +136,7 @@ async def test_nine_simulated_coins_each_get_a_card_with_its_own_scale(tmp_path)
 
 
 def test_the_price_source_follows_the_api_key(tmp_path, monkeypatch):
+    from cx15m.feeds.calibrated import CalibratedFeed
     from cx15m.feeds.composite import FallbackFeed
     from cx15m.feeds.exchanges import ExchangeFeed
     from cx15m.feeds.kalshi_live import KalshiLiveFeed
@@ -142,15 +146,22 @@ def test_the_price_source_follows_the_api_key(tmp_path, monkeypatch):
     cfg = Config()
     cfg.storage.data_dir = str(tmp_path)
     board = Board(cfg, client=object())
-    assert board.feed_source() == "exchanges"
+    assert board.feed_source() == "calibrated"  # no key: the exchanges matched to Kalshi's own average
     feeds = [board._make_feed(m) for m in KNOWN]
-    assert all(isinstance(f, ExchangeFeed) for f in feeds) and board.exchange_hub.assets == {m.badge for m in KNOWN}
+    assert all(isinstance(f, CalibratedFeed) and isinstance(f.raw, ExchangeFeed) and isinstance(f.avg, KalshiLiveFeed)
+               for f in feeds)
+    assert board.exchange_hub.assets == {m.badge for m in KNOWN}
     cfg.kalshi.api_key_id, cfg.kalshi.private_key_path = "key-id", str(tmp_path / "key.pem")
     board2 = Board(cfg, client=object())
     assert board2.feed_source() == "kalshi-index"
     f = board2._make_feed(KNOWN[0])
-    assert isinstance(f, FallbackFeed) and f.primary.index_id == "BRTI" and isinstance(f.backup, ExchangeFeed)
-    cfg.feed.source = "kalshi-live"
-    assert isinstance(Board(cfg, client=object())._make_feed(KNOWN[0]), KalshiLiveFeed)
+    assert isinstance(f, FallbackFeed) and f.primary.index_id == "BRTI" and isinstance(f.backup, CalibratedFeed)
+    from cx15m.board import _kalshi_series_feeds
+    assert [type(x).__name__ for x in _kalshi_series_feeds(f)] == ["KalshiLiveFeed"]  # wired to the desk's window
+    cfg.feed.source = "exchanges"
+    assert isinstance(Board(cfg, client=object())._make_feed(KNOWN[0]), ExchangeFeed)
+    cfg.feed.source = "kalshi-live"  # the old name still works
+    assert Board(cfg, client=object()).feed_source() == "calibrated"
     cfg.feed.source, cfg.kalshi.api_key_id = "kalshi-index", ""
-    assert Board(cfg, client=object()).feed_source() == "exchanges"  # no key: falls back with a warning
+    b3 = Board(cfg, client=object())
+    assert b3.feed_source() == "calibrated" and b3._source == "calibrated"  # no key: falls back, worked out once

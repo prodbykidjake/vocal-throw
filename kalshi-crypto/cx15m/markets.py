@@ -77,9 +77,14 @@ def spec_for_series(ticker: str, title: str = "") -> MarketSpec:
     return MarketSpec(base, name, ticker, base[:4].upper(), "crypto", "#8b93a1", 100.0, 0.02, 2)
 
 
+MULTI_COIN = ("LEAD", "COMP")  # KXCRYPTOLEAD15M (coin race) and KXCRYPTOCOMP15M (comparison): not one coin's Up/Down
+
+
 async def discover(client, category: str = "Crypto") -> list[MarketSpec]:
     """Kalshi's 15-minute crypto series, known ones first in Kalshi's order. The known nine are always included (the
-    category also lists daily, hourly and range series, and a partial listing must not drop a card)."""
+    category also lists daily, hourly and range series, and a partial listing must not drop a card). Another coin's
+    15-minute series gets a card only if it has a window open now: Kalshi also lists dormant ones (Cardano, TON,
+    Bitcoin Cash in October 2026) and those would be empty cards."""
     found = list(KNOWN)
     try:
         rows = await client.list_series_raw(category)
@@ -89,9 +94,17 @@ async def discover(client, category: str = "Crypto") -> list[MarketSpec]:
     seen = {m.series for m in found}
     for r in rows:
         ticker = str(r.get("ticker") or "").upper()
-        if ticker.endswith("15M") and ticker not in seen and "LEAD" not in ticker:
-            seen.add(ticker)
+        if not ticker.endswith("15M") or ticker in seen or any(x in ticker for x in MULTI_COIN):
+            continue
+        seen.add(ticker)
+        try:
+            live = await client.get_markets_raw(ticker, status="open")
+        except Exception:
+            live = None
+        if live:
             found.append(spec_for_series(ticker, str(r.get("title") or "")))
+        else:
+            log.info("series %s has no open window: no card (restart the board once Kalshi trades it)", ticker)
     return found
 
 

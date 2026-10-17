@@ -320,14 +320,20 @@ class Prediction:
             "p_up": round(self.p_final, 4), "p_down": round(self.p_down, 4), "p_base": round(self.p_base, 4),
             "p_learner": round(self.p_learner, 4), "p_market": None if self.p_market is None else round(self.p_market, 4),
             "z": round(self.z, 3), "sigma": self.sigma, "sigma_slow": self.sigma_slow, "sigma_fast": self.sigma_fast,
-            "tau_s": round(self.tau_s, 1), "gap": round(self.gap, 4), "expected_move": round(self.expected_move, 4),
+            "tau_s": round(self.tau_s, 1), "gap": _sig(self.gap), "expected_move": _sig(self.expected_move),
             "confidence": self.confidence, "shrink": round(self.shrink, 3), "notes": self.notes, "sigma_eff": self.sigma_eff,
-            "price_adj": None if self.price_adj is None else round(self.price_adj, 4), "basis_signed": round(self.basis_signed, 4),
-            "implied_price": None if self.implied_price is None else round(self.implied_price, 3), "disagree": self.disagree,
+            "price_adj": _sig(self.price_adj), "basis_signed": _sig(self.basis_signed),
+            "implied_price": _sig(self.implied_price), "disagree": self.disagree,
             "sigma_raw": self.sigma_raw, "vol_mult": round(self.vol_mult, 3),
-            "settle_mean": None if self.settle_mean is None else round(self.settle_mean, 8),
-            "tau_eff": round(self.tau_eff, 2), "avg_sofar": None if self.avg_sofar is None else round(self.avg_sofar, 8),
+            "settle_mean": _sig(self.settle_mean), "tau_eff": round(self.tau_eff, 2), "avg_sofar": _sig(self.avg_sofar),
         }
+
+
+def _sig(x: float | None, digits: int = 10) -> float | None:
+    """Rounded to `digits` significant digits: $80,056.35 and Dogecoin's $0.0000134 moves both survive."""
+    if x is None or x == 0 or not math.isfinite(x):
+        return x
+    return round(x, digits - 1 - int(math.floor(math.log10(abs(x)))))
 
 
 class Model:
@@ -378,14 +384,14 @@ class Model:
         sigma = sigma_raw * mult  # the odds use the corrected σ; the learner's momentum features keep the raw one
         if abs(mult - 1.0) >= 0.05 and self.vol_note:
             notes.append(f"volatility: {self.vol_note}")
-        if avg_sofar is not None and not (0.0 < tau_s < self.settle_avg_s):
-            avg_sofar = None  # only the settlement minute has locked prints
+        if avg_sofar is not None and not tau_s < self.settle_avg_s:
+            avg_sofar = None  # only the settlement minute has locked prints (after the close: all 60 of them)
         mean, tau_eff = average_inputs(price, tau_s, self.settle_avg_s, avg_sofar)
         # widen uncertainty by the measured feed-vs-settlement basis: extra variance at expiry, so the settlement's
         # spread is sqrt(σ²·τ_eff + basis²) (the locked prints were read on the same feed, so they carry it too)
         sigma_eff = sigma
         if self.basis_error > 0 and tau_s > 0.5:
-            sigma_eff = math.sqrt(sigma * sigma + (self.basis_error ** 2) / max(tau_eff, 0.01))
+            sigma_eff = math.sqrt(sigma * sigma + (self.basis_error ** 2) / max(tau_eff, 1e-9))
         if strike is None:
             return Prediction(0.5, 0.5, 0.5, p_market, 0.0, sigma, self.vol.sigma_slow(), self.vol.sigma_fast(), tau_s,
                               0.0, sigma_eff * math.sqrt(tau_eff), "no_target", self.cal.shrink, [], ["no target yet"],

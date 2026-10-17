@@ -32,6 +32,9 @@ log = logging.getLogger(__name__)
 
 WS_PATH = "/trade-api/ws/v2"
 CHANNEL = "cfbenchmarks_value"
+NO_DATA_S = 30.0  # subscribed but no value for this long: reconnect (and say why on the cards)
+# websockets logs the handshake headers at DEBUG (the Key ID and a signature): keep that out of any log
+logging.getLogger("websockets").setLevel(logging.INFO)
 
 
 def key_settings(kalshi_cfg) -> tuple[str, str]:
@@ -176,6 +179,7 @@ class KalshiIndexHub:
     async def _forever(self):
         failures = 0
         while True:
+            began = time.monotonic()
             try:
                 if self._key is None:
                     self._key = load_private_key(self.key_path)
@@ -183,10 +187,16 @@ class KalshiIndexHub:
                 failures = 0
             except asyncio.CancelledError:
                 raise
-            except FileNotFoundError:
-                self.last_error = f"private key file not found: {self.key_path}"
+            except (FileNotFoundError, IsADirectoryError, PermissionError):
+                self.last_error = "the private key file in [kalshi] private_key_path cannot be read"  # never echo it
+                failures += 1
+            except (ValueError, TypeError) as exc:
+                # a file that is not a key (or the key text pasted into the setting): name the problem, not the text
+                self.last_error = f"[kalshi] private_key_path is not a usable private key file ({type(exc).__name__})"
                 failures += 1
             except Exception as exc:
+                if time.monotonic() - began > 120:
+                    failures = 0  # it worked for minutes before dropping: start the back-off afresh
                 failures += 1
                 text = str(exc)
                 if "401" in text or "403" in text:
@@ -207,15 +217,27 @@ class KalshiIndexHub:
                                       "params": {"channels": [CHANNEL], "index_ids": sorted(self.feeds)}}))
             self.connected = True
             self.last_error = None
-            async for raw in ws:
-                if not self.handle(raw):
-                    try:
-                        msg = json.loads(raw)
-                    except ValueError:
-                        continue
-                    if msg.get("type") == "error":
-                        self.last_error = str(msg.get("msg"))[:200]
-                        log.warning("Kalshi index feed: %s", self.last_error)
+            last_value = time.monotonic()
+            while True:
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=NO_DATA_S)
+                except asyncio.TimeoutError:
+                    # subscribed but nothing comes (no entitlement, wrong index IDs, a stalled stream): reconnect
+                    raise RuntimeError(self.last_error or f"no index values from Kalshi for {NO_DATA_S:.0f} s")
+                if self.handle(raw):
+                    last_value = time.monotonic()
+                    continue
+                try:
+                    msg = json.loads(raw)
+                except ValueError:
+                    continue
+                if msg.get("type") == "error":
+                    self.last_error = f"Kalshi: {str(msg.get('msg'))[:180]}"
+                    log.warning("Kalshi index feed: %s", self.last_error)
+                    for f in self.feeds.values():
+                        f.last_error = self.last_error
+                if time.monotonic() - last_value > NO_DATA_S:
+                    raise RuntimeError(self.last_error or f"no index values from Kalshi for {NO_DATA_S:.0f} s")
 
 
 class KalshiIndexFeed(PriceFeed):
@@ -237,11 +259,14 @@ class KalshiIndexFeed(PriceFeed):
         self.last_error = None
         self.mode = "kalshi-index"
         self.avg60 = v.get("avg60")
+        # stamped with this computer's clock when it arrives (CF's own time is kept in v["ts"]): a Mac clock a few
+        # seconds off must not make every value look stale or "from the future"
+        now = time.time()
         if v.get("settle_avg"):
-            self._settle_avg = (v["ts"], v["settle_avg"])
-        self._publish(v["ts"], v["value"])
+            self._settle_avg = (now, v["settle_avg"])
+        self._publish(now, v["value"])
 
-    def settle_avg(self, now: float | None = None) -> float | None:
+    def settle_avg(self, now: float | None = None, close_ts: float | None = None) -> float | None:
         """Kalshi's own running settlement average, in the last minute before a close (None when not fresh)."""
         now = time.time() if now is None else now
         if self._settle_avg and now - self._settle_avg[0] <= 3.0:

@@ -56,7 +56,8 @@
     f(card, "meta").innerHTML = `${esc(m.series)} · ${mk && mk.close_label ? "closes " + esc(mk.close_label) : "waiting for a window"}` +
       (fm ? ` · <span class="eng" title="where the live price comes from">${esc(fm.split(" (exact")[0])}</span>` : "");
     f(card, "countdown").textContent = m.countdown || "--:--";
-    f(card, "progress").style.width = m.seconds_left == null ? "0%" : `${Math.max(0, Math.min(100, 100 * (1 - m.seconds_left / 900))).toFixed(1)}%`;
+    const span = mk && mk.open_time && mk.close_time ? (Date.parse(mk.close_time) - Date.parse(mk.open_time)) / 1000 : 900;
+    f(card, "progress").style.width = m.seconds_left == null ? "0%" : `${Math.max(0, Math.min(100, 100 * (1 - m.seconds_left / (span || 900)))).toFixed(1)}%`;
     f(card, "target").textContent = mk && mk.strike != null ? px(mk.strike, sc.decimals) : "--";
     f(card, "now").textContent = tick ? px(tick.price, sc.decimals) : "--";
     const d = tick && mk && mk.strike != null ? tick.price - mk.strike : null;
@@ -361,7 +362,7 @@
     if (ev.target.closest('[data-act="mute"]')) {
       ev.stopPropagation();
       const m = marketState(key);
-      await fetch(`/api/market/${encodeURIComponent(key)}/mute`, { method: "POST", headers: { "Content-Type": "application/json", "X-CM15M": "1" },
+      await fetch(`/api/market/${encodeURIComponent(key)}/mute`, { method: "POST", headers: { "Content-Type": "application/json", "X-CX15M": "1" },
         body: JSON.stringify({ muted: !(m && m.muted) }) });
       return;
     }
@@ -372,7 +373,7 @@
     const b = ev.target.closest(".mode-btn"); if (!b || b.classList.contains("on")) return;
     b.classList.add("busy");  // the next second's update shows the switch done
     try {
-      const r = await fetch("/api/mode", { method: "POST", headers: { "Content-Type": "application/json", "X-CM15M": "1" },
+      const r = await fetch("/api/mode", { method: "POST", headers: { "Content-Type": "application/json", "X-CX15M": "1" },
         body: JSON.stringify({ mode: b.dataset.mode }) });
       if (!r.ok) b.classList.remove("busy");
     } catch (e) { b.classList.remove("busy"); }

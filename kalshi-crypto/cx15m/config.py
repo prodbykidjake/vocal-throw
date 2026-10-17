@@ -14,8 +14,9 @@ log = logging.getLogger(__name__)
 class KalshiCfg:
     base_url: str = "https://api.elections.kalshi.com/trade-api/v2"
     timeout_s: float = 10.0
-    max_requests_per_s: float = 14.0  # shared by every market on the board (Kalshi's public tier allows ~20)
-    poll_s: float = 2.0  # each market's order book and live price, staggered across markets
+    max_requests_per_s: float = 10.0  # shared by every market (Kalshi allows ~20; the commodities board uses ~8)
+    poll_s: float = 2.0  # each market's order book, staggered across markets
+    average_poll_s: float = 5.0  # Kalshi's 60-second average (matching the exchanges' price to it)
     discovery_s: float = 10.0  # how often each market re-reads its window list
     category: str = "Crypto"  # Kalshi category searched for 15-minute series
     # Optional: a Kalshi API key (read-only use) for the exact CF Benchmarks index the markets settle on. Both stay on
