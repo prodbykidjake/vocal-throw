@@ -95,3 +95,47 @@ def test_a_matched_backup_keeps_calls_going_and_an_unmatched_one_blocks_them():
     backup.offset = 0.01
     avg._publish(now - 2, 100.0)
     assert not on_backup(f) and f.health().mode.startswith("backup: ")  # matched: calls go on
+
+
+def test_settle_avg_at_the_close_is_kalshis_value_and_index_prints_fill_in():
+    import time
+    t0, S, M, E = world(seconds=300, noise=0.0, offset=0.0)
+    close = t0 + 240
+    raw, avg = Stub(), Stub()
+    f = CalibratedFeed(raw, avg)
+    for t in range(t0 - 60, close):
+        raw._publish(float(t), E[t])
+    f.offset = 0.0
+    settle = round(M[close - 1], 2)
+    avg._publish(float(close), settle)  # Kalshi's clock a second ahead: the event's own close point already in
+    assert f.settle_avg(close - 0.5, close) == settle  # not 60/61 of it
+    # prints given explicitly (the exact index's, with a key) are what fill the seconds around Kalshi's point
+    raw2, avg2 = Stub(), Stub()
+    g = CalibratedFeed(raw2, avg2)
+    for t in range(t0 - 60, close - 30):
+        raw2._publish(float(t), E[t] + 50.0)  # exchanges way off: must not be used when index prints are given
+    g.offset = 0.0
+    index = Stub()
+    for t in range(t0 - 60, close - 30):
+        index._publish(float(t), S[t])
+    avg2._publish(float(close - 35), M[close - 35])
+    exact = sum(S[t] for t in range(close - 60, close - 30)) / 30
+    assert g.settle_avg(close - 30.5, close, index.buffer) == pytest.approx(exact, abs=1e-6)
+
+
+def test_kalshi_points_ahead_of_this_clock_are_kept_for_the_next_poll():
+    import asyncio
+    import time
+
+    from cx15m.feeds.kalshi_live import KalshiLiveFeed
+
+    now = time.time()
+    pts = [(now - 3, 100.0), (now - 1, 101.0), (now + 6, 102.0)]  # the last one is "from the future" here
+
+    class Client:
+        async def get_live_data_raw(self, ev, range_):
+            return {"live_data": {"details": {"timeseries": [{"t": int(t * 1000), "v": v} for t, v in pts]}}}
+    feed = KalshiLiveFeed("http://x", client=Client(), event_ticker_fn=lambda: "EV")
+    feed._warmed_events.add("EV")
+    asyncio.run(feed.poll_once())
+    assert feed.latest().price == 101.0 and feed.last_t < now + 6  # the future point is not skipped for good

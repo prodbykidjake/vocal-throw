@@ -51,12 +51,14 @@ class FallbackFeed(PriceFeed):
     def settle_avg(self, now: float | None = None, close_ts: float | None = None) -> float | None:
         """The settlement minute's average so far: from Kalshi's own average when the backup has it (checked against
         Kalshi's settlements), else from the index's own running average."""
-        for f in (self.backup, self.primary):
-            fn = getattr(f, "settle_avg", None)
-            a = fn(now, close_ts) if fn else None
+        fn = getattr(self.backup, "settle_avg", None)
+        if fn is not None:
+            # Kalshi's average, with the seconds around it filled from the exact index while it is live
+            a = fn(now, close_ts, None if self.using_backup else self.buffer)
             if a is not None:
                 return a
-        return None
+        fn = getattr(self.primary, "settle_avg", None)
+        return fn(now, close_ts) if fn else None
 
     @property
     def avg_source(self):

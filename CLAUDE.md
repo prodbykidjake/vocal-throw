@@ -191,6 +191,10 @@ markets (KXBTC15M, KXETH15M, KXSOL15M, KXXRP15M, KXDOGE15M, KXHYPE15M, KXNEAR15M
 average of a CF Benchmarks index's last 60 one-second prints (`cx15m/model.py` average_inputs; target = previous
 settlement; ties Up). Prices: the median of Coinbase/Kraken/Bitstamp midpoints (`cx15m/feeds/exchanges.py`), or the
 exact index via Kalshi's authenticated `cfbenchmarks_value` WebSocket when the user sets an API key in their local
-config (`cx15m/feeds/kalshi_index.py`; never commit or ask for the key). No call during Kalshi's Thursday 3-5 AM ET
-maintenance. Call bars are the commodities defaults until each coin is tuned on its history. See
-`kalshi-crypto/README.md`; tests: `cd kalshi-crypto && pytest`.
+config (`cx15m/feeds/kalshi_index.py`; never commit or ask for the key). Kalshi's own `live_data` series for a
+crypto event IS the settlement average (point at close-1 = settlement), so the default price is the exchanges matched
+to it (`cx15m/feeds/calibrated.py`) and volatility is measured on it (`model.AvgVolEstimator`). No call during
+Kalshi's Thursday 3-5 AM ET maintenance. Per-coin bars (`cx15m/tuning.py`) were chosen walk-forward on 60 days of
+history: about 90.5% / 94.7% / 97.9% won on held-out days for Standard / Strict / Very strict. EDGE is only watched
+(`[board] edge = "watch"`) because it lost money on crypto history. See `kalshi-crypto/README.md`; tests:
+`cd kalshi-crypto && pytest`.

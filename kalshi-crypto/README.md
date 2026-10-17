@@ -71,22 +71,45 @@ a screenshot, and never send it to anyone (Claude included). The board reads it 
 uses it only to sign the connection that reads the index, never places orders, and `.gitignore` keeps `*.pem` and
 `config.toml` out of the code.
 
-## The call rules (for now)
+## Each coin's call rules
 
-Every coin starts with the commodities board's rules, which held up there on two months of history:
+Each coin's rules were chosen on 60 days of its own Kalshi history: Aug 18 to Oct 17 2026, about 5,700 windows a coin.
+The history was replayed second by second through this board's own code. For each coin and mode, the lowest bar (and
+a study time of 3:00, 4:00 or 5:00) was kept whose calls won the mode's target on the **first 60% of days**:
+Standard 90%, Strict 94%, Very strict 97%. They were then scored on the **last 40%**, which were never used to choose
+them:
 
-| mode        | call when one side holds | study | on commodities (held-out days)  |
-|-------------|--------------------------|-------|---------------------------------|
-| Standard    | 85% for 10 s             | 5:00  | ~85% of windows called, ~90% won |
-| Strict      | 93% for 10 s             | 5:00  | ~75% called, ~94% won            |
-| Very strict | 97% for 10 s             | 5:00  | ~65% called, ~97% won            |
+| coin | Standard | Strict | Very strict |
+|---|---|---|---|
+| BTC | 92%: 90.7% won, 88% of windows called | 97%: 95.3% won, 80% called | 99%: 97.2% won, 73% called |
+| ETH | 87%: 90.1%, 93% | 94%: 94.7%, 86% | 98%: 97.9%, 76% |
+| SOL | 88%: 92.0%, 91% | 94%: 95.8%, 83% | 98%: 98.4%, 74% |
+| XRP | 86%: 89.5%, 95% | 93%: 93.7%, 88% | 98%: 97.5%, 77% |
+| DOGE | 85%: 89.8%, 93% | 92%: 94.5%, 85% | 98%: 98.7%, 73% |
+| HYPE | 87%: 91.6%, 92% | 93%: 94.9%, 85% | 98%: 98.3%, 75% |
+| NEAR | 86%: 89.7%, 95% | 93%: 94.4%, 88% | 97%: 97.6%, 80% |
+| ZEC | 87%: 90.4%, 94% | 93%: 94.6%, 87% | 97%: 97.4%, 81% |
+| BNB | 89%: 90.8%, 92% | 94%: 94.6%, 85% | 98%: 98.0%, 76% |
+| **all** | **90.5% won, 92% called** | **94.7%, 85%** | **97.9%, 76%** |
 
-No lean call at 2:00, no call in the last minute, none for a window joined with under 5:00 left, none in a window
-holding an FOMC decision or CPI release, and none during **Kalshi's weekly maintenance (Thursday 3:00-5:00 AM ET)**.
-These are **not yet tuned on crypto**: each coin gets its own bars once its Kalshi history has been replayed through
-this code (see below). Until then the side-by-side mode records on each card show how each bar does live.
+- **When calls come:** with about 7:00 left (Standard), 5:30 (Strict) and 3:50 (Very strict). Kalshi's ask by then
+  is about 91¢, 96¢ and 98–99¢, so bought at the ask the calls break even (−1.6¢ to +1.6¢ a call by coin), as on the
+  commodities board. The calls are forecasts you can trust; they are not by themselves an edge on Kalshi's price.
+- **PULL OUT** was right on 752 of its 763 alarms on those days.
+- **EDGE** (the commodities buy rule: model ≥ 75% and ≥ 8 points over the ask at a minute mark) lost 1.5¢ a signal
+  over the same days (2,155 won, 702 lost; Bitcoin −4¢, NEAR −10¢). Crypto prices on Kalshi already know what the
+  model knows. So here it is a **test only**: the box shows what it would buy and keeps a record, with no alerts.
+  `[board] edge = "on"` turns it back into a buy signal; `"off"` hides it.
+- **Every coin also has these rules:**
+  - the 10-second hold;
+  - no lean call;
+  - no call in the last minute, and none for a window joined with under 5:00 left;
+  - none in a window holding an FOMC decision, a CPI release or **Kalshi's weekly maintenance (Thursday 3:00–5:00 AM
+    ET)**.
+- **A coin Kalshi adds later** gets the defaults (85%, Strict 93%, Very strict 97%).
+- **Overrides:** any value can be changed per coin in `config.toml`, for example `[tuning.btc] call_prob = 0.93`.
 
-## Kalshi history (for tuning each coin)
+## Kalshi history (to re-check or re-tune)
 
 The board carries its own copy of the history tool (it keeps Dogecoin's 7 decimals):
 

@@ -1,22 +1,35 @@
-"""Per-coin settlement-call rules, and the strictness switch with three modes (from the commodities board, cm15m).
+"""Per-coin settlement-call rules, and the strictness switch with three modes.
 
-What carries over from two months of commodity history (Aug-Oct 2026, 17,023 windows, cm15m/tuning.py): every
-market's win rate rose with the call bar, in both halves of the data, while late "lean" calls at 2:00 left won only
-63-73%; a 10-second hold, no call in the last minute and none for a window joined with under 5:00 left kept the
-calls honest; and the reliable way to buy accuracy was calling fewer windows. So every coin starts with those rules:
+How they were chosen: 60 days of each coin's Kalshi history (Aug 18 - Oct 17 2026, about 5,700 windows a coin, 51,000
+in all) were replayed second by second through this board's own code: the model with the 60-second-average settlement,
+volatility measured on Kalshi's average, the index rebuilt from Kalshi's own average series (it reproduces the
+settlement values to a third of a cent on Bitcoin), and Kalshi's 1-minute candles for its odds. For each coin and mode
+the lowest bar (and the study time: 3:00, 4:00 or 5:00) whose calls won at least the mode's target on the first 60% of
+days was kept: Standard 90%, Strict 94%, Very strict 97% (Bitcoin never quite reaches 97% there; its tightest bar,
+99%, is used). Scored on the later 40% of days, never used to choose (25% check days, then the last 15% untouched):
 
-  mode         bar     study   hold   lean call at 2:00
-  Standard     85%     5:00    10 s   none
-  Strict       93%     5:00    10 s   none
-  Very strict  97%     5:00    10 s   none
+  coin   Standard                     Strict                       Very strict
+  BTC    92%: 90.7% won, 88% called   97%: 95.3% won, 80% called   99%: 97.2% won, 73% called
+  ETH    87%: 90.1%, 93%              94%: 94.7%, 86%              98%: 97.9%, 76%
+  SOL    88%: 92.0%, 91%              94%: 95.8%, 83%              98%: 98.4%, 74%
+  XRP    86%: 89.5%, 95%              93%: 93.7%, 88%              98%: 97.5%, 77%
+  DOGE   85%: 89.8%, 93%              92%: 94.5%, 85%              98%: 98.7%, 73%
+  HYPE   87%: 91.6%, 92%              93%: 94.9%, 85%              98%: 98.3%, 75%
+  NEAR   86%: 89.7%, 95%              93%: 94.4%, 88%              97%: 97.6%, 80%
+  ZEC    87%: 90.4%, 94%              93%: 94.6%, 87%              97%: 97.4%, 81%
+  BNB    89%: 90.8%, 92%              94%: 94.6%, 85%              98%: 98.0%, 76%
+  all    90.5% won, 92% called        94.7%, 85%                   97.9%, 76%
 
-Those bars are starting points, not yet tuned on crypto: each coin's own bars come from its Kalshi history
-(tools/backfill.py on each KX...15M series), chosen walk-forward on earlier days and checked on later ones, the way
-the commodities bars were. Until then, the board runs all three modes on the same windows in the background
-(cx15m/shadow.py) and shows their records side by side, so the live results say which bar each coin deserves.
+Calls come with about 7:00 left (Standard), 5:30 (Strict) and 3:50 (Very strict), when Kalshi's ask is about 91c, 96c
+and 98-99c: bought at the ask they break even (-1.6c to +1.6c a call by coin), as on the commodities board. PULL OUT
+was right on 752 of its 763 alarms on the Standard calls. EDGE (the commodities buy rule) lost 1.5c a signal over the
+same days (2155-702), so on crypto it is only watched (cx15m/edge.py, [board] edge).
 
-Override any value per coin in config.toml, e.g. [tuning.btc] call_prob = 0.90; [tuning] enabled = false goes back
-to the original single-price rules (72% bar, 3:00 study, a lean call at 2:00 left).
+Every coin: the 10-second hold, no lean call, no call in the last minute, none for a window joined with under 5:00
+left, none in a window holding an FOMC decision, a CPI release or Kalshi's Thursday maintenance. A coin Kalshi adds
+later gets the defaults (85%, 5:00; Strict 93%, Very strict 97%). Override any value per coin in config.toml, e.g.
+[tuning.btc] call_prob = 0.93; [tuning] enabled = false goes back to the original rules (72% bar, 3:00 study, a lean
+call at 2:00 left).
 """
 from __future__ import annotations
 
@@ -29,9 +42,19 @@ log = logging.getLogger(__name__)
 MODES = ("standard", "strict", "very_strict")
 MODE_LABELS = {"standard": "Standard", "strict": "Strict", "very_strict": "Very strict"}
 MODE_TAGS = {"standard": "v1", "strict": "strict", "very_strict": "very-strict"}  # tags the calls each mode makes
-# per-coin Strict / Very strict rules: a bar, or (bar, study seconds) when that mode studies the window differently
-MODE_BARS: dict[str, dict[str, float | tuple[float, float]]] = {}
-MODE_DEFAULT_BARS = {"strict": 0.93, "very_strict": 0.97}
+# each coin's Strict / Very strict rules (bar, study seconds), the table above
+MODE_BARS: dict[str, dict[str, float | tuple[float, float]]] = {
+    "btc": {"strict": (0.97, 180.0), "very_strict": (0.99, 180.0)},
+    "eth": {"strict": (0.94, 180.0), "very_strict": (0.98, 180.0)},
+    "sol": {"strict": (0.94, 180.0), "very_strict": (0.98, 180.0)},
+    "xrp": {"strict": (0.93, 240.0), "very_strict": (0.98, 180.0)},
+    "doge": {"strict": (0.92, 300.0), "very_strict": (0.98, 180.0)},
+    "hype": {"strict": (0.93, 180.0), "very_strict": (0.98, 180.0)},
+    "near": {"strict": (0.93, 180.0), "very_strict": (0.97, 180.0)},
+    "zec": {"strict": (0.93, 180.0), "very_strict": (0.97, 180.0)},
+    "bnb": {"strict": (0.94, 180.0), "very_strict": (0.98, 180.0)},
+}
+MODE_DEFAULT_BARS = {"strict": 0.93, "very_strict": 0.97}  # a coin Kalshi adds later
 # a call made with this much left is EARLY (6:30). On commodities those calls won as often as the later ones at a
 # lower ask (94.7% vs 95.3% in Strict, +1.4c a call against +0.3c); the board keeps their own record on crypto too
 EARLY_LEFT_S = 390.0
@@ -46,7 +69,17 @@ class Tuning:
     hold_s: float = 10.0  # seconds the chance must stay above the bar
 
 
-TUNING: dict[str, Tuning] = {}  # per-coin Standard rules, once tuned on history (none yet)
+TUNING: dict[str, Tuning] = {  # each coin's Standard rules (the table above)
+    "btc": Tuning(call_prob=0.92, study_s=180.0),
+    "eth": Tuning(call_prob=0.87, study_s=300.0),
+    "sol": Tuning(call_prob=0.88, study_s=300.0),
+    "xrp": Tuning(call_prob=0.86, study_s=300.0),
+    "doge": Tuning(call_prob=0.85, study_s=300.0),
+    "hype": Tuning(call_prob=0.87, study_s=300.0),
+    "near": Tuning(call_prob=0.86, study_s=300.0),
+    "zec": Tuning(call_prob=0.87, study_s=300.0),
+    "bnb": Tuning(call_prob=0.89, study_s=180.0),
+}
 DEFAULT = Tuning()
 
 

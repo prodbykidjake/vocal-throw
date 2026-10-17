@@ -88,11 +88,13 @@ class CalibratedFeed(PriceFeed):
         now = time.time() if now is None else now
         return (last.ts, last.price) if last and now - last.ts <= STALE_AVG_S else None
 
-    def settle_avg(self, now: float | None = None, close_ts: float | None = None) -> float | None:
+    def settle_avg(self, now: float | None = None, close_ts: float | None = None, prints=None) -> float | None:
         """Inside the settlement minute: the average of the index's prints since it began, from Kalshi's own average
         (its latest point covers the last 60 s; the prints from before the minute that it still holds are taken off
-        using the calibrated exchange prices). Exact at the last second, when nothing from before is left."""
+        using the calibrated exchange prices, or `prints`, e.g. the exact index's). Exact at the last second, when
+        nothing from before is left."""
         now = time.time() if now is None else now
+        items = (prints if prints is not None else self.buffer).items()
         if close_ts is None or not close_ts - self.window_s <= now < close_ts:
             return None
         k = self.kalshi_avg(now)
@@ -102,11 +104,15 @@ class CalibratedFeed(PriceFeed):
         start = close_ts - self.window_s  # the first print of the settlement average
         if t < start or t > math.floor(now) + 2:
             return None  # not inside the minute yet, or a point stamped ahead of this computer's clock
+        if t >= close_ts - 1:
+            # the point one second before the close is the settlement average itself, and the event's own point at
+            # the close is the settlement value (a Kalshi clock a second ahead can show it before ours reaches it)
+            return m
         done = int(t - start) + 1  # prints in so far: start .. t
         old_lo, old_hi = t - self.window_s + 1, start  # prints Kalshi's point still holds from before the minute
         old = 0.0
         if old_hi > old_lo:
-            avg_old = second_average(self.buffer.items(), old_lo, old_hi, min_share=0.5)
+            avg_old = second_average(items, old_lo, old_hi, min_share=0.5)
             if avg_old is None:
                 return None
             old = avg_old * (old_hi - old_lo)
@@ -114,7 +120,7 @@ class CalibratedFeed(PriceFeed):
         # the seconds since Kalshi's latest point (it is polled every couple of seconds) are in too: the live prints
         last = min(math.floor(now), close_ts - 1)
         if last > t:
-            recent = second_average(self.buffer.items(), t + 1, last + 1, min_share=0.5)
+            recent = second_average(items, t + 1, last + 1, min_share=0.5)
             if recent is not None:
                 a = (done * a + (last - t) * recent) / (done + last - t)
         return a

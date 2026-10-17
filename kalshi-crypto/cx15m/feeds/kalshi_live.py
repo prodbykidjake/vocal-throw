@@ -128,7 +128,9 @@ class KalshiLiveFeed(PriceFeed):
                 if pts or self._warm_attempts[ev] >= 5:
                     self._warmed_events.add(ev)  # an empty series right after open is retried a few times
                 if pts:
-                    history = [p for p in pts if p[0] > self.last_t]
+                    # a point stamped ahead of this computer's clock is left for the next poll (the buffer would
+                    # refuse it now, and moving last_t past it would lose it for good)
+                    history = [p for p in pts if self.last_t < p[0] <= time.time() + 2.0]
                     for ts, px in history[:-1]:
                         self.buffer.add(ts, px)
                     # seed volatility with 5-second closes (the live path buckets ticks the same way)
@@ -143,7 +145,7 @@ class KalshiLiveFeed(PriceFeed):
                 self.last_error = None
                 return 1 if pts else 0
             pts = await self.fetch_series(ev, self.live_range)
-            new = [p for p in pts if p[0] > self.last_t]
+            new = [p for p in pts if self.last_t < p[0] <= time.time() + 2.0]
             for ts, px in new:
                 self._publish(ts, px)
             if new:

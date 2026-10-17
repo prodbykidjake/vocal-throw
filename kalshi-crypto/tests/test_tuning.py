@@ -23,12 +23,15 @@ def tuned(key, **kw):
 
 
 def test_each_coin_has_its_rules_and_config_can_override_them():
-    assert tuning.for_market("btc") == tuning.DEFAULT and tuning.DEFAULT.call_prob == 0.85 and not tuning.DEFAULT.late_call
+    btc, doge = tuning.for_market("btc"), tuning.for_market("doge")
+    assert (btc.call_prob, btc.study_s) == (0.92, 180.0) and (doge.call_prob, doge.study_s) == (0.85, 300.0)
+    assert set(tuning.TUNING) == set(tuning.MODE_BARS) == {"btc", "eth", "sol", "xrp", "doge", "hype", "near", "zec", "bnb"}
+    assert tuning.for_market("newcoin") == tuning.DEFAULT and tuning.DEFAULT.call_prob == 0.85 and not tuning.DEFAULT.late_call
     assert tuning.DEFAULT.study_s == 300 and tuning.DEFAULT.hold_s == 10 and tuning.DEFAULT.blend_market == 0.0
     o = tuning.for_market("btc", {"btc": {"call_prob": 0.9, "bogus": 1}})
-    assert o.call_prob == 0.9 and o.study_s == 300
+    assert o.call_prob == 0.9 and o.study_s == 180
     t = tuning.apply(TradingCfg(), tuning.for_market("eth"))
-    assert (t.call_prob, t.study_s, t.late_call, t.call_hold_s, t.rules_tag) == (0.85, 300.0, False, 10.0, "v1")
+    assert (t.call_prob, t.study_s, t.late_call, t.call_hold_s, t.rules_tag) == (0.87, 300.0, False, 10.0, "v1")
     assert tuning.apply(TradingCfg(), tuning.for_market("eth"), window_s=90).study_s == 30  # the demo's short windows
 
 
@@ -49,7 +52,7 @@ def test_every_desk_gets_its_own_rules_and_the_shared_settings_stay_untouched(tm
     board = Board(cfg)
     board.sim = None
     btc, sol = board._desk_cfg("btc").trading, board._desk_cfg("sol").trading
-    assert btc.call_prob == 0.85 and sol.call_prob == 0.9 and btc is not sol
+    assert btc.call_prob == 0.92 and sol.call_prob == 0.9 and btc is not sol
     assert cfg.trading.call_prob == 0.72 and cfg.trading.late_call  # the original rules stay the shared default
     cfg.tuning = {"enabled": False}
     assert board._desk_cfg("btc").trading.call_prob == 0.72
@@ -57,10 +60,10 @@ def test_every_desk_gets_its_own_rules_and_the_shared_settings_stay_untouched(tm
 
 
 def test_no_lean_call_at_the_deadline_but_a_sure_call_still_counts_until_the_last_minute():
-    ct = tuned("btc")
+    ct = tuned("doge")
     t0 = 1000.0
     assert ct.step(t0 - 700, "W1", pred(0.80, 0.78), 880, 20, 300) is None  # seen from the start of the window
-    # past the study, 80% is not enough at 85%; the old 2:00 lean call does not happen
+    # past the study, 80% is not enough at Dogecoin's 85%; the old 2:00 lean call does not happen
     for i in range(120):
         assert ct.step(t0 + i, "W1", pred(0.80, 0.78), 180 - i, 720 + i, 300) is None
     assert ct.watch["deadline_in_s"] is None and ct.watch["closes_in_s"] is not None
@@ -70,7 +73,7 @@ def test_no_lean_call_at_the_deadline_but_a_sure_call_still_counts_until_the_las
         made = ct.step(t0 + 200 + i, "W1", pred(0.90, 0.85), 90 - i, 810 + i, 300) or made
     assert made and made["kind"] == "confident" and made["side"] == "UP"
     # another window that never gets there: no call at all, and the card says why
-    ct2 = tuned("btc")
+    ct2 = tuned("doge")
     for i in range(900):
         assert ct2.step(t0 + i, "W2", pred(0.80, 0.78), 900 - i, i, 300) is None
     assert ct2.watch["status"] == "no call this window (never 85% sure for 10s)"
@@ -127,7 +130,7 @@ def test_overrides_are_read_forgivingly_and_bad_values_are_ignored(caplog):
     btc = tuning.for_market("btc", o)
     assert btc.call_prob == 0.9 and btc.late_call is True  # [tuning.BTC] counts; 90 means 90%
     eth = tuning.for_market("eth", o)
-    assert eth.call_prob == 0.85 and eth.blend_market == 0.0  # out of range / not a number: built-in kept
+    assert eth.call_prob == 0.87 and eth.blend_market == 0.0  # out of range / not a number: Ethereum's own kept
     assert tuning.check(o, ["btc", "eth", "sol"]) == ["bitcoin"]
     assert "matches no market" in caplog.text
 
@@ -171,11 +174,16 @@ def test_no_call_in_a_report_or_maintenance_window(tmp_path):
 
 
 def test_strict_modes_raise_the_bar():
-    for key in ("btc", "eth", "doge", "newcoin"):
+    for key in ("btc", "eth", "sol", "xrp", "doge", "hype", "near", "zec", "bnb", "newcoin"):
         std, st, vs = (tuning.for_market(key, mode=m) for m in tuning.MODES)
-        assert std.call_prob < st.call_prob < vs.call_prob < 0.99
-        assert st.study_s == std.study_s and st.hold_s == std.hold_s == 10 and st.blend_market == std.blend_market
-    assert tuning.for_market("btc", mode="very_strict").call_prob == tuning.MODE_DEFAULT_BARS["very_strict"] == 0.97
+        assert std.call_prob < st.call_prob < vs.call_prob <= 0.99
+        assert st.hold_s == std.hold_s == vs.hold_s == 10 and st.blend_market == std.blend_market
+        assert 180 <= vs.study_s <= st.study_s <= 300 or key == "newcoin"
+    btc = tuning.for_market("btc", mode="very_strict")
+    assert (btc.call_prob, btc.study_s) == (0.99, 180.0)  # (bar, study) per mode
+    xrp = tuning.for_market("xrp", mode="strict")
+    assert (xrp.call_prob, xrp.study_s) == (0.93, 240.0)
+    assert tuning.for_market("newcoin", mode="very_strict").call_prob == tuning.MODE_DEFAULT_BARS["very_strict"] == 0.97
     assert tuning.mode_of("Very strict") == "very_strict" and tuning.mode_of("bogus") == "standard"
     assert (tuning.tag("standard"), tuning.tag("strict")) == ("v1", "strict")
     # a value set in config.toml still wins over the mode's bar
@@ -190,11 +198,11 @@ def test_the_switch_changes_every_card_and_is_remembered(tmp_path):
     cfg.trading.min_warmup_minutes = 1
     board = Board(cfg, sim={"window_s": 900, "warmup_minutes": 10})
     asyncio.run(board.build())
-    assert board.mode == "standard" and board.desk("btc").calls.cfg.call_prob == 0.85
+    assert board.mode == "standard" and board.desk("btc").calls.cfg.call_prob == 0.92
     board.set_mode("strict")
     btc, doge = board.desk("btc"), board.desk("doge")
-    assert btc.calls.cfg.call_prob == 0.93 and btc.calls.cfg.rules_tag == "strict"
-    assert doge.calls.cfg.call_prob == 0.93 and doge.calls.rules_since is not None
+    assert btc.calls.cfg.call_prob == 0.97 and btc.calls.cfg.rules_tag == "strict" and btc.calls.cfg.study_s == 180
+    assert doge.calls.cfg.call_prob == 0.92 and doge.calls.rules_since is not None and doge.calls.cfg.study_s == 300
     assert Board(cfg).mode == "strict"  # remembered across restarts
     try:
         board.set_mode("reckless")
