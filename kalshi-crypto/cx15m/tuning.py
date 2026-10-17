@@ -29,8 +29,8 @@ log = logging.getLogger(__name__)
 MODES = ("standard", "strict", "very_strict")
 MODE_LABELS = {"standard": "Standard", "strict": "Strict", "very_strict": "Very strict"}
 MODE_TAGS = {"standard": "v1", "strict": "strict", "very_strict": "very-strict"}  # tags the calls each mode makes
-# per-coin Strict / Very strict bars, once each coin's history has been studied (none yet: every coin uses the defaults)
-MODE_BARS: dict[str, dict[str, float]] = {}
+# per-coin Strict / Very strict rules: a bar, or (bar, study seconds) when that mode studies the window differently
+MODE_BARS: dict[str, dict[str, float | tuple[float, float]]] = {}
 MODE_DEFAULT_BARS = {"strict": 0.93, "very_strict": 0.97}
 # a call made with this much left is EARLY (6:30). On commodities those calls won as often as the later ones at a
 # lower ask (94.7% vs 95.3% in Strict, +1.4c a call against +0.3c); the board keeps their own record on crypto too
@@ -110,7 +110,9 @@ def for_market(key: str, overrides: dict | None = None, mode: str = "standard") 
     base = TUNING.get(key, DEFAULT)
     mode = mode_of(mode)
     if mode != "standard":
-        base = dataclasses.replace(base, call_prob=MODE_BARS.get(key, MODE_DEFAULT_BARS)[mode])
+        rule = MODE_BARS.get(key, MODE_DEFAULT_BARS)[mode]
+        bar, study = (rule if isinstance(rule, tuple) else (rule, base.study_s))
+        base = dataclasses.replace(base, call_prob=float(bar), study_s=float(study))
     extra = _sections(overrides).get(key.lower())
     if not extra:
         return base
