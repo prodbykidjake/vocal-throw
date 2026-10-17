@@ -212,3 +212,19 @@ def test_all_runs_every_coin_into_its_own_file(tmp_path, monkeypatch):
     done.clear()
     bf.main(["--series", "kxeth15m", "--out", "x.db"])
     assert done == [("KXETH15M", "x.db")]
+
+
+def test_a_cut_off_response_is_retried_not_fatal():
+    import http.client
+
+    calls = []
+
+    def opener(method, url, body):
+        calls.append(url)
+        if len(calls) == 1:
+            raise http.client.IncompleteRead(b"partial")
+        if len(calls) == 2:
+            raise ConnectionResetError("reset by peer")
+        return 200, {}, b'{"ok": true}'
+    http_ = bf.Http(rps=1000.0, opener=opener, sleep=lambda s: None)
+    assert http_.get("/x") == {"ok": True} and http_.retries == 2

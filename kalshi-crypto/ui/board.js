@@ -266,15 +266,16 @@
     $("clock").textContent = live ? live.countdown : "--:--";
     const colors = Object.fromEntries(markets.map((m) => [m.key, m.color]));
     $("lines").innerHTML = (s.lines || []).map((l) => `<span class="pill" data-key="${esc(l.key)}"><span class="dot" style="background:${esc(colors[l.key] || "#888")}"></span>${esc(l.name)} <b>${l.wins}–${l.losses}</b></span>`).join("");
-    $("board-foot").textContent = `${markets.length} markets · settlement calls are forecasts, on the commodities board's rules until each coin's history has been studied (there they won about 9 in 10, but late and at high prices, so bought at the ask they broke even); EDGE is the buy signal; PULL OUT is the safety net · each window settles on the average of the index's last 60 one-second prints · ` +
+    $("board-foot").textContent = `${markets.length} markets · settlement calls are forecasts, each coin's rules chosen on 60 days of its Kalshi history (bought at the ask they broke even there: Kalshi's price already knows what the model knows); ` +
+      `${(s.edge_mode || "on") === "watch" ? "EDGE is only being tested (no buy alerts)" : "EDGE is the buy signal"}; PULL OUT is the safety net · each window settles on the average of the index's last 60 one-second prints · ` +
       (s.requests != null ? `${s.requests} Kalshi requests so far` : "simulated markets") + (s.throttled ? ` · slowed down by Kalshi ${s.throttled}×` : "");
     if (openKey) renderDetailLive();
   }
 
   // the strictness switch: Standard / Strict / Very strict, each with its record on the same windows
-  const MODE_HELP = { standard: "calls at 85%+ (on commodities: ~85% of windows called, ~90% right)",
-    strict: "calls at 93%+ (on commodities: ~75% called, ~94% right, ~1:20 later)",
-    very_strict: "calls at 97%+ (on commodities: ~65% called, ~97% right, ~2:30 later)" };
+  const MODE_HELP = { standard: "each coin's own bar (85-92%), about 9 in 10 won on 60 days of history it was not chosen on",
+    strict: "each coin's own bar (92-97%), about 19 in 20 won on history, fewer windows, calls ~1:30 later",
+    very_strict: "each coin's own bar (98-99%), about 49 in 50 won on history, about 3 windows in 4 called, ~3:00 later" };
   function renderModes(s) {
     const box = $("modes"), cur = s.mode || "standard", labels = s.mode_labels || {}, tot = s.modes || {};
     box.classList.toggle("hidden", s.modes_on === false);  // [tuning] enabled = false: the original rules, no switch

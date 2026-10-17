@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import http.client
 import json
 import os
 import sqlite3
@@ -106,7 +107,8 @@ class Http:
             self.count += 1
             try:
                 status, rh, raw = (self.opener(method, url, data, headers) if headers else self.opener(method, url, data))
-            except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException, OSError) as exc:
+                # a dropped or cut-off response (IncompleteRead, RemoteDisconnected, a reset) is retried like a 5xx
                 status, rh, raw = 0, {}, str(exc).encode()
             if status == 200:
                 return json.loads(raw or b"null")
