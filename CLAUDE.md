@@ -185,3 +185,12 @@ switch (Standard / Strict / Very strict, per-market bars in `cm15m/tuning.py`), 
 windows in the background (`cm15m/shadow.py`) so their live records can be compared. v1.6 marks EARLY calls (made
 with 6:30+ left, `tuning.EARLY_LEFT_S`) and BIG-GAP EDGE signals (12+ points, `edge.tier`) with their own live record.
 See `kalshi-commodities/README.md`; tests: `cd kalshi-commodities && pytest`.
+
+`kalshi-crypto/` (package `cx15m`, port 8792) is the commodities board rebuilt for Kalshi's nine 15-minute crypto
+markets (KXBTC15M, KXETH15M, KXSOL15M, KXXRP15M, KXDOGE15M, KXHYPE15M, KXNEAR15M, KXZEC15M, KXBNB15M). They settle on the
+average of a CF Benchmarks index's last 60 one-second prints (`cx15m/model.py` average_inputs; target = previous
+settlement; ties Up). Prices: the median of Coinbase/Kraken/Bitstamp midpoints (`cx15m/feeds/exchanges.py`), or the
+exact index via Kalshi's authenticated `cfbenchmarks_value` WebSocket when the user sets an API key in their local
+config (`cx15m/feeds/kalshi_index.py`; never commit or ask for the key). No call during Kalshi's Thursday 3-5 AM ET
+maintenance. Call bars are the commodities defaults until each coin is tuned on its history. See
+`kalshi-crypto/README.md`; tests: `cd kalshi-crypto && pytest`.
