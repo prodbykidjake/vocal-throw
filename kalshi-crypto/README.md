@@ -76,14 +76,14 @@ this code (see below). Until then the side-by-side mode records on each card sho
 
 ## Kalshi history (for tuning each coin)
 
-From the WTI coach's folder, which has the history tool:
+The board carries its own copy of the history tool (it keeps Dogecoin's 7 decimals):
 
 ```bash
-cd ~/kalshi-wti && python3 tools/backfill.py --probe --series KXBTC15M
-cd ~/kalshi-wti && for s in KXBTC15M KXETH15M KXSOL15M KXXRP15M KXDOGE15M KXHYPE15M KXNEAR15M KXZEC15M KXBNB15M; do python3 tools/backfill.py --series $s --out data/history-$s.db --rps 5; done
+cd ~/kalshi-crypto && python3 tools/backfill.py --probe                 # a minute: paste the output to Claude
+cd ~/kalshi-crypto && python3 tools/backfill.py --series all --rps 5    # about an hour, unattended; safe to stop and re-run
 ```
 
-Send the `history-*.zip` files it makes to Claude.
+It makes one `data/history-KX...15M.zip` per coin. Send those files to Claude.
 
 ## Setup (macOS, next to the other boards)
 

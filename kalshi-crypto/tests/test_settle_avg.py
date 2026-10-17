@@ -99,13 +99,13 @@ async def test_simulated_market_settles_on_the_closing_average_and_chains_target
 
     feed = SimFeed(start_price=100.0, sigma_per_sqrt_s=0.05, warmup_minutes=0)
     now = math.floor(time.time())
-    close = math.floor(now / 30) * 30  # the last 30-second window closed here
+    close = math.floor(now / 60) * 60  # the last 1-minute window closed here (tickers name the minute)
     for i in range(200, -1, -1):  # 100 everywhere, except 105 over the 10 seconds before that close
         feed.buffer.add(now - i, 105.0 if close - 10 <= now - i < close else 100.0)
-    sk = SimKalshi(feed, window_s=30, settle_avg_s=10, settle_delay_s=0.0, decimals=2, series_ticker="KXBTC15M")
+    sk = SimKalshi(feed, window_s=60, settle_avg_s=10, settle_delay_s=0.0, decimals=2, series_ticker="KXBTC15M")
     m = await sk.get_market(sk._ticker(close))
     assert m.status == "settled" and m.settle_value == pytest.approx(105.0)  # the last 10 s averaged, not the last price
-    nxt = await sk.get_market(sk._ticker(close + 30))
+    nxt = await sk.get_market(sk._ticker(close + 60))
     assert nxt.strike == pytest.approx(105.0)  # the next window's target is that settlement value
 
 
