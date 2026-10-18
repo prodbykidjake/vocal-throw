@@ -1,0 +1,48 @@
+# Copy to config.toml (git-ignored). Every key is optional; these are the defaults.
+
+[kalshi]
+max_requests_per_s = 14.0       # shared by every market on the board (Kalshi's public tier allows ~20; the other coaches need some)
+poll_s = 2.0                    # each market's order book and live price, staggered across markets
+discovery_s = 10.0              # how often each market re-reads its window list
+category = "Commodities"        # Kalshi category searched for 15-minute series
+
+[board]
+markets = []                    # empty = every 15-minute commodity; or e.g. ["gold", "silver", "wti"]
+muted = []                      # markets whose calls never notify (each card also has a 🔔 toggle)
+edge_gap = 0.08                 # EDGE: buy only when the model's chance beats that side's ask by this much ...
+edge_min_p = 0.75               # ... and is at least this (checked at each whole minute 3:00-13:00 of a window)
+call_mode = "standard"          # settlement-call strictness to start with: standard | strict | very_strict
+                                # (the switch on the page wins and is remembered in data/board.json)
+# releases to treat as reports for one market, ET (CPI is built in for metals; jobs / PCE dates are not):
+# extra_events = { gold = ["2026-11-06 08:30 Jobs report"], silver = ["2026-11-06 08:30 Jobs report"] }
+
+[trading]
+call_hold_s = 10                # a call needs its market's bar (see [tuning]) for this many seconds in a row
+call_join_min_s = 300           # no call for a window the board first saw with less than this left
+call_min_left_s = 60            # and never a call with less than this left
+event_entries = "block"         # no new calls in a window holding a scheduled report | "allow"
+min_warmup_minutes = 30
+# call_prob, study_s and the 2:00 lean call (call_deadline_s) are set per market by [tuning] below
+
+# v1.4: each market's call bar and study period (cm15m/tuning.py has the table and the history behind it).
+# Uncomment to change one market, or set enabled = false to go back to v1.3's rules (72% bar, 3:00 study, lean call).
+# [tuning]
+# enabled = true
+# [tuning.gold]
+# call_prob = 0.88              # call when one side holds this for call_hold_s ...
+# study_s = 240                 # ... after studying the window this long
+# late_call = false             # true = the old lean call at 2:00 left when it never gets sure enough
+# blend_market = 0.0            # > 0 = the call reads a blend with Kalshi's mid (natural gas: 0.65)
+
+[server]
+host = "127.0.0.1"
+port = 8790                     # WTI 8787, natural gas 8788, gold 8789
+open_browser = true
+phone = false                   # true = also reachable from your phone with a private link (same as `serve --phone`)
+
+[notify]
+desktop = true
+sound = true
+
+[storage]
+data_dir = "data"               # one database per market: data/gold.db, data/wti.db, ...

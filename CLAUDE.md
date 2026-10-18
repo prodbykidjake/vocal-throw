@@ -156,3 +156,45 @@ Some useful CPM libraries:
 ## Code Style
 
 Uses `.clang-format` with Allman-style braces, 4-space indentation, no column limit.
+
+## Side project: `kalshi-wti/`
+
+`kalshi-wti/` is a separate, self-contained Python app (not part of the JUCE build): a local dashboard
+that follows Kalshi's WTI Oil 15-minute market and coaches entries/exits. See `kalshi-wti/README.md`.
+Run its tests with `cd kalshi-wti && pytest`. It never touches the plugin's CMake targets.
+
+`kalshi-natgas/` is a separate copy of that app (package `ng15m`, port 8788) for Kalshi's Natural Gas 15-minute
+market (`KXNATGAS15M`), rescaled for ~$3 prices with five-decimal targets. See `kalshi-natgas/README.md`; tests:
+`cd kalshi-natgas && pytest`. Changes to one app are not shared with the other.
+
+`kalshi-gold/` is the same kind of copy (package `gold15m`, port 8789) for Kalshi's Gold 15-minute market
+(`KXGOLD15M`), rescaled for ~$4,000 prices (dollar moves, gold-sized volatility, U.S. macro calendar).
+See `kalshi-gold/README.md`; tests: `cd kalshi-gold && pytest`.
+
+`kalshi-wti-junior/` (package `wtijr`, port 8791) is a separate copy of the WTI v12 coach tuned to be less cautious
+(65% for 6 s, 2-minute study, 20% less assumed movement). See its README; tests: `cd kalshi-wti-junior && pytest`.
+
+`kalshi-commodities/` (package `cm15m`, port 8790) is a separate board with a settlement caller for every Kalshi
+15-minute commodity (gold, silver, WTI, copper, natural gas, palladium, platinum), with per-market scale worked out
+automatically and one database per market, plus an EDGE buy signal (model at least 75% and 8 points above Kalshi's ask at a minute
+check, validated on two months of history) and a private phone link (`serve --phone`). v1.4 adds per-market call rules
+(`cm15m/tuning.py`: 85-88% bar, 4-5 minute study, no lean call; ~90% wins on held-out history) and a PULL OUT alarm
+(`cm15m/pullout.py`: engine + Kalshi average <= 3% for the called side with 1:00+ left; ~98% right on history).
+v1.5 keeps v1.4's engines (per-market recipes did not beat them in fair walk-forward tests) and adds a strictness
+switch (Standard / Strict / Very strict, per-market bars in `cm15m/tuning.py`), with all three modes run on the same
+windows in the background (`cm15m/shadow.py`) so their live records can be compared. v1.6 marks EARLY calls (made
+with 6:30+ left, `tuning.EARLY_LEFT_S`) and BIG-GAP EDGE signals (12+ points, `edge.tier`) with their own live record.
+See `kalshi-commodities/README.md`; tests: `cd kalshi-commodities && pytest`.
+
+`kalshi-crypto/` (package `cx15m`, port 8792) is the commodities board rebuilt for Kalshi's nine 15-minute crypto
+markets (KXBTC15M, KXETH15M, KXSOL15M, KXXRP15M, KXDOGE15M, KXHYPE15M, KXNEAR15M, KXZEC15M, KXBNB15M). They settle on the
+average of a CF Benchmarks index's last 60 one-second prints (`cx15m/model.py` average_inputs; target = previous
+settlement; ties Up). Prices: the median of Coinbase/Kraken/Bitstamp midpoints (`cx15m/feeds/exchanges.py`), or the
+exact index via Kalshi's authenticated `cfbenchmarks_value` WebSocket when the user sets an API key in their local
+config (`cx15m/feeds/kalshi_index.py`; never commit or ask for the key). Kalshi's own `live_data` series for a
+crypto event IS the settlement average (point at close-1 = settlement), so the default price is the exchanges matched
+to it (`cx15m/feeds/calibrated.py`) and volatility is measured on it (`model.AvgVolEstimator`). No call during
+Kalshi's Thursday 3-5 AM ET maintenance. Per-coin bars (`cx15m/tuning.py`) were chosen walk-forward on 60 days of
+history: about 90.5% / 94.7% / 97.9% won on held-out days for Standard / Strict / Very strict. EDGE is only watched
+(`[board] edge = "watch"`) because it lost money on crypto history. See `kalshi-crypto/README.md`; tests:
+`cd kalshi-crypto && pytest`.
