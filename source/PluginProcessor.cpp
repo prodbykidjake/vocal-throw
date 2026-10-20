@@ -10,8 +10,13 @@ PluginProcessor::PluginProcessor()
                       #endif
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
                      #endif
-                       )
+                       ),
+      apvts (*this, nullptr, "SignalPathState", Params::createLayout())
 {
+    bypassParam = dynamic_cast<juce::AudioParameterBool*> (apvts.getParameter (ParamIDs::bypass));
+    inputGainDb = apvts.getRawParameterValue (ParamIDs::inputGain);
+    outputGainDb = apvts.getRawParameterValue (ParamIDs::outputGain);
+    jassert (bypassParam != nullptr && inputGainDb != nullptr && outputGainDb != nullptr);
 }
 
 PluginProcessor::~PluginProcessor()
@@ -87,15 +92,21 @@ void PluginProcessor::changeProgramName (int index, const juce::String& newName)
 //==============================================================================
 void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    // Use this method as the place to do any pre-playback
-    // initialisation that you need..
-    juce::ignoreUnused (sampleRate, samplesPerBlock);
+    maxChunkSize = juce::jmax (1, samplesPerBlock);
+    dryBuffer.setSize (2, maxChunkSize, false, false, false);
+    dryBuffer.clear();
+
+    inputGain.setGainDb (inputGainDb->load());
+    outputGain.setGainDb (outputGainDb->load());
+    inputGain.prepare (sampleRate);
+    outputGain.prepare (sampleRate);
+
+    wetMix.reset (sampleRate, 0.01);
+    wetMix.setCurrentAndTargetValue (bypassParam->get() ? 0.0f : 1.0f);
 }
 
 void PluginProcessor::releaseResources()
 {
-    // When playback stops, you can use this as an opportunity to free up any
-    // spare memory, etc.
 }
 
 bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -121,34 +132,56 @@ bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 }
 
 void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
-                                              juce::MidiBuffer& midiMessages)
+                                    juce::MidiBuffer& midiMessages)
 {
     juce::ignoreUnused (midiMessages);
-
     juce::ScopedNoDenormals noDenormals;
-    auto totalNumInputChannels  = getTotalNumInputChannels();
-    auto totalNumOutputChannels = getTotalNumOutputChannels();
 
-    // In case we have more outputs than inputs, this code clears any output
-    // channels that didn't contain input data, (because these aren't
-    // guaranteed to be empty - they may contain garbage).
-    // This is here to avoid people getting screaming feedback
-    // when they first compile a plugin, but obviously you don't need to keep
-    // this code if your algorithm always overwrites all the output channels.
-    for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear (i, 0, buffer.getNumSamples());
+    const auto numChannels = juce::jmin (getTotalNumInputChannels(), getTotalNumOutputChannels(), buffer.getNumChannels());
+    for (auto ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
+        buffer.clear (ch, 0, buffer.getNumSamples());
 
-    // This is the place where you'd normally do the guts of your plugin's
-    // audio processing...
-    // Make sure to reset the state if your inner loop is processing
-    // the samples and the outer loop is handling the channels.
-    // Alternatively, you can process the samples with the channels
-    // interleaved by keeping the same state.
-    for (int channel = 0; channel < totalNumInputChannels; ++channel)
+    wetMix.setTargetValue (bypassParam->get() ? 0.0f : 1.0f);
+    inputGain.setGainDb (inputGainDb->load());
+    outputGain.setGainDb (outputGainDb->load());
+
+    // Hosts may exceed the block size they announced; chunking keeps us allocation-free.
+    for (int start = 0; start < buffer.getNumSamples(); start += maxChunkSize)
+        processChunk (buffer, start, juce::jmin (maxChunkSize, buffer.getNumSamples() - start), numChannels);
+}
+
+void PluginProcessor::processChunk (juce::AudioBuffer<float>& buffer, int start, int numSamples, int numChannels)
+{
+    const bool settledBypassed = ! wetMix.isSmoothing() && juce::exactlyEqual (wetMix.getTargetValue(), 0.0f);
+    if (settledBypassed)
     {
-        auto* channelData = buffer.getWritePointer (channel);
-        juce::ignoreUnused (channelData);
-        // ..do something to the data...
+        wetMix.skip (numSamples);
+        inputGain.reset();
+        outputGain.reset();
+        return; // untouched input: bit-exact bypass
+    }
+
+    const bool crossfading = wetMix.isSmoothing() || ! juce::exactlyEqual (wetMix.getTargetValue(), 1.0f);
+    if (crossfading)
+        for (int ch = 0; ch < numChannels; ++ch)
+            dryBuffer.copyFrom (ch, 0, buffer, ch, start, numSamples);
+
+    // Chain: Input Gain -> (EQ -> Compressor -> Saturation, later) -> Output Gain
+    inputGain.process (buffer, numChannels, start, numSamples);
+    outputGain.process (buffer, numChannels, start, numSamples);
+
+    if (crossfading)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const auto wet = wetMix.getNextValue();
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                auto* out = buffer.getWritePointer (ch, start);
+                const auto dry = dryBuffer.getReadPointer (ch)[i];
+                out[i] = dry + wet * (out[i] - dry);
+            }
+        }
     }
 }
 
@@ -166,17 +199,15 @@ juce::AudioProcessorEditor* PluginProcessor::createEditor()
 //==============================================================================
 void PluginProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    // You should use this method to store your parameters in the memory block.
-    // You could do that either as raw data, or use the XML or ValueTree classes
-    // as intermediaries to make it easy to save and load complex data.
-    juce::ignoreUnused (destData);
+    if (auto xml = apvts.copyState().createXml())
+        copyXmlToBinary (*xml, destData);
 }
 
 void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    // You should use this method to restore your parameters from this memory block,
-    // whose contents will have been created by the getStateInformation() call.
-    juce::ignoreUnused (data, sizeInBytes);
+    if (auto xml = getXmlFromBinary (data, sizeInBytes))
+        if (xml->hasTagName (apvts.state.getType()))
+            apvts.replaceState (juce::ValueTree::fromXml (*xml));
 }
 
 //==============================================================================

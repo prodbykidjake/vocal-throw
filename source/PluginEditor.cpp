@@ -1,48 +1,49 @@
 #include "PluginEditor.h"
 
 PluginEditor::PluginEditor (PluginProcessor& p)
-    : AudioProcessorEditor (&p), processorRef (p)
+    : AudioProcessorEditor (&p),
+      processorRef (p),
+      inputAttachment (p.apvts, ParamIDs::inputGain, inputSlider),
+      outputAttachment (p.apvts, ParamIDs::outputGain, outputSlider),
+      bypassAttachment (p.apvts, ParamIDs::bypass, bypassButton)
 {
-    juce::ignoreUnused (processorRef);
+    for (auto* s : { &inputSlider, &outputSlider })
+    {
+        s->setTextValueSuffix (" dB");
+        s->setDoubleClickReturnValue (true, 0.0);
+        addAndMakeVisible (s);
+    }
 
-    addAndMakeVisible (inspectButton);
+    for (auto* l : { &inputLabel, &outputLabel })
+    {
+        l->setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (l);
+    }
 
-    // this chunk of code instantiates and opens the melatonin inspector
-    inspectButton.onClick = [&] {
-        if (!inspector)
-        {
-            inspector = std::make_unique<melatonin::Inspector> (*this);
-            inspector->onClose = [this]() { inspector.reset(); };
-        }
-
-        inspector->setVisible (true);
-    };
-
-    // Make sure that before the constructor has finished, you've set the
-    // editor's size to whatever you need it to be.
-    setSize (400, 300);
+    addAndMakeVisible (bypassButton);
+    setSize (360, 240);
 }
 
-PluginEditor::~PluginEditor()
-{
-}
+PluginEditor::~PluginEditor() = default;
 
 void PluginEditor::paint (juce::Graphics& g)
 {
-    // (Our component is opaque, so we must completely fill the background with a solid colour)
-    g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
-
-    auto area = getLocalBounds();
-    g.setColour (juce::Colours::white);
-    g.setFont (16.0f);
-    auto helloWorld = juce::String ("Hello from ") + PRODUCT_NAME_WITHOUT_VERSION + " v" VERSION + " running in " + CMAKE_BUILD_TYPE;
-    g.drawText (helloWorld, area.removeFromTop (150), juce::Justification::centred, false);
+    g.fillAll (juce::Colour (0xff101216));
+    g.setColour (juce::Colour (0xff3ad7c4));
+    g.setFont (juce::FontOptions (20.0f, juce::Font::bold));
+    g.drawText ("SignalPath", getLocalBounds().removeFromTop (40).reduced (12, 0), juce::Justification::centredLeft);
 }
 
 void PluginEditor::resized()
 {
-    // layout the positions of your child components here
     auto area = getLocalBounds();
-    area.removeFromBottom(50);
-    inspectButton.setBounds (getLocalBounds().withSizeKeepingCentre(100, 50));
+    area.removeFromTop (40);
+    bypassButton.setBounds (area.removeFromBottom (36).reduced (12, 4));
+
+    auto left = area.removeFromLeft (area.getWidth() / 2).reduced (8);
+    auto right = area.reduced (8);
+    inputLabel.setBounds (left.removeFromTop (22));
+    inputSlider.setBounds (left);
+    outputLabel.setBounds (right.removeFromTop (22));
+    outputSlider.setBounds (right);
 }

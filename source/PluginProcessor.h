@@ -1,10 +1,8 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
-
-#if (MSVC)
-#include "ipps.h"
-#endif
+#include "dsp/GainStage.h"
+#include "params/Parameters.h"
 
 class PluginProcessor : public juce::AudioProcessor
 {
@@ -18,6 +16,7 @@ public:
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
 
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    using juce::AudioProcessor::processBlock; // keep the double overload visible (it is rejected by supportsDoublePrecisionProcessing)
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override;
@@ -38,6 +37,24 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParam; }
+
+    juce::AudioProcessorValueTreeState apvts;
+
 private:
+    void processChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples, int numChannels);
+
+    juce::AudioParameterBool* bypassParam = nullptr;
+    std::atomic<float>* inputGainDb = nullptr;
+    std::atomic<float>* outputGainDb = nullptr;
+
+    GainStage inputGain, outputGain;
+
+    // Crossfade between dry and processed signal so bypass never clicks.
+    // 1 = fully processed, 0 = fully bypassed.
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> wetMix { 1.0f };
+    juce::AudioBuffer<float> dryBuffer; // allocated in prepareToPlay, never in processBlock
+    int maxChunkSize = 0;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)
 };
