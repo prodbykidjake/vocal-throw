@@ -1,8 +1,10 @@
 #pragma once
 
-#include <juce_audio_processors/juce_audio_processors.h>
-#include "dsp/GainStage.h"
+#include "analysis/CaptureFifo.h"
+#include "dsp/Meters.h"
+#include "engine/Chain.h"
 #include "params/Parameters.h"
+#include <juce_audio_processors/juce_audio_processors.h>
 
 class PluginProcessor : public juce::AudioProcessor
 {
@@ -39,22 +41,64 @@ public:
 
     juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParam; }
 
+    // Undo history for every parameter change made from the UI, presets and recommendations.
+    juce::UndoManager undoManager;
     juce::AudioProcessorValueTreeState apvts;
+
+    // --- Metering and analysis taps (written by the audio thread, read lock-free by the UI) ---
+    LevelMeter inputMeter, outputMeter;
+    LoudnessMeter inputLoudness, outputLoudness;
+    CaptureFifo captureFifo;
+    float getGainReductionDb() const { return chain.getGainReductionDb(); }
+    // Output loudness minus input loudness (dB) as measured while the chain is active; this is the
+    // offset applied to the original signal when "Match Loudness On Bypass" is on.
+    float getLoudnessOffsetDb() const { return loudnessOffsetDb.load (std::memory_order_relaxed); }
+
+    // --- Non-automatable UI/session state, stored in the same saved state ---
+    enum class Mode { guided, automatic, creative };
+    static constexpr auto mode_ = "mode";
+    static constexpr auto goal_ = "goal";
+    static constexpr auto intensity_ = "intensity";
+    static constexpr auto source_ = "source";
+    static constexpr auto autoApply_ = "autoApply";
+    static constexpr auto presetName_ = "presetName";
+
+    // A/B comparison: two full parameter snapshots; the active slot is the live one.
+    int getActiveSlot() const { return (int) apvts.state.getProperty ("abSlot", 0); }
+    void switchABSlot();
+
+    // Reads every audio parameter into a name -> value map / writes a map back (one undo step).
+    std::map<std::string, float> getParamValues() const;
+    void setParamValues (const std::map<std::string, float>& values, const juce::String& undoName);
 
 private:
     void processChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples, int numChannels);
+    ChainParams readParams() const;
+
+    // Raw parameter pointers resolved once in the constructor so the audio thread never does a lookup.
+    struct Handles
+    {
+        using P = std::atomic<float>*;
+        P inputGain, outputGain, bypass, loudnessMatch;
+        P eqEnable, eqHpEnable, eqHpFreq;
+        std::array<P, 4> eqFreq, eqGain, eqQ;
+        P compEnable, compThreshold, compRatio, compAttack, compRelease, compKnee, compMakeup, compMix;
+        P satEnable, satDrive, satMix;
+    } h {};
 
     juce::AudioParameterBool* bypassParam = nullptr;
-    std::atomic<float>* inputGainDb = nullptr;
-    std::atomic<float>* outputGainDb = nullptr;
+    std::map<std::string, std::atomic<float>*> rawParams; // message-thread use only (presets, A/B)
 
-    GainStage inputGain, outputGain;
+    Chain chain;
 
-    // Crossfade between dry and processed signal so bypass never clicks.
-    // 1 = fully processed, 0 = fully bypassed.
+    // Crossfade between processed and original so bypass never clicks. 1 = processed, 0 = bypassed.
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> wetMix { 1.0f };
+    // Gain applied to the original signal so it can be compared at the processed loudness.
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> matchGain { 1.0f };
+    std::atomic<float> loudnessOffsetDb { 0.0f };
     juce::AudioBuffer<float> dryBuffer; // allocated in prepareToPlay, never in processBlock
     int maxChunkSize = 0;
+    double currentSampleRate = 44100.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)
 };
