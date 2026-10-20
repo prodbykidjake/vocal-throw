@@ -36,14 +36,23 @@ public:
         setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
     }
 
+    void setWarning (bool w)
+    {
+        if (w != warning)
+        {
+            warning = w;
+            repaint();
+        }
+    }
+
     void paint (juce::Graphics& g) override
     {
-        Theme::card_ (g, getLocalBounds().toFloat(), juce::Colour (0xff121718), juce::Colour (0xff293234), 6.0f);
+        Theme::card_ (g, getLocalBounds().toFloat(), juce::Colour (0xff121718), warning ? Theme::coral.withAlpha (0.6f) : juce::Colour (0xff293234), 6.0f);
         g.setColour (juce::Colour (0xff637073));
         g.setFont (Theme::mono (8.5f));
         g.drawText (label, getLocalBounds().removeFromTop (24), juce::Justification::centred, false);
         const auto v = param->convertFrom0to1 (param->getValue());
-        g.setColour (accentValue ? Theme::accent : Theme::text);
+        g.setColour (warning ? Theme::coral : (accentValue ? Theme::accent : Theme::text));
         g.setFont (Theme::mono (11.5f));
         g.drawText (Theme::dbText (std::abs (v) < 0.05f ? 0.0f : v), getLocalBounds().withTrimmedTop (22).withTrimmedBottom (14), juce::Justification::centred, false);
         g.setColour (juce::Colour (0xff5f6c6f));
@@ -68,6 +77,7 @@ private:
     PluginProcessor& processor;
     juce::String label;
     bool accentValue;
+    bool warning = false;
     juce::RangedAudioParameter* param;
     juce::ParameterAttachment attachment;
     float startValue = 0.0f;
@@ -474,6 +484,13 @@ public:
         refreshLayout();
     }
 
+    // Output true-peak (dBTP) held by the editor; shown in the summary and flags the OUT node when it would clip.
+    void setOutputPeak (float db)
+    {
+        outputPeakDb = db;
+        outNode.setWarning (db > -0.1f);
+    }
+
     bool advancedOpen() const { return (bool) state.getProperty ("advancedOpen", false); }
     int preferredHeight() const { return closedHeight + (advancedOpen() ? advancedHeight : 0); }
 
@@ -525,10 +542,11 @@ public:
         const auto off = processor.getLoudnessOffsetDb();
         juce::String summary = juce::String (active) + (active == 1 ? " module active" : " modules active") + Theme::u8 (" · ")
                                + (bypassed ? juce::String ("Globally bypassed")
-                                           : "output " + chain_ui::signedText (off) + " dB vs input (K-weighted)");
+                                           : "output " + chain_ui::signedText (off) + " dB vs input (K-weighted)")
+                               + (outputPeakDb > -90.0f ? Theme::u8 (" · ") + "output peak " + Theme::dbText (outputPeakDb) + " dBTP" + (outputPeakDb > -0.1f ? juce::String (" (over 0 dBFS)") : juce::String()) : juce::String());
         g.setColour (juce::Colour (0xff586467));
         g.setFont (Theme::sans (10.0f));
-        g.drawText (summary, 206, 17, 500, 14, juce::Justification::centredLeft, false);
+        g.drawText (summary, 206, 17, 800, 14, juce::Justification::centredLeft, false);
 
         // connectors
         const auto row = chainRow();
@@ -711,6 +729,7 @@ private:
     juce::ValueTree state;
     std::function<void()> layoutChanged;
     GainNode inNode, outNode;
+    float outputPeakDb = -100.0f;
     std::vector<std::unique_ptr<ModuleCard>> cards;
     CurveView curve;
     std::array<Knob, 7> knobs;

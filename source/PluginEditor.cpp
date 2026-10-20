@@ -148,6 +148,15 @@ public:
                 hold[c] = std::max (pk[c], hold[c] - 0.6f);
         }
 
+        {
+            auto& o = processor.outputMeter;
+            const float tp = db (std::max (o.takeTruePeak (0), stereo ? o.takeTruePeak (1) : 0.0f));
+            outHold = tp >= outHold ? tp : (++outHoldAge > 90 ? std::max (tp, outHold - 0.6f) : outHold);
+            if (tp >= outHold)
+                outHoldAge = 0;
+            chain.setOutputPeak (outHold);
+        }
+
         const float blockPeak = std::max (pk[0], pk[1]);
         recentPeaks[(size_t) (recentIndex++ % (int) recentPeaks.size())] = blockPeak;
         waveAccum = std::max (waveAccum, blockPeak);
@@ -234,7 +243,8 @@ public:
     std::array<float, 90> recentPeaks = [] { std::array<float, 90> a; a.fill (-100.0f); return a; }();
     int recentIndex = 0, waveTick = 0, slowTick = 0;
     RecommendationSession::State lastSessionState = RecommendationSession::State::idle;
-    float waveAccum = -100.0f;
+    float waveAccum = -100.0f, outHold = -100.0f;
+    int outHoldAge = 0;
     std::array<float, AnalysisPanel::numBars> wave {};
 };
 

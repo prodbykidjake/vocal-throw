@@ -8,7 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Parameter IDs live in `source/params/Parameters.h` and are a saved-session contract: never rename or reuse one. DSP modules live in `source/dsp/` and must stay JUCE-UI-free and allocation-free after `prepare()`.
 
-The UI design target is the Figma Make file "Audio VST Plugin Development" (dark, mint accent, Guided/Automatic/Creative tabs).
+The UI follows the Figma Make file "Audio VST Plugin Development" (tokens in `source/ui/Theme.h`). Full architecture, goal specs and verified/unverified status are in `docs/SignalPath.md` - keep it accurate when you change behaviour.
+
+Useful commands: `./Builds/Tests "[advisor]"` (tag filters), `SIGNALPATH_SNAPSHOT_DIR=dir ./Builds/Tests "[ui]"` renders the editor to PNGs, `./Builds/release/Benchmarks "processBlock CPU cost"` for CPU numbers. Never claim a feature is verified unless a test or tool run backs it.
 
 Originally derived from the template described below.
 
