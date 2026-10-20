@@ -83,7 +83,8 @@ percentage because none has been validated.
 | UI (all three modes) | **Implemented**; rendered and visually inspected on Linux, interaction tested by hand-written tests only at the logic level |
 | Chain reordering | **Not implemented** (architecture is fixed-order; no UI shown for it) |
 | Fonts | System fonts. Inter / DM Mono (used in the design) are **not embedded yet** |
-| Windows, macOS, AU, AUv3, CLAP | **Not built or tested.** Linux VST3 only. CI is configured for macOS only; macOS signing/notarization need your secrets |
+| macOS (arm64+x86_64), AU, VST3, Standalone | **Compiles on a GitHub macos-14 runner; unit tests ran there** (first run: 58/59 passed, the one failure was a real bug, fixed: 0 dB parameters read as -5e-7 dB under fast-math). Unsigned/ad-hoc-signed test builds are published as a CI artifact. Not yet loaded in a DAW by anyone |
+| Windows, AUv3, CLAP | **Not built or tested** |
 | DAW testing | **None.** pluginval only (see below) |
 | Listening tests, usability tests, source-profile tuning | **Not done** (need people and audio) |
 | Licensing (JUCE), installer, website, support material | **Not done** |
@@ -104,7 +105,18 @@ Linux, GCC, JUCE 9.0.1:
 Reproduce: `cmake -B Builds -G Ninja && cmake --build Builds --target Tests && ./Builds/Tests`.
 UI snapshots: `SIGNALPATH_SNAPSHOT_DIR=/some/dir ./Builds/Tests "[ui]"`.
 
-## 6. Next steps (highest value first)
+## 6. Trying a build (unsigned macOS test build)
+
+Every push to `signalpath-foundation` runs the macOS workflow. When tests pass it uploads
+`SignalPath-<version>-macOS-unsigned` (universal VST3 + AU + Standalone + `INSTALL-macOS.txt`) as an Actions artifact.
+It is ad-hoc signed, not notarized: follow the install notes (remove the quarantine flag, copy to the Plug-Ins folders).
+
+## 7. Release preparation (not started)
+
+Developer ID signing, notarization (`notarytool`), installer pkg, licence review (JUCE), website, support docs.
+The old template steps for these were removed from the workflow; restore them from git history when the Apple secrets exist.
+
+## 8. Next steps (highest value first)
 
 1. Build and run on macOS (AU + VST3), load in your DAW(s), run pluginval/auval there.
 2. Assemble the listening library and tune the per-source "typical balance" table; run goal-by-goal listening tests at matched loudness.
