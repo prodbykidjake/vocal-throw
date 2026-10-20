@@ -59,6 +59,13 @@ public:
         return true;
     }
 
+    // The applied settings were undone by the user: the proposal can be previewed or applied again.
+    void markUndone()
+    {
+        if (state == State::applied || state == State::previewing)
+            state = State::ready;
+    }
+
     // Call when the user changes the goal/source/intensity or edits parameters: the proposal is stale.
     void invalidate()
     {

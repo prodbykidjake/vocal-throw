@@ -1,30 +1,34 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "engine/PresetManager.h"
+#include "engine/RecommendationSession.h"
+#include <memory>
 
 //==============================================================================
-// Phase 2 shell: real controls bound to real parameters. The full SignalPath UI comes later.
-class PluginEditor : public juce::AudioProcessorEditor
+// SignalPath editor. Laid out on a fixed 1380 x 914 design canvas (see ui/Theme.h) and scaled to the
+// window. Guided, Automatic and Creative are views over the same panels and the same parameters.
+class PluginEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
     explicit PluginEditor (PluginProcessor&);
     ~PluginEditor() override;
 
-    void paint (juce::Graphics&) override;
     void resized() override;
 
+    // Exposed for tests: runs one UI refresh tick and the analysis action without a message loop.
+    void updateLive();
+    void runAnalysis();
+    RecommendationSession& getSession() { return session; }
+
 private:
+    class Content;
+    void timerCallback() override;
+
     PluginProcessor& processorRef;
-
-    juce::Slider inputSlider { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
-    juce::Slider outputSlider { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
-    juce::Label inputLabel { {}, "Input" };
-    juce::Label outputLabel { {}, "Output" };
-    juce::ToggleButton bypassButton { "Bypass" };
-
-    juce::AudioProcessorValueTreeState::SliderAttachment inputAttachment;
-    juce::AudioProcessorValueTreeState::SliderAttachment outputAttachment;
-    juce::AudioProcessorValueTreeState::ButtonAttachment bypassAttachment;
+    RecommendationSession session;
+    PresetManager presets;
+    std::unique_ptr<Content> content;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

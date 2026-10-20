@@ -56,6 +56,8 @@ public:
     float getGainReductionDb() const { return chain.getGainReductionDb(); }
     // Output loudness minus input loudness (dB) as measured while the chain is active; this is the
     // offset applied to the original signal when "Match Loudness On Bypass" is on.
+    // Fraction (0..1) of the available block time spent in processBlock, lightly smoothed.
+    float getCpuLoad() const { return cpuLoad.load (std::memory_order_relaxed); }
     float getLoudnessOffsetDb() const { return loudnessOffsetDb.load (std::memory_order_relaxed); }
 
     // --- Non-automatable UI/session state, stored in the same saved state ---
@@ -100,6 +102,7 @@ private:
     // Gain applied to the original signal so it can be compared at the processed loudness.
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> matchGain { 1.0f };
     std::atomic<float> loudnessOffsetDb { 0.0f };
+    std::atomic<float> cpuLoad { 0.0f };
     juce::AudioBuffer<float> dryBuffer; // allocated in prepareToPlay, never in processBlock
     int maxChunkSize = 0;
     double currentSampleRate = 44100.0;

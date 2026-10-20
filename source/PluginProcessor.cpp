@@ -188,6 +188,7 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 {
     juce::ignoreUnused (midiMessages);
     juce::ScopedNoDenormals noDenormals;
+    const auto startTicks = juce::Time::getHighResolutionTicks();
 
     const auto numChannels = juce::jmin (getTotalNumInputChannels(), getTotalNumOutputChannels(), buffer.getNumChannels());
     for (auto ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
@@ -207,6 +208,11 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         processChunk (buffer, start, juce::jmin (maxChunkSize, buffer.getNumSamples() - start), numChannels);
 
     outputMeter.process (buffer, numChannels);
+
+    const auto elapsed = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - startTicks);
+    const auto available = buffer.getNumSamples() / currentSampleRate;
+    const auto previous = cpuLoad.load (std::memory_order_relaxed);
+    cpuLoad.store (previous + 0.1f * ((float) (elapsed / available) - previous), std::memory_order_relaxed);
 }
 
 void PluginProcessor::processChunk (juce::AudioBuffer<float>& buffer, int start, int numSamples, int numChannels)
