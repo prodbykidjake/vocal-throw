@@ -4,7 +4,9 @@ on:
   workflow_dispatch: # lets you run a build from the UI
   workflow_call: # lets other workflows (like nightly.yml) call this one
   push:
+    paths-ignore: ['docs/**', '**.md']
   pull_request:
+    paths-ignore: ['docs/**', '**.md']
 
 # When pushing new commits, cancel any running builds on that branch
 concurrency:
