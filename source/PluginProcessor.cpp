@@ -308,13 +308,17 @@ std::map<std::string, float> PluginProcessor::getParamValues() const
 
 void PluginProcessor::setParamValues (const std::map<std::string, float>& values, const juce::String& undoName)
 {
+    // Edit through the state tree with the undo manager attached: the tree change updates the parameter
+    // synchronously (and notifies the host), and is recorded as a single undoable transaction.
+    // First flush parameter changes the state tree has not seen yet (APVTS does this on a timer); otherwise
+    // writing a value equal to the stale tree value would be a no-op and leave the parameter unchanged.
+    [[maybe_unused]] const auto flushed = apvts.copyState();
     undoManager.beginNewTransaction (undoName);
     for (const auto& [id, value] : values)
         if (auto* p = apvts.getParameter (id))
         {
-            p->beginChangeGesture();
-            p->setValueNotifyingHost (p->convertTo0to1 (value));
-            p->endChangeGesture();
+            auto treeValue = apvts.getParameterAsValue (id);
+            treeValue.setValue (p->convertFrom0to1 (p->convertTo0to1 (value))); // clamps and snaps to the parameter's range
         }
 }
 

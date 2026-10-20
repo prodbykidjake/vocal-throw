@@ -1,6 +1,7 @@
 #pragma once
 
 #include "analysis/CaptureFifo.h"
+#include "analysis/SignalAnalyzer.h"
 #include "dsp/Meters.h"
 #include "engine/Chain.h"
 #include "params/Parameters.h"
@@ -49,6 +50,9 @@ public:
     LevelMeter inputMeter, outputMeter;
     LoudnessMeter inputLoudness, outputLoudness;
     CaptureFifo captureFifo;
+    SignalAnalyzer analyzer; // message thread only
+    // Moves audio captured by the audio thread into the analyzer's history (message thread).
+    void pumpAnalysis() { analyzer.drain (captureFifo, getSampleRate()); }
     float getGainReductionDb() const { return chain.getGainReductionDb(); }
     // Output loudness minus input loudness (dB) as measured while the chain is active; this is the
     // offset applied to the original signal when "Match Loudness On Bypass" is on.
