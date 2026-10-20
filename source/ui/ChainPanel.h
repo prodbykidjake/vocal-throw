@@ -30,7 +30,7 @@ class GainNode : public juce::Component
 {
 public:
     GainNode (PluginProcessor& p, const char* paramId, const juce::String& title, bool accent)
-        : processor (p), label (title), accentValue (accent), param (p.apvts.getParameter (paramId)),
+        : label (title), accentValue (accent), param (p.apvts.getParameter (paramId)),
           attachment (*param, [this] (float) { repaint(); }, &p.undoManager)
     {
         setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
@@ -74,7 +74,6 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override { attachment.setValueAsCompleteGesture (0.0f); }
 
 private:
-    PluginProcessor& processor;
     juce::String label;
     bool accentValue;
     bool warning = false;
@@ -282,10 +281,12 @@ public:
 private:
     static constexpr float minHz = 20.0f, maxHz = 20000.0f, rangeDb = 15.0f;
 
-    float freqToX (float f) const { return 6.0f + (getWidth() - 12.0f) * std::log (f / minHz) / std::log (maxHz / minHz); }
-    float xToFreq (float x) const { return minHz * std::exp (std::log (maxHz / minHz) * juce::jlimit (0.0f, 1.0f, (x - 6.0f) / (getWidth() - 12.0f))); }
-    float dbToY (float db) const { return getHeight() * 0.5f - db / rangeDb * (getHeight() * 0.5f - 8.0f); }
-    float yToDb (float y) const { return juce::jlimit (-12.0f, 12.0f, -(y - getHeight() * 0.5f) / (getHeight() * 0.5f - 8.0f) * rangeDb); }
+    float w() const { return (float) getWidth(); }
+    float h() const { return (float) getHeight(); }
+    float freqToX (float f) const { return 6.0f + (w() - 12.0f) * std::log (f / minHz) / std::log (maxHz / minHz); }
+    float xToFreq (float x) const { return minHz * std::exp (std::log (maxHz / minHz) * juce::jlimit (0.0f, 1.0f, (x - 6.0f) / (w() - 12.0f))); }
+    float dbToY (float db) const { return h() * 0.5f - db / rangeDb * (h() * 0.5f - 8.0f); }
+    float yToDb (float y) const { return juce::jlimit (-12.0f, 12.0f, -(y - h() * 0.5f) / (h() * 0.5f - 8.0f) * rangeDb); }
     juce::Point<float> eqPoint (const EqParams& e, int i) const { return { freqToX (e.bands[(size_t) i].freq), dbToY (e.bands[(size_t) i].gainDb) }; }
 
     void paintEq (juce::Graphics& g, juce::Rectangle<float>)
@@ -310,7 +311,7 @@ private:
         const int steps = std::max (8, getWidth() / 3);
         for (int i = 0; i <= steps; ++i)
         {
-            const auto f = xToFreq (6.0f + (getWidth() - 12.0f) * (float) i / (float) steps);
+            const auto f = xToFreq (6.0f + (w() - 12.0f) * (float) i / (float) steps);
             const auto y = dbToY (juce::jlimit (-rangeDb, rangeDb, (float) ParametricEQ::responseDb (eq, f, fs)));
             if (i == 0) curve.startNewSubPath (freqToX (f), y); else curve.lineTo (freqToX (f), y);
         }

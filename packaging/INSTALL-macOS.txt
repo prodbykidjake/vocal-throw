@@ -1,0 +1,30 @@
+SignalPath (unsigned test build) - macOS
+=========================================
+
+Universal binary (Apple Silicon + Intel). Not notarized, so macOS will quarantine it. Follow these steps.
+
+1) Open Terminal in the folder where you unzipped this.
+
+2) Remove the quarantine flag (once):
+
+   xattr -dr com.apple.quarantine SignalPath.vst3 SignalPath.component SignalPath.app
+
+3) Install the plugin(s) you want:
+
+   mkdir -p ~/Library/Audio/Plug-Ins/VST3 ~/Library/Audio/Plug-Ins/Components
+   cp -R SignalPath.vst3       ~/Library/Audio/Plug-Ins/VST3/
+   cp -R SignalPath.component  ~/Library/Audio/Plug-Ins/Components/
+
+4) Restart your DAW and rescan plugins.
+   - Logic Pro / GarageBand use the AU (SignalPath.component). If Logic does not list it, run:
+       killall -9 AudioComponentRegistrar
+     then reopen Logic (it re-validates new AUs on launch).
+   - Ableton, Reaper, Bitwig, FL Studio etc. use the VST3.
+
+To just try it without a DAW, open SignalPath.app (standalone) - it uses your default audio input/output.
+Use headphones; the standalone app routes input to output.
+
+Where it is rough (please tell me what you hear / see):
+ - Source "typical balance" tables are my first guess; goals can be wrong for your material.
+ - Fonts are system fonts for now.
+ - Saturation at high drive aliases on bright material.

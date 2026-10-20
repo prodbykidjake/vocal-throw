@@ -90,7 +90,7 @@ public:
         g.setFont (Theme::sans (12.0f));
         const auto name = juce::String (processor.apvts.state.getProperty (PluginProcessor::presetName_, "Init").toString());
         g.drawText (name.isEmpty() ? juce::String ("Init") : name, presetBounds.withTrimmedLeft (14).withTrimmedRight (34).withTrimmedTop (21), juce::Justification::topLeft, true);
-        drawChevron (g, juce::Rectangle<float> (presetBounds.getRight() - 30.0f, presetBounds.getCentreY() - 7.0f, 14.0f, 14.0f), juce::Colour (0xff9ba7aa));
+        drawChevron (g, juce::Rectangle<float> ((float) presetBounds.getRight() - 30.0f, (float) presetBounds.getCentreY() - 7.0f, 14.0f, 14.0f), juce::Colour (0xff9ba7aa));
     }
 
     void resized() override
@@ -124,7 +124,7 @@ public:
     void paintOverChildren (juce::Graphics& g) override
     {
         // frame behind the A/B segment
-        auto ab = juce::Rectangle<float> (slotA.getX() - 3.0f, slotA.getY() - 3.0f, 68.0f, 34.0f);
+        auto ab = juce::Rectangle<float> ((float) slotA.getX() - 3.0f, (float) slotA.getY() - 3.0f, 68.0f, 34.0f);
         g.setColour (Theme::borderStrong);
         g.drawRoundedRectangle (ab.reduced (0.5f), 6.0f, 1.0f);
     }

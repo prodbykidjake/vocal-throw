@@ -15,6 +15,8 @@ public:
 
     void setGainDb (float db)
     {
+        if (std::abs (db) < 0.001f)
+            db = 0.0f; // exact unity for "0 dB" even if a host/parameter round trip left float dust
         targetDb = db;
         gain.setTargetValue (juce::Decibels::decibelsToGain (db));
     }

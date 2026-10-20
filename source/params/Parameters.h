@@ -74,7 +74,8 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 
     // skewCentre <= 0 means linear; otherwise the slider midpoint maps to that value.
     auto addFloat = [&] (const char* id, const juce::String& name, const Range& r, const char* unit, float skewCentre = 0.0f) {
-        NormalisableRange<float> nr (r.min, r.max, 0.01f);
+        // Continuous (no interval): snapping a symmetric range to 0.01 steps made 0 dB read as -5e-7 dB under fast-math.
+        NormalisableRange<float> nr (r.min, r.max);
         if (skewCentre > 0.0f)
             nr.setSkewForCentre (skewCentre);
         layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id, version }, name, nr, r.def,

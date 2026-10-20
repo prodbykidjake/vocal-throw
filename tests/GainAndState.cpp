@@ -223,3 +223,14 @@ TEST_CASE ("Parameter IDs and ranges are stable", "[state]")
     CHECK (g->convertFrom0to1 (1.0f) == Catch::Approx (24.0f));
     CHECK (g->convertFrom0to1 (g->getDefaultValue()) == Catch::Approx (0.0f).margin (0.01));
 }
+
+TEST_CASE ("Parameter defaults are exact", "[state]")
+{
+    PluginProcessor p;
+    // 0 dB must be exactly 0 (not float dust), on every compiler and optimisation level
+    for (auto id : { ParamIDs::inputGain, ParamIDs::outputGain, ParamIDs::eqGain[0], ParamIDs::eqGain[1], ParamIDs::eqGain[2], ParamIDs::eqGain[3], ParamIDs::compMakeup })
+    {
+        CAPTURE (id);
+        CHECK (juce::exactlyEqual (p.apvts.getRawParameterValue (id)->load(), 0.0f));
+    }
+}
