@@ -68,7 +68,7 @@ TEST_CASE ("Compressor attack and release follow their time constants", "[compre
     CHECK (attack[49] == Approx (target * 0.993f).margin (0.2f)); // ~50 ms
 
     const auto release = grTrace (c, 0.01f, 400, 48); // -40 dBFS: below threshold, GR decays
-    CHECK (release[99] == Approx (target * 0.368f).margin (0.4f)); // ~100 ms
+    CHECK (release[113] == Approx (target * 0.368f).margin (0.4f)); // 14 ms detector hold + one 100 ms time constant
     CHECK (release[399] < 0.2f);
 }
 
@@ -251,4 +251,37 @@ TEST_CASE ("Saturator (ADAA, no oversampling) aliasing is measured and bounded",
         WARN ("Saturator drive " << c.drive << " dB, 5.1 kHz sine: total aliasing " << aliasDb << " dB re fundamental");
         CHECK (aliasDb < c.maxAliasDb);
     }
+}
+
+TEST_CASE ("Compressor adds no audible distortion on sustained notes at any attack/release", "[compressor][distortion]")
+{
+    // Regression: the first detector followed the rectified waveform and made the gain wobble at 2x the note frequency
+    // (measured -42 dB THD at 60 Hz with 10/100 ms and -19 dB with 0.1/5 ms). With the held peak detector it must be inaudible.
+    constexpr double fs = 48000.0;
+    constexpr int order = 15, n = 1 << order;
+    for (double f0 : { 42.0, 55.0, 77.0, 120.0, 250.0, 1000.0 })
+        for (auto [att, rel] : { std::pair { 10.0f, 100.0f }, std::pair { 1.0f, 20.0f }, std::pair { 0.1f, 5.0f }, std::pair { 30.0f, 300.0f } })
+        {
+            Compressor c;
+            c.prepare (fs);
+            c.setParams ({ -24.0f, 4.0f, att, rel, 6.0f, 0.0f, 1.0f }, true);
+            auto b = test::sine (1, (int) fs * 2, fs, f0, 0.5f);
+            for (int s = 0; s < b.getNumSamples(); s += 480)
+                c.process (b, 1, s, 480);
+
+            std::vector<float> d ((size_t) n * 2, 0.0f);
+            const int off = b.getNumSamples() - n;
+            for (int i = 0; i < n; ++i)
+                d[(size_t) i] = b.getSample (0, off + i) * (float) (0.5 - 0.5 * std::cos (2.0 * std::numbers::pi * i / n));
+            juce::dsp::FFT fft (order);
+            fft.performFrequencyOnlyForwardTransform (d.data());
+            auto bin = [&] (double f) { return (int) std::lround (f / fs * n); };
+            auto power = [&] (double f) { double sum = 0; for (int k = bin (f) - 3; k <= bin (f) + 3; ++k) sum += (double) d[(size_t) k] * d[(size_t) k]; return sum; };
+            double harmonics = 0;
+            for (int h = 2; h <= 8 && h * f0 < fs / 2; ++h)
+                harmonics += power (h * f0);
+            const auto thdDb = 10.0 * std::log10 (harmonics / power (f0) + 1.0e-20);
+            CAPTURE (f0, att, rel);
+            CHECK (thdDb < -80.0);
+        }
 }

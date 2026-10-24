@@ -273,9 +273,12 @@ TEST_CASE ("Recommendation session: analyse, preview, reject, apply, undo on rea
         CHECK (session.getState() == RecommendationSession::State::applied);
         const auto wet = run (p, input);
 
+        // Auto level match keeps overall loudness constant, so after removing a loud resonance the rest comes up a
+        // little. What must hold: the resonance drops relative to the rest, and the rest moves by under ~1.5 dB.
         const auto cutDb = bandRmsDb (wet, 4200.0) - bandRmsDb (dry, 4200.0);
-        CHECK (cutDb < -1.0);                                                       // resonance reduced
-        CHECK (std::abs (bandRmsDb (wet, 500.0) - bandRmsDb (dry, 500.0)) < 0.5);   // the rest is untouched
+        const auto restDb = bandRmsDb (wet, 500.0) - bandRmsDb (dry, 500.0);
+        CHECK (cutDb - restDb < -1.0);
+        CHECK (std::abs (restDb) < 1.5);
 
         p.undoManager.undo();
         CHECK (maxDifference (p.getParamValues(), before) < 0.01f);
@@ -362,4 +365,127 @@ TEST_CASE ("Plugin reports zero latency and keeps meters live", "[session][meter
     CHECK (p.inputMeter.takeSamplePeak (0) == Approx (0.5f).margin (0.01));
     CHECK (p.inputMeter.getRms (0) > 0.3f);
     CHECK (p.outputMeter.takeTruePeak (1) > 0.45f);
+}
+
+#include "helpers/material.h"
+
+namespace
+{
+double integratedLufs (const juce::AudioBuffer<float>& b)
+{
+    LoudnessMeter m;
+    m.prepare (fs);
+    double sum = 0;
+    int count = 0;
+    for (int s = 0; s + block <= b.getNumSamples(); s += block)
+    {
+        juce::AudioBuffer<float> view (const_cast<float* const*> (b.getArrayOfReadPointers()), 2, s, block);
+        m.process (view, 2);
+        if (s > b.getNumSamples() / 2)
+        {
+            sum += m.getLufs();
+            ++count;
+        }
+    }
+    return sum / count;
+}
+}
+
+namespace
+{
+// Never more than 1.2 LU louder. May be quieter only when the material is so hot (peaks above ~0.85) that the
+// anti-clipping cap stops the make-up boost; otherwise within 2 LU.
+bool inLoudnessBand (double deltaLu, float wetPeak) { return deltaLu < 1.2 && (deltaLu > -2.0 || wetPeak > 0.85f); }
+
+// Peak with auto level match on must not exceed the peak with it off (the user's own EQ/saturation choices are not
+// auto gain's business) or -0.5 dBFS, whichever is larger.
+bool peakWithAutoNeverAbove (PluginProcessor& p, const juce::AudioBuffer<float>& input)
+{
+    auto* autoParam = p.apvts.getParameter (ParamIDs::autoGain);
+    autoParam->setValueNotifyingHost (1.0f);
+    p.prepareToPlay (fs, block);
+    const auto withAuto = run (p, input).getMagnitude (0, 0, input.getNumSamples());
+    autoParam->setValueNotifyingHost (0.0f);
+    p.prepareToPlay (fs, block);
+    const auto without = run (p, input).getMagnitude (0, 0, input.getNumSamples());
+    autoParam->setValueNotifyingHost (1.0f);
+    p.prepareToPlay (fs, block);
+    return withAuto <= std::max (without, 0.944f) * 1.01f;
+}
+}
+
+TEST_CASE ("Auto level match keeps every preset and every goal loudness-neutral on realistic material", "[session][loudness][material]")
+{
+    struct Item { const char* name; Source source; juce::AudioBuffer<float> audio; };
+    std::vector<Item> items;
+    items.push_back ({ "quiet voice", Source::vocal, test::material::voice (10, 1, -26.0f) });
+    items.push_back ({ "voice", Source::vocal, test::material::voice (10, 2, -18.0f) });
+    items.push_back ({ "hot voice", Source::vocal, test::material::voice (10, 3, -11.0f) });
+    items.push_back ({ "drums", Source::drums, test::material::drums (10, 4, -17.0f) });
+
+    for (auto& it : items)
+    {
+        const auto dryLufs = integratedLufs (it.audio);
+
+        for (const auto& [name, values] : PresetManager::factoryPresets())
+        {
+            PluginProcessor p;
+            prepare (p);
+            PresetManager presets (p, juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("sp_unused"));
+            presets.load (name);
+            const auto wet = run (p, it.audio);
+            CAPTURE (it.name, name);
+            CHECK (inLoudnessBand (integratedLufs (wet) - dryLufs, wet.getMagnitude (0, 0, wet.getNumSamples()))); // was up to 8.9 LU quieter before auto level match
+            CHECK (peakWithAutoNeverAbove (p, it.audio) ); // and compensation never drives peaks past where they were, or past -0.5 dBFS
+        }
+
+        for (int g = 0; g < numGoals; ++g)
+        {
+            PluginProcessor p;
+            prepare (p);
+            RecommendationSession session (p);
+            run (p, it.audio);
+            session.analyse ((Goal) g, it.source, 0.5f);
+            if (session.getRecommendation().outcome != Outcome::suggested)
+                continue;
+            session.apply();
+            const auto wet = run (p, it.audio);
+            CAPTURE (it.name, goalName ((Goal) g));
+            CHECK (inLoudnessBand (integratedLufs (wet) - dryLufs, wet.getMagnitude (0, 0, wet.getNumSamples())));
+            CHECK (peakWithAutoNeverAbove (p, it.audio));
+        }
+    }
+}
+
+TEST_CASE ("Auto level match can be switched off", "[session][loudness]")
+{
+    PluginProcessor p;
+    prepare (p);
+    setParam (p, ParamIDs::autoGain, 0.0f);
+    PresetManager presets (p, juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("sp_unused"));
+    presets.load (juce::String::fromUTF8 ("Vocal · Starting Point"));
+    const auto input = test::material::voice (10, 2, -11.0f);
+    const auto wet = run (p, input);
+    CHECK (integratedLufs (wet) < integratedLufs (input) - 3.0); // the preset really does turn a hot voice down when not compensated
+}
+
+TEST_CASE ("Hear original is level-matched and fully restores the previous state", "[session][loudness]")
+{
+    PluginProcessor p;
+    prepare (p);
+    const auto input = test::material::voice (10, 2, -18.0f);
+    PresetManager presets (p, juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("sp_unused"));
+    presets.load (juce::String::fromUTF8 ("Vocal · Starting Point"));
+    const auto withChanges = run (p, input);
+
+    p.setHearOriginal (true);
+    CHECK (p.isHearingOriginal());
+    CHECK (value (p, ParamIDs::bypass) > 0.5f);
+    const auto original = run (p, input);
+    CHECK (std::abs (integratedLufs (original) - integratedLufs (withChanges)) < 1.5);
+
+    p.setHearOriginal (false);
+    CHECK_FALSE (p.isHearingOriginal());
+    CHECK (value (p, ParamIDs::bypass) < 0.5f);
+    CHECK (value (p, ParamIDs::loudnessMatch) < 0.5f); // user's own setting restored
 }

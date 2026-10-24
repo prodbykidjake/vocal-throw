@@ -8,7 +8,7 @@ class RecommendationPanel : public juce::Component
 public:
     RecommendationPanel (PluginProcessor& p, RecommendationSession& s, juce::ValueTree stateTree, std::function<void()> onUserAction)
         : processor (p), session (s), state (std::move (stateTree)), userAction (std::move (onUserAction)),
-          matchAttachment (*p.apvts.getParameter (ParamIDs::loudnessMatch), [this] (float) { repaint(); }, &p.undoManager)
+          autoAttachment (*p.apvts.getParameter (ParamIDs::autoGain), [this] (float) { repaint(); }, &p.undoManager)
     {
         left.setTextFont (Theme::sans (10.5f, true));
         right.setTextFont (Theme::sans (10.5f, true));
@@ -22,8 +22,15 @@ public:
             refresh();
         };
         matchToggle.setTextFont (Theme::mono (8.5f));
-        matchToggle.onClick = [this] { matchAttachment.setValueAsCompleteGesture (processor.apvts.getRawParameterValue (ParamIDs::loudnessMatch)->load() > 0.5f ? 0.0f : 1.0f); };
-        for (auto* c : std::initializer_list<juce::Component*> { &left, &right, &manualButton, &matchToggle })
+        matchToggle.onClick = [this] { autoAttachment.setValueAsCompleteGesture (processor.apvts.getRawParameterValue (ParamIDs::autoGain)->load() > 0.5f ? 0.0f : 1.0f); };
+        hearButton.setTextFont (Theme::sans (10.5f, true));
+        hearButton.setTint (Theme::coral);
+        hearButton.onClick = [this] {
+            processor.setHearOriginal (! processor.isHearingOriginal());
+            refresh();
+            userAction();
+        };
+        for (auto* c : std::initializer_list<juce::Component*> { &left, &right, &manualButton, &matchToggle, &hearButton })
             addAndMakeVisible (c);
         refresh();
     }
@@ -42,6 +49,9 @@ public:
         left.setVisible (actionable);
         right.setVisible (actionable);
         manualButton.setVisible (actionable && mode == 0);
+        hearButton.setVisible (actionable || processor.isHearingOriginal());
+        hearButton.setToggleState (processor.isHearingOriginal(), juce::dontSendNotification);
+        hearButton.setButtonText (processor.isHearingOriginal() ? "Hearing the ORIGINAL - click to hear your changes" : "Hear original (level-matched)");
         switch (st)
         {
             case RecommendationSession::State::previewing:
@@ -78,9 +88,9 @@ public:
             switch (rec.outcome)
             {
                 case Outcome::suggested:
-                    heading = st == S::applied ? "Changes applied" : "A focused starting point";
-                    pill = st == S::applied ? "APPLIED" : (st == S::previewing ? "PREVIEWING" : "READY");
-                    pillColour = Theme::accent;
+                    heading = st == S::applied ? "Changes applied" : (rec.optional ? "An optional starting point" : "A focused starting point");
+                    pill = st == S::applied ? "APPLIED" : (st == S::previewing ? "PREVIEWING" : (rec.optional ? "OPTIONAL" : "READY"));
+                    pillColour = (rec.optional && st != S::applied) ? Theme::amber : Theme::accent;
                     break;
                 case Outcome::noChangeNeeded: heading = "No change suggested"; pill = "NO CHANGE"; pillColour = Theme::textDim; break;
                 case Outcome::insufficientSignal: heading = "Not enough signal"; pill = "NEEDS AUDIO"; break;
@@ -105,7 +115,7 @@ public:
             drawContent (g, content, st, rec);
         }
 
-        // loudness-match row
+        // auto level match row
         auto mb = matchBounds.toFloat();
         Theme::card_ (g, mb, juce::Colour (0xff101617), juce::Colour (0xff293335), 5.0f);
         g.setColour (Theme::accent);
@@ -113,19 +123,22 @@ public:
         g.fillEllipse ({ mb.getX() + 14.5f, mb.getCentreY() - 3.5f, 7.0f, 7.0f });
         g.setColour (juce::Colour (0xffaebabc));
         g.setFont (Theme::sans (10.0f, true));
-        g.drawText ("Match loudness when bypassed", matchBounds.getX() + 36, matchBounds.getY() + 6, 300, 14, juce::Justification::centredLeft, false);
+        g.drawText ("Auto level match", matchBounds.getX() + 36, matchBounds.getY() + 6, 300, 14, juce::Justification::centredLeft, false);
         g.setColour (juce::Colour (0xff5f6d6f));
         g.setFont (Theme::mono (8.5f));
-        const auto off = processor.getLoudnessOffsetDb();
-        g.drawText ("Processing changes loudness by " + (off < 0 ? Theme::u8 ("−") : juce::String ("+")) + juce::String (std::abs (off), 1) + " dB (K-weighted)",
-                    matchBounds.getX() + 36, matchBounds.getY() + 22, 380, 12, juce::Justification::centredLeft, false);
+        const auto off = processor.getModuleLoudnessDb();
+        const bool autoOn = processor.apvts.getRawParameterValue (ParamIDs::autoGain)->load() > 0.5f;
+        g.drawText (juce::String ("Processing changes loudness by ") + (off < 0 ? Theme::u8 ("−") : juce::String ("+")) + juce::String (std::abs (off), 1)
+                        + (autoOn ? " dB; corrected so it stays level." : " dB; NOT corrected."),
+                    matchBounds.getX() + 36, matchBounds.getY() + 22, 400, 12, juce::Justification::centredLeft, false);
     }
 
     void resized() override
     {
         const int pad = 24;
         matchBounds = { pad, getHeight() - pad - 42, getWidth() - 2 * pad, 42 };
-        actionsTop = matchBounds.getY() - 12 - 38;
+        hearButton.setBounds (pad, matchBounds.getY() - 8 - 30, getWidth() - 2 * pad, 30);
+        actionsTop = hearButton.getY() - 8 - 38;
         auto row = juce::Rectangle<int> (pad, actionsTop, getWidth() - 2 * pad, 38);
         const int leftW = (int) ((float) row.getWidth() / 2.35f);
         left.setBounds (row.removeFromLeft (leftW));
@@ -138,7 +151,7 @@ public:
 
     void refreshLive()
     {
-        const bool on = processor.apvts.getRawParameterValue (ParamIDs::loudnessMatch)->load() > 0.5f;
+        const bool on = processor.apvts.getRawParameterValue (ParamIDs::autoGain)->load() > 0.5f;
         matchToggle.setButtonText (on ? "ON" : "OFF");
         matchToggle.setToggleState (on, juce::dontSendNotification);
         matchToggle.setAccentText (on);
@@ -156,9 +169,14 @@ private:
 
         if (st == S::idle)
         {
-            paragraph (g, "Choose what you want to hear, then press Analyze & suggest while your track is playing. "
-                          "SignalPath measures the signal, proposes small reversible changes and explains them. Nothing changes until you preview or apply it.",
-                       Theme::sans (11.0f), Theme::textDim, { pad, y, inner, 100 });
+            y += paragraph (g, "Nothing has been changed yet.", Theme::sans (12.0f, true), juce::Colour (0xffdce5e7), { pad, y, inner, 30 }) + 6;
+            paragraph (g, "SignalPath listens to your track, measures it, and proposes small changes you can hear and undo. "
+                          "It never changes anything until you press Preview or Apply.\n\n"
+                          "1. Play the loudest part of your track.\n"
+                          "2. Pick what you want to hear (left).\n"
+                          "3. Press Analyze & suggest.\n"
+                          "4. Preview it, compare with Hear original, then Apply or Reject.",
+                       Theme::sans (10.5f), Theme::textDim, { pad, y, inner, 160 });
             return;
         }
 
@@ -301,10 +319,11 @@ private:
     RecommendationSession& session;
     juce::ValueTree state;
     std::function<void()> userAction;
-    juce::ParameterAttachment matchAttachment;
+    juce::ParameterAttachment autoAttachment;
     int mode = 0;
     int actionsTop = 0;
     juce::Rectangle<int> matchBounds;
     DesignButton left { "Preview", DesignButton::Style::outline }, right { "Apply changes", DesignButton::Style::light },
-        manualButton { {}, DesignButton::Style::ghost }, matchToggle { "OFF", DesignButton::Style::outline };
+        manualButton { {}, DesignButton::Style::ghost }, matchToggle { "OFF", DesignButton::Style::outline },
+        hearButton { "Hear original (level-matched)", DesignButton::Style::outline };
 };

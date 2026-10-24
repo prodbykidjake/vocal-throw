@@ -175,44 +175,10 @@ Features SignalAnalyzer::analyse (const float* left, const float* right, int n, 
     return f;
 }
 
-void SignalAnalyzer::drain (CaptureFifo& fifo, double sampleRate)
+Features SignalAnalyzer::analyseRecent (const CaptureRing& ring, double sampleRate, float seconds)
 {
-    const int capacity = (int) (historySeconds * (float) sampleRate);
-    if (! juce::exactlyEqual (sampleRate, fs) || (int) left.size() != capacity)
-    {
-        fs = sampleRate;
-        left.assign ((size_t) capacity, 0.0f);
-        right.assign ((size_t) capacity, 0.0f);
-        writePos = count = 0;
-    }
-
-    std::array<float, 4096> l, r;
-    while (fifo.numReady() > 0)
-    {
-        const auto got = fifo.pop (l.data(), r.data(), (int) l.size());
-        for (int i = 0; i < got; ++i)
-        {
-            left[(size_t) writePos] = l[(size_t) i];
-            right[(size_t) writePos] = r[(size_t) i];
-            writePos = (writePos + 1) % capacity;
-        }
-        count = std::min (capacity, count + got);
-    }
-}
-
-Features SignalAnalyzer::analyseRecent (float seconds) const
-{
-    if (fs <= 0.0 || count == 0)
-        return {};
-    const int capacity = (int) left.size();
-    const int n = std::min (count, (int) (seconds * (float) fs));
-    std::vector<float> l ((size_t) n), r ((size_t) n);
-    int pos = (writePos - n + capacity) % capacity;
-    for (int i = 0; i < n; ++i)
-    {
-        l[(size_t) i] = left[(size_t) pos];
-        r[(size_t) i] = right[(size_t) pos];
-        pos = (pos + 1) % capacity;
-    }
-    return analyse (l.data(), r.data(), n, fs);
+    const int wanted = (int) ((double) seconds * sampleRate);
+    std::vector<float> l ((size_t) std::max (0, wanted)), r (l.size());
+    const int n = ring.copyRecent (l.data(), r.data(), wanted);
+    return analyse (l.data(), r.data(), n, sampleRate);
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "analysis/CaptureFifo.h"
+#include "analysis/CaptureRing.h"
 #include "analysis/SignalAnalyzer.h"
 #include "dsp/Meters.h"
 #include "engine/Chain.h"
@@ -48,16 +48,19 @@ public:
 
     // --- Metering and analysis taps (written by the audio thread, read lock-free by the UI) ---
     LevelMeter inputMeter, outputMeter;
-    LoudnessMeter inputLoudness, outputLoudness;
-    CaptureFifo captureFifo;
-    SignalAnalyzer analyzer; // message thread only
-    // Moves audio captured by the audio thread into the analyzer's history (message thread).
-    void pumpAnalysis() { analyzer.drain (captureFifo, getSampleRate()); }
+    LoudnessMeter inputLoudness, outputLoudness;       // raw input / final output (used for bypass level matching)
+    LoudnessMeter afterInputLoudness, afterModulesLoudness; // around the processing modules (used for auto level match)
+    CaptureRing captureRing;
+    // Analyses the most recent audible input (message thread).
+    Features analyseRecentInput (float seconds) const { return SignalAnalyzer::analyseRecent (captureRing, getSampleRate() > 0 ? getSampleRate() : 48000.0, seconds); }
     float getGainReductionDb() const { return chain.getGainReductionDb(); }
     // Output loudness minus input loudness (dB) as measured while the chain is active; this is the
     // offset applied to the original signal when "Match Loudness On Bypass" is on.
     // Fraction (0..1) of the available block time spent in processBlock, lightly smoothed.
     float getCpuLoad() const { return cpuLoad.load (std::memory_order_relaxed); }
+    // How much louder (+) or quieter (-) the EQ/compressor/saturation make the signal, K-weighted, before auto level
+    // match compensates for it.
+    float getModuleLoudnessDb() const { return moduleOffsetDb.load (std::memory_order_relaxed); }
     float getLoudnessOffsetDb() const { return loudnessOffsetDb.load (std::memory_order_relaxed); }
 
     // --- Non-automatable UI/session state, stored in the same saved state ---
@@ -68,6 +71,11 @@ public:
     static constexpr auto source_ = "source";
     static constexpr auto autoApply_ = "autoApply";
     static constexpr auto presetName_ = "presetName";
+
+    // "Hear original": switches to the bypassed signal with loudness matching so that comparing with and without the
+    // processing is level-fair; switching back restores exactly the previous bypass / match settings. Message thread.
+    void setHearOriginal (bool on);
+    bool isHearingOriginal() const { return hearingOriginal; }
 
     // A/B comparison: two full parameter snapshots; the active slot is the live one.
     int getActiveSlot() const { return (int) apvts.state.getProperty ("abSlot", 0); }
@@ -85,7 +93,7 @@ private:
     struct Handles
     {
         using P = std::atomic<float>*;
-        P inputGain, outputGain, bypass, loudnessMatch;
+        P inputGain, outputGain, bypass, loudnessMatch, autoGain;
         P eqEnable, eqHpEnable, eqHpFreq;
         std::array<P, 4> eqFreq, eqGain, eqQ;
         P compEnable, compThreshold, compRatio, compAttack, compRelease, compKnee, compMakeup, compMix;
@@ -102,6 +110,11 @@ private:
     // Gain applied to the original signal so it can be compared at the processed loudness.
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> matchGain { 1.0f };
     std::atomic<float> loudnessOffsetDb { 0.0f };
+    std::atomic<float> moduleOffsetDb { 0.0f };
+    // Gain that cancels the modules' loudness change (auto level match). Exactly 1 when nothing needs compensating.
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> autoTrim { 1.0f };
+    bool hearingOriginal = false, previousBypass = false, previousMatch = false;
+    float modulePeakHold = 0.0f, trimCap = 1.0e6f; // slowly decaying peak after the modules; limits how far auto level match may boost
     std::atomic<float> cpuLoad { 0.0f };
     juce::AudioBuffer<float> dryBuffer; // allocated in prepareToPlay, never in processBlock
     int maxChunkSize = 0;

@@ -47,6 +47,9 @@ struct Recommendation
     float intensity = 0.5f;
     Outcome outcome = Outcome::noChangeNeeded;
     Evidence evidence = Evidence::weak;
+    // True when nothing was measured as a problem for this goal but a small, reversible move may still be to
+    // taste. Such a recommendation is always weak evidence, is labelled as optional, and is never presented as a fix.
+    bool optional = false;
 
     std::string headline;
     std::vector<std::string> measurements;

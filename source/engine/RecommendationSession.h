@@ -13,10 +13,9 @@ public:
     explicit RecommendationSession (PluginProcessor& p) : processor (p) {}
 
     // Analyzes the most recent audio (up to `seconds`) and computes a recommendation. No parameters change.
-    void analyse (Goal goal, Source source, float intensity01, float seconds = 10.0f)
+    void analyse (Goal goal, Source source, float intensity01, float seconds = 8.0f)
     {
-        processor.pumpAnalysis();
-        features = processor.analyzer.analyseRecent (seconds);
+        features = processor.analyseRecentInput (seconds);
         recommendation = advise (goal, source, intensity01, features, processor.getParamValues());
         snapshot.clear();
         state = State::ready;

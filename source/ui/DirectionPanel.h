@@ -203,6 +203,16 @@ public:
         repaint();
     }
 
+    // Seconds of audible input captured so far (drives the "heard N s" hint above the Analyze button).
+    void setHeardSeconds (float seconds)
+    {
+        if (std::abs (seconds - heardSeconds) > 0.05f)
+        {
+            heardSeconds = seconds;
+            repaint (0, analyseButton.getY() - 26, getWidth(), 24);
+        }
+    }
+
     void setAnalysing (bool busy)
     {
         analyseButton.setButtonText (busy ? "Listening to your signal..." : "Analyze & suggest");
@@ -230,9 +240,16 @@ public:
         g.setFont (Theme::mono (11.0f));
         g.drawText (juce::String ((int) std::lround (v * 100.0f)) + "%", intensityBox.getRight() - 52, intensityBox.getY(), 40, intensityBox.getHeight(), juce::Justification::centredRight, false);
 
+        const bool ready = heardSeconds >= 2.0f;
+        g.setColour (ready ? Theme::accent : Theme::amber);
+        g.setFont (Theme::mono (9.5f));
+        g.drawText (ready ? "Heard " + juce::String (heardSeconds, 1) + " s of your audio - ready to analyze"
+                          : (heardSeconds > 0.0f ? "Heard " + juce::String (heardSeconds, 1) + " s - keep playing for a better read"
+                                                 : "No audio heard yet - press play in your DAW"),
+                    0, analyseButton.getY() - 22, getWidth(), 14, juce::Justification::centred, false);
         g.setColour (juce::Colour (0xff5f6c6f));
         g.setFont (Theme::sans (10.0f));
-        g.drawText ("Play the loudest section of your track for the most useful result.", 0, analyseButton.getBottom() + 8, getWidth(), 14, juce::Justification::centred, false);
+        g.drawText ("Tip: play the loudest, busiest section. It keeps the last few seconds, even after you stop.", 0, analyseButton.getBottom() + 8, getWidth(), 14, juce::Justification::centred, false);
     }
 
     void resized() override
@@ -246,7 +263,7 @@ public:
         const int gridBottom = gridTop + 5 * cardH + 4 * vgap;
         intensityBox = { pad, gridBottom + 14, getWidth() - 2 * pad, 50 };
         intensitySlider.setBounds (intensityBox.getX() + 104, intensityBox.getY() + 7, intensityBox.getWidth() - 104 - 58, 36);
-        analyseButton.setBounds (pad, intensityBox.getBottom() + 14, getWidth() - 2 * pad, 42);
+        analyseButton.setBounds (pad, intensityBox.getBottom() + 36, getWidth() - 2 * pad, 42);
     }
 
 private:
@@ -273,4 +290,5 @@ private:
     IntensityLookAndFeel sliderLnf;
     DesignButton analyseButton { "Analyze & suggest", DesignButton::Style::primary };
     juce::Rectangle<int> intensityBox;
+    float heardSeconds = 0.0f;
 };

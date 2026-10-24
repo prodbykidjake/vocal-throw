@@ -11,6 +11,7 @@ inline constexpr auto inputGain = "inputGain";
 inline constexpr auto outputGain = "outputGain";
 inline constexpr auto bypass = "bypass";
 inline constexpr auto loudnessMatch = "loudnessMatch";
+inline constexpr auto autoGain = "autoGain";
 
 // equalizer: high-pass + 4 bands (1 low shelf, 2 and 3 bells, 4 high shelf)
 inline constexpr auto eqEnable = "eqEnable";
@@ -90,6 +91,7 @@ inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     addFloat (ParamIDs::outputGain, "Output Gain", gainRange, "dB");
     addBool (ParamIDs::bypass, "Bypass", false);
     addBool (ParamIDs::loudnessMatch, "Match Loudness On Bypass", false);
+    addBool (ParamIDs::autoGain, "Auto Level Match", true);
 
     addBool (ParamIDs::eqEnable, "EQ Enable", true);
     addBool (ParamIDs::eqHpEnable, "EQ High-Pass Enable", false);

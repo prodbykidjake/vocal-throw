@@ -128,7 +128,6 @@ public:
     // One UI tick: pull meters and analysis audio, update the live displays.
     void tick()
     {
-        processor.pumpAnalysis();
         auto& m = processor.inputMeter;
         const bool stereo = processor.getTotalNumInputChannels() > 1;
         const auto db = [] (float lin) { return juce::Decibels::gainToDecibels (lin, -100.0f); };
@@ -213,6 +212,7 @@ public:
             live.noteTitle = "Healthy input level";
             live.noteBody = "Peaks reach " + Theme::dbText (peak3s) + " dBFS: good headroom and no detected clipping.";
         }
+        direction.setHeardSeconds ((float) std::min<double> ((double) processor.captureRing.totalWritten() / live.sampleRate, 8.0));
         analysis.setLive (std::move (live));
         modeBar.setLive (signal, signal ? "LIVE INPUT" : "NO SIGNAL");
         chain.refreshLive();

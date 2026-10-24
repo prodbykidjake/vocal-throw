@@ -217,6 +217,7 @@ struct Ctx
     Balance bal;
     Builder& b;
     Recommendation& rec;
+    bool tasteOk = true; // false when the measurements argue against any move in this goal's direction
 
     void measure (const std::string& s) { rec.measurements.push_back (s); }
     void interpret (const std::string& s) { rec.interpretations.push_back (s); }
@@ -262,6 +263,7 @@ void warmth (Ctx& c)
     c.measure (versus (c.bal.upperMid, "2-5 kHz", c.source));
     if (c.bal.lowMid > kTol)
     {
+        c.tasteOk = false;
         c.interpret ("The low-mids are already full; adding more risks muddiness.");
         c.rec.rationale = "This signal already has plenty of low-mid weight, so warmth is not limited by the tonal balance.";
         c.rec.alternatives.push_back ("If it still feels cold, try the saturator at a low mix and compare at matched loudness.");
@@ -291,6 +293,7 @@ void punch (Ctx& c)
     c.measure ("Level rises up to " + num (c.f.onsetStrengthDb) + " dB per 10 ms at note onsets.");
     if (c.f.crestDb < 8.0f)
     {
+        c.tasteOk = false;
         c.interpret ("A low crest factor means the peaks are already close to the average level. That can come from compression or from a sustained source.");
         c.rec.rationale = "Peaks are already close to the average level, so more compression would reduce punch rather than add it.";
         c.rec.alternatives.push_back ("Try transient emphasis on a drum bus, or a short parallel-compressed copy, if you want more snap.");
@@ -327,6 +330,7 @@ void presence (Ctx& c)
         c.measure ("There is a narrow peak near " + hz (res.freq) + " (" + num (res.prominenceDb) + " dB above its surroundings).");
     if (c.bal.upperMid > kTol)
     {
+        c.tasteOk = false;
         c.interpret ("The upper-mids are already prominent.");
         c.rec.rationale = "This signal is already forward in the presence region; boosting would more likely cause harshness than presence.";
         c.rec.alternatives.push_back ("If it still sits back in the mix, check level and the other tracks competing at 2-5 kHz.");
@@ -334,6 +338,7 @@ void presence (Ctx& c)
     }
     if (res.prominenceDb >= 6.0f)
     {
+        c.tasteOk = false;
         c.interpret ("A broad boost would also lift that narrow peak, which could sound harsh.");
         c.rec.rationale = "Boosting presence would emphasise the narrow peak near " + hz (res.freq) + ". Try the Reduced harshness goal first.";
         return;
@@ -359,6 +364,7 @@ void density (Ctx& c)
     c.measure ("Level varies by " + num (c.f.dynamicRangeDb) + " dB between quiet and loud passages.");
     if (c.f.dynamicRangeDb < 5.0f && c.f.crestDb < 9.0f)
     {
+        c.tasteOk = false;
         c.interpret ("Level is already steady and peaks are modest, so the signal is already dense.");
         c.rec.rationale = "This signal is already fairly dense. More compression would mostly add pumping.";
         c.rec.alternatives.push_back ("Light parallel saturation can add perceived density without more compression.");
@@ -405,12 +411,14 @@ void brightness (Ctx& c)
     if (c.f.clippingEvents > 2)
     {
         c.measure ("Clipping was detected (" + std::to_string (c.f.clippingEvents) + " events).");
+        c.tasteOk = false;
         c.interpret ("Boosting highs on clipped audio makes the distortion more audible.");
         c.rec.rationale = "Clipping is present, so a high-frequency boost would exaggerate it. Lower the source level or fix the clipping first.";
         return;
     }
     if (dHi > kTol || c.bal.upperMid > kTol + 1.0f)
     {
+        c.tasteOk = false;
         c.interpret ("The highs are already strong for this source.");
         c.rec.rationale = "There is no measured shortage of high-frequency energy, so a boost is unlikely to help.";
         return;
@@ -436,6 +444,7 @@ void body (Ctx& c)
     const auto lean = std::max (-c.bal.bass, -c.bal.lowMid);
     if (c.bal.bass > kTol || c.bal.lowMid > kTol)
     {
+        c.tasteOk = false;
         c.interpret ("There is already substantial low-end energy for this source.");
         c.rec.rationale = "Body is unlikely to be limited by the tonal balance here. More low end could sound boomy or muddy.";
         c.rec.alternatives.push_back ("If it still sounds thin in the mix, check for high-pass filtering on the track or masking from other low instruments.");
@@ -461,6 +470,7 @@ void dynamicControl (Ctx& c)
     c.measure ("Crest factor is " + num (c.f.crestDb) + " dB.");
     if (c.f.dynamicRangeDb < 6.0f && c.f.crestDb < 12.0f)
     {
+        c.tasteOk = false;
         c.interpret ("The level is already fairly consistent.");
         c.rec.rationale = "There is little level variation to control, so compression would mostly change the character.";
         c.rec.alternatives.push_back ("If one note or word still jumps out, try clip gain or automation instead.");
@@ -499,6 +509,30 @@ void reducedHarshness (Ctx& c)
         c.interpret ("No resonance stands out and the upper-mid balance is typical.");
         c.rec.rationale = "The measurements do not show a harsh region, so I will not cut anything. If it still sounds harsh to you, it may be distortion or the playback chain.";
         c.rec.alternatives.push_back ("Sweep a narrow EQ boost through 2-8 kHz to find the offending frequency by ear, then cut it.");
+    }
+}
+
+// A small, reversible move that is purely a matter of taste (used only when nothing was measured as a problem and
+// the measurements do not argue against it). Always scaled by the intensity and clearly labelled optional.
+void tasteMove (Ctx& c, Goal goal)
+{
+    const float i = c.i;
+    switch (goal)
+    {
+        case Goal::clarity: c.b.addEq (1, 300.0f, -3.0f * i, 1.0f, "Gentle low-mid trim"); break;
+        case Goal::warmth:
+            c.b.addEq (1, 250.0f, 2.4f * i, 0.7f, "Soft low-mid warmth");
+            if (c.f.clippingEvents == 0)
+                c.b.addSaturation (1.5f + 2.0f * i, 25.0f, "Light harmonic weight");
+            break;
+        case Goal::punch: c.b.addCompressor (2.5f, 25.0f, 120.0f, 3.0f, 1.5f + 1.5f * i, c.f, "Slow-attack compression"); break;
+        case Goal::presence: c.b.addEq (2, c.source == Source::vocal ? 3500.0f : 3200.0f, 2.4f * i, 0.9f, "Soft presence lift"); break;
+        case Goal::density: c.b.addCompressor (2.0f, 12.0f, 150.0f, 6.0f, 1.5f + 1.0f * i, c.f, "Gentle thickening"); break;
+        case Goal::smoothness: c.b.addEq (3, 7000.0f, -2.0f * i, 0.7f, "Soft top-end ease"); break;
+        case Goal::brightness: c.b.addEq (3, 8000.0f, 2.4f * i, 0.7f, "Soft air lift"); break;
+        case Goal::body: c.b.addEq (0, 120.0f, 2.4f * i, 0.7f, "Soft low-end weight"); break;
+        case Goal::dynamicControl: c.b.addCompressor (2.5f, 15.0f, 150.0f, 6.0f, 2.0f + 1.0f * i, c.f, "Light level control"); break;
+        case Goal::reducedHarshness: c.b.addEq (2, 4000.0f, -1.8f * i, 0.9f, "Gentle upper-mid ease"); break;
     }
 }
 
@@ -589,6 +623,24 @@ Recommendation advise (Goal goal, Source source, float intensity01, const Featur
     if (features.clippingEvents > 2 && goal != Goal::brightness)
         rec.measurements.push_back ("Clipping was detected (" + std::to_string (features.clippingEvents) + " events). Processing cannot repair clipped audio.");
 
+    // Nothing measured as a problem: offer a small taste move (clearly labelled, weak evidence) rather than a dead end,
+    // unless the measurements argue against moving in this goal's direction.
+    if (rec.changes.empty() && ctx.tasteOk)
+    {
+        const auto measuredReason = rec.rationale;
+        tasteMove (ctx, goal);
+        if (! rec.changes.empty())
+        {
+            rec.optional = true;
+            rec.evidence = Evidence::weak;
+            rec.manualSteps.insert (rec.manualSteps.begin(), "This is optional: nothing here measures as a problem, so judge it by ear.");
+            if (! measuredReason.empty())
+                rec.interpretations.insert (rec.interpretations.begin(), measuredReason);
+            rec.rationale = "Nothing measures as a problem for this goal, so this is an optional taste move, not a fix. Preview it and keep it only if you like it.";
+            rec.alternatives.clear();
+        }
+    }
+
     enforceLimits (rec);
 
     if (rec.changes.empty())
@@ -605,7 +657,8 @@ Recommendation advise (Goal goal, Source source, float intensity01, const Featur
     else
     {
         rec.outcome = Outcome::suggested;
-        rec.headline = rec.changes.size() == 1 ? rec.changes.front().title : std::string (goalName (goal)) + ": a focused starting point";
+        rec.headline = rec.optional ? std::string (goalName (goal)) + ": an optional starting point"
+                                    : (rec.changes.size() == 1 ? rec.changes.front().title : std::string (goalName (goal)) + ": a focused starting point");
     }
     return rec;
 }

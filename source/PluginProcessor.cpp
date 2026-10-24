@@ -23,6 +23,7 @@ PluginProcessor::PluginProcessor()
     h.outputGain = raw (ParamIDs::outputGain);
     h.bypass = raw (ParamIDs::bypass);
     h.loudnessMatch = raw (ParamIDs::loudnessMatch);
+    h.autoGain = raw (ParamIDs::autoGain);
     h.eqEnable = raw (ParamIDs::eqEnable);
     h.eqHpEnable = raw (ParamIDs::eqHpEnable);
     h.eqHpFreq = raw (ParamIDs::eqHpFreq);
@@ -130,12 +131,17 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     outputMeter.prepare (sampleRate);
     inputLoudness.prepare (sampleRate);
     outputLoudness.prepare (sampleRate);
+    afterInputLoudness.prepare (sampleRate);
+    afterModulesLoudness.prepare (sampleRate);
 
     wetMix.reset (sampleRate, 0.01);
     wetMix.setCurrentAndTargetValue (h.bypass->load() > 0.5f ? 0.0f : 1.0f);
     matchGain.reset (sampleRate, 0.05);
     matchGain.setCurrentAndTargetValue (1.0f);
     loudnessOffsetDb.store (0.0f);
+    moduleOffsetDb.store (0.0f);
+    autoTrim.reset (sampleRate, 0.4);
+    autoTrim.setCurrentAndTargetValue (1.0f);
 }
 
 void PluginProcessor::releaseResources()
@@ -198,7 +204,7 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     inputMeter.process (buffer, numChannels);
     inputLoudness.process (buffer, numChannels);
-    captureFifo.push (buffer, numChannels);
+    captureRing.push (buffer, numChannels);
 
     wetMix.setTargetValue (h.bypass->load() > 0.5f ? 0.0f : 1.0f);
     chain.setParams (readParams());
@@ -246,12 +252,50 @@ void PluginProcessor::processChunk (juce::AudioBuffer<float>& buffer, int start,
         for (int ch = 0; ch < numChannels; ++ch)
             dryBuffer.copyFrom (ch, 0, buffer, ch, start, numSamples);
 
-    chain.process (buffer, numChannels, start, numSamples);
+    juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), numChannels, start, numSamples); // non-owning window, no allocation
 
-    // Learn how much louder/quieter the chain makes the signal, so bypass can be level-matched.
+    chain.processInput (buffer, numChannels, start, numSamples);
+    afterInputLoudness.process (view, numChannels);
+    chain.processModules (buffer, numChannels, start, numSamples);
+    afterModulesLoudness.process (view, numChannels);
+
+    // Auto level match: measure what the EQ/compressor/saturation did to the loudness and cancel it, so the
+    // processed sound is judged on tone and dynamics rather than on being louder or quieter.
     if (! bypassTarget)
     {
-        outputLoudness.process (juce::AudioBuffer<float> (buffer.getArrayOfWritePointers(), numChannels, start, numSamples), numChannels);
+        const auto in = afterInputLoudness.getLufs(), out = afterModulesLoudness.getLufs();
+        if (in > -70.0f && out > -70.0f) // hold the last estimate through silence
+            moduleOffsetDb.store (juce::jlimit (-12.0f, 12.0f, out - in), std::memory_order_relaxed);
+    }
+    float blockPeak = 0.0f;
+    for (int ch = 0; ch < numChannels; ++ch)
+        blockPeak = std::max (blockPeak, buffer.getMagnitude (ch, start, numSamples));
+    modulePeakHold = std::max (blockPeak, modulePeakHold * std::exp (-(float) numSamples / (float) (1.5 * currentSampleRate)));
+
+    // Compensation may turn the level down freely, but may only turn it up while peaks stay below -0.5 dBFS, so
+    // compensating a compressor on hot material can never push the output into clipping. The cap reacts instantly
+    // to a louder peak and recovers slowly (like a very gentle limiter on the boost only).
+    const float cap = std::max (1.0f, 0.944f / std::max (modulePeakHold, 1.0e-6f));
+    trimCap = cap < trimCap ? cap : trimCap + (cap - trimCap) * (1.0f - std::exp (-(float) numSamples / (float) (0.3 * currentSampleRate)));
+
+    const auto trimDb = -moduleOffsetDb.load (std::memory_order_relaxed);
+    const bool autoOn = h.autoGain->load (std::memory_order_relaxed) > 0.5f;
+    autoTrim.setTargetValue (autoOn ? juce::Decibels::decibelsToGain (trimDb) : 1.0f);
+    if (autoTrim.isSmoothing() || ! juce::exactlyEqual (autoTrim.getTargetValue(), 1.0f))
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const auto g = std::min (autoTrim.getNextValue(), trimCap);
+            for (int ch = 0; ch < numChannels; ++ch)
+                buffer.getWritePointer (ch, start)[i] *= g;
+        }
+    }
+    chain.processOutput (buffer, numChannels, start, numSamples);
+
+    // Learn how much louder/quieter the whole plugin makes the signal, so bypass can be level-matched.
+    if (! bypassTarget)
+    {
+        outputLoudness.process (view, numChannels);
         const auto in = inputLoudness.getLufs(), out = outputLoudness.getLufs();
         if (in > -70.0f && out > -70.0f)
             loudnessOffsetDb.store (juce::jlimit (-12.0f, 12.0f, out - in), std::memory_order_relaxed);
@@ -307,7 +351,7 @@ std::map<std::string, float> PluginProcessor::getParamValues() const
 {
     std::map<std::string, float> out;
     for (const auto& [id, raw] : rawParams)
-        if (id != ParamIDs::bypass && id != ParamIDs::loudnessMatch) // presets and A/B never carry these
+        if (id != ParamIDs::bypass && id != ParamIDs::loudnessMatch && id != ParamIDs::autoGain) // global settings: presets and A/B never carry these
             out[id] = raw->load();
     return out;
 }
@@ -326,6 +370,31 @@ void PluginProcessor::setParamValues (const std::map<std::string, float>& values
             auto treeValue = apvts.getParameterAsValue (id);
             treeValue.setValue (p->convertFrom0to1 (p->convertTo0to1 (value))); // clamps and snaps to the parameter's range
         }
+}
+
+void PluginProcessor::setHearOriginal (bool on)
+{
+    if (on == hearingOriginal)
+        return;
+    auto setBool = [this] (const char* id, bool v) {
+        auto* p = apvts.getParameter (id);
+        p->beginChangeGesture();
+        p->setValueNotifyingHost (v ? 1.0f : 0.0f);
+        p->endChangeGesture();
+    };
+    if (on)
+    {
+        previousBypass = h.bypass->load() > 0.5f;
+        previousMatch = h.loudnessMatch->load() > 0.5f;
+        setBool (ParamIDs::loudnessMatch, true);
+        setBool (ParamIDs::bypass, true);
+    }
+    else
+    {
+        setBool (ParamIDs::bypass, previousBypass);
+        setBool (ParamIDs::loudnessMatch, previousMatch);
+    }
+    hearingOriginal = on;
 }
 
 void PluginProcessor::switchABSlot()

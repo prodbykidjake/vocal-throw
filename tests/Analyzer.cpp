@@ -114,21 +114,37 @@ TEST_CASE ("Analyzer reads dynamics and onsets", "[analysis]")
     CHECK (f.crestDb > 8.0f);
 }
 
-TEST_CASE ("Rolling history analyses what the audio thread captured", "[analysis]")
+TEST_CASE ("Capture ring keeps the last audible audio and skips silence", "[analysis]")
 {
-    CaptureFifo fifo;
-    SignalAnalyzer analyzer;
-    auto b = test::sine (2, 480, fs, 1000.0, 0.5f);
-    for (int i = 0; i < 400; ++i) // 4 s
-    {
-        fifo.push (b, 2);
-        analyzer.drain (fifo, fs);
-    }
-    const auto f = analyzer.analyseRecent (3.0f);
+    CaptureRing ring;
+    auto tone = test::sine (2, 480, fs, 1000.0, 0.5f);
+    for (int i = 0; i < 400; ++i) // 4 s of signal
+        ring.push (tone, 2);
+    juce::AudioBuffer<float> silence (2, 480);
+    silence.clear();
+    for (int i = 0; i < 4000; ++i) // 40 s of silence afterwards: must not push the signal out of the ring
+        ring.push (silence, 2);
+
+    const auto f = SignalAnalyzer::analyseRecent (ring, fs, 3.0f);
     REQUIRE (f.valid);
     CHECK (f.peakDb == Approx (-6.02f).margin (0.1f));
     CHECK (f.analysedSeconds == Approx (3.0f).margin (0.01f));
 
-    analyzer.clear();
-    CHECK_FALSE (analyzer.analyseRecent (3.0f).valid);
+    CaptureRing empty;
+    CHECK_FALSE (SignalAnalyzer::analyseRecent (empty, fs, 3.0f).valid);
+}
+
+TEST_CASE ("Capture ring survives being lapped many times", "[analysis]")
+{
+    CaptureRing ring;
+    auto tone = test::sine (2, 480, fs, 440.0, 0.4f);
+    for (int i = 0; i < 5000; ++i) // ~50 s, ring holds ~11 s
+        ring.push (tone, 2);
+    std::vector<float> l (390000), r (390000);
+    const int n = ring.copyRecent (l.data(), r.data(), 390000);
+    CHECK (n == 390000);
+    float peak = 0;
+    for (int i = 0; i < n; ++i)
+        peak = std::max (peak, std::abs (l[(size_t) i]));
+    CHECK (peak == Approx (0.4f).margin (0.01f));
 }

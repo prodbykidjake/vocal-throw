@@ -42,9 +42,17 @@ Design decisions that matter:
 * **Zero latency.** No look-ahead, no oversampling. Bypass crossfades dry/wet (10 ms) and is bit-exact once settled.
 * **The advisor says "no" by default.** It returns "no change" when measurements don't show a need, and never
   overrides a compressor/saturator/EQ band the user is already using.
-* **Loudness-matched comparison**: while the chain is active the plugin measures K-weighted loudness in and out;
-  with *Match loudness when bypassed* on, the original is played at the processed loudness so A/B is level-fair.
-  This is off by default because it makes bypass non-transparent.
+* **Auto level match (on by default)**: K-weighted loudness is measured before and after the EQ/compressor/saturation
+  and the difference is cancelled with a slow (~1.5 s) trim, so processing is judged on tone and dynamics, not on being
+  louder or quieter. Found by the audio lab: without it the presets and compression goals came out 3 to 9 LU quieter,
+  which loses every A/B. The compensation can turn level down freely but may only turn it up while peaks stay below
+  -0.5 dBFS (instant cap), so it can never push a hot track into clipping; very hot, peaky material may therefore come out
+  up to ~2 LU quieter. The user's own Input/Output gain is never compensated.
+* **Hear original**: one click switches to the bypassed signal, level-matched, and a second click restores exactly the
+  previous bypass/match settings. *Match loudness when bypassed* (Settings) does the same for the host bypass button;
+  it is off by default because it makes bypass non-transparent.
+* **Analysis hears the audio even if the editor was closed or playback stopped**: the audio thread records the last
+  ~8-10 s of *audible* input (blocks below -75 dBFS are skipped) into a lock-free ring; Analyze snapshots it.
 
 ## 3. Goals (spec section 9)
 
@@ -68,14 +76,18 @@ evidence beyond 3 dB. Evaluation column = what the automated tests check; listen
 | Reduced harshness | Less edge | strongest narrow peak in 2-8 kHz (above both neighbourhoods); upper-mid level | EQ bell 3 at the measured frequency | cut <= 5 dB, Q 2.5 (broad variant Q 0.8, <= 3 dB) | No peak >= 4 dB and upper-mids typical | A peak can be harsh or just a held note |
 
 Evidence levels (not a probability): strong = two independent measurements beyond threshold or one far beyond;
-moderate = one beyond threshold; weak = none, and weak never changes anything. The UI does not show a confidence
-percentage because none has been validated.
+moderate = one beyond threshold; weak = none. A measured recommendation always has moderate or strong evidence.
+When nothing measures as a problem the advisor offers at most a small **optional taste move**: labelled "optional",
+weak evidence, scaled by intensity, previewable and undoable, and **not offered at all** when the measurements argue
+against it (e.g. compressing already-compact audio, boosting highs on clipped audio, adding low-mids to a full signal).
+The UI does not show a confidence percentage because none has been validated.
 
 ## 4. Status
 
 | Area | Status |
 |---|---|
 | Audio path: gain, bypass (crossfaded, bit-exact), EQ, compressor, saturator, meters, loudness | **Implemented and unit-tested** |
+| Compressor detector | **Fixed after measurement**: the first detector followed the rectified waveform and added -42 dB THD at 60 Hz (10/100 ms) and -19 dB with fast settings. It is now a held peak detector (14 ms hold): < -80 dB THD at every tested note/attack/release, at the cost of ~14 ms added to the release start |
 | Saturator anti-aliasing | **Partial**: first-order ADAA (~6 dB better than plain tanh). Still audible alias at extreme drive on bright sources (measured: -55 dB @ 3 dB drive, -17.8 dB @ 24 dB drive for a 5.1 kHz sine, re fundamental). Oversampling needs latency compensation and is a tracked upgrade |
 | Analysis + 10-goal advisor | **Implemented and tested** with synthetic signals and a randomized property test; **not validated on real music** |
 | Undo/redo, A/B, presets (5 factory + user), session save/restore | **Implemented and tested** |
@@ -91,9 +103,16 @@ percentage because none has been validated.
 
 ## 5. Testing (what I actually ran)
 
+**Audio lab** (`tests/lab/Lab.cpp`, hidden test tag `[.lab]`): synthetic sung phrase (moving formants, vibrato, phrase
+dynamics, breath noise) at three levels plus a drum loop go through the real plugin for every factory preset and every
+goal; it prints loudness / peak / crest change, DC and click metrics and renders dry/wet/difference spectrograms and
+dry WAVs (`SIGNALPATH_LAB_DIR=dir ./Builds/Tests "[.lab]"`). It found the loudness drop, the capture overflow and the
+compressor distortion. It is synthetic material: it proves the processing is well-behaved, not that it sounds good.
+
+
 Linux, GCC, JUCE 9.0.1:
 
-* `Tests`: 57 test cases, ~1.9 million assertions, all passing in Debug and Release. Covers: filter responses at
+* `Tests`: 64 test cases, ~1.9 million assertions, all passing with GCC (Debug and Release) and Clang Release (the macOS toolchain). Covers: filter responses at
   44.1/48/96/192 kHz, stability fuzzing of every module and of the whole plugin, compressor static curve and
   attack/release timing, saturator level compensation and measured aliasing, meters and K-weighted loudness
   calibration, analyzer on known signals, advisor rules + safety-bound property test + end-to-end

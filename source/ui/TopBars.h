@@ -254,6 +254,8 @@ private:
         juce::PopupMenu m;
         const bool match = processor.apvts.getRawParameterValue (ParamIDs::loudnessMatch)->load() > 0.5f;
         const bool autoApply = (bool) processor.apvts.state.getProperty (PluginProcessor::autoApply_, false);
+        const bool autoGain = processor.apvts.getRawParameterValue (ParamIDs::autoGain)->load() > 0.5f;
+        m.addItem (4, "Auto level match (keep loudness constant)", true, autoGain);
         m.addItem (1, "Match loudness when bypassed", true, match);
         m.addItem (2, "Automatic mode: apply suggestions immediately", true, autoApply);
         m.addSeparator();
@@ -268,6 +270,11 @@ private:
                 processor.apvts.state.setProperty (PluginProcessor::autoApply_, ! (bool) processor.apvts.state.getProperty (PluginProcessor::autoApply_, false), nullptr);
             else if (r == 3)
                 processor.undoManager.clearUndoHistory();
+            else if (r == 4)
+            {
+                auto* p = processor.apvts.getParameter (ParamIDs::autoGain);
+                p->setValueNotifyingHost (p->getValue() > 0.5f ? 0.0f : 1.0f);
+            }
             if (r != 0)
             {
                 if (onSettingsChanged)

@@ -68,17 +68,34 @@ public:
         comp.reset();
     }
 
-    // numSamples must not exceed the maxBlockSize given to prepare().
-    void process (juce::AudioBuffer<float>& buffer, int numChannels, int start, int numSamples)
+    // The chain is exposed in three stages so the processor can measure loudness between them
+    // (auto level match compares "after input gain" with "after the modules"). numSamples must not exceed
+    // the maxBlockSize given to prepare().
+    void processInput (juce::AudioBuffer<float>& buffer, int numChannels, int start, int numSamples)
     {
         inputGain.process (buffer, numChannels, start, numSamples);
+    }
+
+    void processModules (juce::AudioBuffer<float>& buffer, int numChannels, int start, int numSamples)
+    {
         blended (eqMix, params.eqEnabled, buffer, numChannels, start, numSamples,
                  [this] (auto& b, int c, int s, int n) { eq.process (b, c, s, n); }, [this] { eq.reset(); });
         blended (compMix, params.compEnabled, buffer, numChannels, start, numSamples,
                  [this] (auto& b, int c, int s, int n) { comp.process (b, c, s, n); }, [this] { comp.reset(); });
         blended (satMix, params.satEnabled, buffer, numChannels, start, numSamples,
                  [this] (auto& b, int c, int s, int n) { sat.process (b, c, s, n); }, [] {});
+    }
+
+    void processOutput (juce::AudioBuffer<float>& buffer, int numChannels, int start, int numSamples)
+    {
         outputGain.process (buffer, numChannels, start, numSamples);
+    }
+
+    void process (juce::AudioBuffer<float>& buffer, int numChannels, int start, int numSamples)
+    {
+        processInput (buffer, numChannels, start, numSamples);
+        processModules (buffer, numChannels, start, numSamples);
+        processOutput (buffer, numChannels, start, numSamples);
     }
 
     float getGainReductionDb() const { return params.compEnabled ? comp.getGainReductionDb() : 0.0f; }

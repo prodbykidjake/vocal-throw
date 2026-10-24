@@ -104,18 +104,42 @@ TEST_CASE ("Advisor refuses to guess without enough signal", "[advisor]")
     }
 }
 
-TEST_CASE ("Advisor makes no change on a typical signal", "[advisor]")
+TEST_CASE ("On a typical signal the advisor never claims a measured problem", "[advisor]")
 {
     const auto cur = defaults();
+    int optionalCount = 0, noneCount = 0;
     for (auto s : allSources)
         for (auto g : allGoals)
         {
             const auto r = advise (g, s, 0.7f, makeFeatures (s), cur);
             CAPTURE (goalName (g), sourceName (s));
-            CHECK (r.outcome == Outcome::noChangeNeeded);
-            CHECK (r.changes.empty());
-            CHECK_FALSE (r.rationale.empty()); // always explains why nothing happened
+            REQUIRE (r.outcome != Outcome::insufficientSignal);
+            CHECK_FALSE (r.rationale.empty()); // always explains itself
+            if (r.outcome == Outcome::suggested)
+            {
+                // the only thing it may offer is a clearly labelled, weak-evidence taste move
+                CHECK (r.optional);
+                CHECK (r.evidence == Evidence::weak);
+                CHECK (r.headline.find ("optional") != std::string::npos);
+                CHECK (r.rationale.find ("optional") != std::string::npos);
+                ++optionalCount;
+            }
+            else
+            {
+                CHECK (r.changes.empty());
+                ++noneCount;
+            }
         }
+    CHECK (optionalCount > 20); // beginners are not left with a dead end...
+    CHECK (noneCount > 5);      // ...but goals the measurements argue against (e.g. compressing already-compact audio) stay at "no change"
+}
+
+TEST_CASE ("Dynamics goals never compress already-compact audio, even as an optional move", "[advisor]")
+{
+    const auto cur = defaults();
+    const auto compact = makeFeatures (Source::vocal); // crest 7 dB, range 4 dB
+    for (auto g : { Goal::punch, Goal::density, Goal::dynamicControl })
+        CHECK (advise (g, Source::vocal, 0.8f, compact, cur).changes.empty());
 }
 
 TEST_CASE ("Clarity cuts excess low-mids and scales with intensity", "[advisor]")
@@ -148,10 +172,10 @@ TEST_CASE ("Warmth adds low-mid weight only when the low-mids are lean", "[advis
     const auto full = advise (Goal::warmth, Source::vocal, 0.6f, makeFeatures (Source::vocal, { 0, 8, 0, 0, 0, 0 }), cur);
     CHECK (full.outcome == Outcome::noChangeNeeded);
 
-    // not blindly applied to everything: a typical signal gets alternatives, not changes
+    // not presented as a fix: a typical signal gets only a labelled optional move
     const auto typical = advise (Goal::warmth, Source::vocal, 0.6f, makeFeatures (Source::vocal), cur);
-    CHECK (typical.changes.empty());
-    CHECK_FALSE (typical.alternatives.empty());
+    CHECK (typical.optional);
+    CHECK (typical.evidence == Evidence::weak);
 }
 
 TEST_CASE ("Punch compresses only peaky material and never already-squashed material", "[advisor]")
@@ -243,7 +267,8 @@ TEST_CASE ("Reduced harshness targets the measured resonance", "[advisor]")
     // a peak outside 2-8 kHz is not "harshness"
     auto other = makeFeatures (Source::vocal);
     other.bandDb[(size_t) bandNear (1000.0f)] += 12.0f;
-    CHECK (advise (Goal::reducedHarshness, Source::vocal, 0.6f, other, cur).changes.empty());
+    const auto notHarsh = advise (Goal::reducedHarshness, Source::vocal, 0.6f, other, cur);
+    CHECK (notHarsh.optional); // nothing measured: only a labelled taste move, not a measured cut
 }
 
 TEST_CASE ("Advisor respects what the user has already set", "[advisor]")
@@ -316,7 +341,7 @@ TEST_CASE ("Advisor output is always inside the safety limits (property test)", 
         {
             ++suggested;
             REQUIRE_FALSE (r.changes.empty());
-            REQUIRE (r.evidence != Evidence::weak);
+            REQUIRE ((r.optional ? r.evidence == Evidence::weak : r.evidence != Evidence::weak));
             REQUIRE_FALSE (r.manualSteps.empty());
         }
         else
