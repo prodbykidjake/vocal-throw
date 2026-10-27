@@ -1,4 +1,4 @@
-name: Pamplejuce
+name: Stack Buddy
 
 on:
   workflow_dispatch: # lets you run a build from the UI
@@ -34,20 +34,22 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false # show all errors for each platform (vs. cancel jobs on error)
+      # macOS only for now (Logic). Linux and Windows are commented out; uncomment them
+      # (and the signing/installer steps further down) when you're ready to ship there.
       matrix:
         include:
-          - name: Linux
-            os: ubuntu-22.04
-            pluginval-binary: ./pluginval
-            extra-flags: -G Ninja -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld
+#           - name: Linux
+#             os: ubuntu-22.04
+#             pluginval-binary: ./pluginval
+#             extra-flags: -G Ninja -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld
           - name: macOS
             os: macos-14
             pluginval-binary: pluginval.app/Contents/MacOS/pluginval
             extra-flags: -G Ninja -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
-          - name: Windows
-            os: windows-latest
-            pluginval-binary: ./pluginval.exe
-            extra-flags: -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+#           - name: Windows
+#             os: windows-latest
+#             pluginval-binary: ./pluginval.exe
+#             extra-flags: -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
 
     steps:
       # Setup MSVC toolchain and developer command prompt (Windows)
@@ -123,122 +125,122 @@ jobs:
           7z x pluginval_${{ runner.os }}.zip
           ${{ matrix.pluginval-binary }} --strictness-level 10 --verbose --validate "${{ env.VST3_PATH }}"
 
-      - name: Import Certificates (macOS)
-        uses: sudara/basic-macos-keychain-action@v1
-        id: keychain
-        if: ${{ runner.os == 'macOS'}}
-        with:
-          dev-id-app-cert: ${{ secrets.DEV_ID_APP_CERT }}
-          dev-id-app-password: ${{ secrets.DEV_ID_APP_PASSWORD }}
-          dev-id-installer-cert: ${{ secrets.DEV_ID_INSTALLER_CERT }}
-          dev-id-installer-password: ${{ secrets.DEV_ID_INSTALLER_PASSWORD }}
+#       - name: Import Certificates (macOS)
+#         uses: sudara/basic-macos-keychain-action@v1
+#         id: keychain
+#         if: ${{ runner.os == 'macOS'}}
+#         with:
+#           dev-id-app-cert: ${{ secrets.DEV_ID_APP_CERT }}
+#           dev-id-app-password: ${{ secrets.DEV_ID_APP_PASSWORD }}
+#           dev-id-installer-cert: ${{ secrets.DEV_ID_INSTALLER_CERT }}
+#           dev-id-installer-password: ${{ secrets.DEV_ID_INSTALLER_PASSWORD }}
 
-      - name: Codesign (macOS)
-        if: ${{ runner.os == 'macOS' }}
-        timeout-minutes: 5
-        run: |
+#       - name: Codesign (macOS)
+#         if: ${{ runner.os == 'macOS' }}
+#         timeout-minutes: 5
+#         run: |
           # Each plugin must be code signed
-          codesign --force --keychain ${{ steps.keychain.outputs.keychain-path }} -s "${{ secrets.DEVELOPER_ID_APPLICATION}}" -v "${{ env.VST3_PATH }}" --deep --strict --options=runtime --timestamp
-          codesign --force --keychain ${{ steps.keychain.outputs.keychain-path }} -s "${{ secrets.DEVELOPER_ID_APPLICATION}}" -v "${{ env.AU_PATH }}" --deep --strict --options=runtime --timestamp
-          codesign --force --keychain ${{ steps.keychain.outputs.keychain-path }} -s "${{ secrets.DEVELOPER_ID_APPLICATION}}" -v "${{ env.CLAP_PATH }}" --deep --strict --options=runtime --timestamp
-          codesign --force --keychain ${{ steps.keychain.outputs.keychain-path }} -s "${{ secrets.DEVELOPER_ID_APPLICATION}}" -v "${{ env.STANDALONE_PATH }}" --deep --strict --options=runtime --timestamp
+#           codesign --force --keychain ${{ steps.keychain.outputs.keychain-path }} -s "${{ secrets.DEVELOPER_ID_APPLICATION}}" -v "${{ env.VST3_PATH }}" --deep --strict --options=runtime --timestamp
+#           codesign --force --keychain ${{ steps.keychain.outputs.keychain-path }} -s "${{ secrets.DEVELOPER_ID_APPLICATION}}" -v "${{ env.AU_PATH }}" --deep --strict --options=runtime --timestamp
+#           codesign --force --keychain ${{ steps.keychain.outputs.keychain-path }} -s "${{ secrets.DEVELOPER_ID_APPLICATION}}" -v "${{ env.CLAP_PATH }}" --deep --strict --options=runtime --timestamp
+#           codesign --force --keychain ${{ steps.keychain.outputs.keychain-path }} -s "${{ secrets.DEVELOPER_ID_APPLICATION}}" -v "${{ env.STANDALONE_PATH }}" --deep --strict --options=runtime --timestamp
 
-      - name: Add Custom Icons (macOS)
-        if: ${{ runner.os == 'macOS' }}
-        run: |
+#       - name: Add Custom Icons (macOS)
+#         if: ${{ runner.os == 'macOS' }}
+#         run: |
           # add the icns as its own icon resource (meta!)
-          sips -i packaging/pamplejuce.icns
+#           sips -i packaging/pamplejuce.icns
 
           # Grab the resource, put in tempfile
-          DeRez -only icns packaging/pamplejuce.icns > /tmp/icons
+#           DeRez -only icns packaging/pamplejuce.icns > /tmp/icons
 
           # Stuff the resource into the strange Icon? file's resource fork
-          Rez -a /tmp/icons -o "${{ env.VST3_PATH }}/Icon"$'\r'
-          Rez -a /tmp/icons -o "${{ env.AU_PATH }}/Icon"$'\r'
-          Rez -a /tmp/icons -o "${{ env.CLAP_PATH }}/Icon"$'\r'
+#           Rez -a /tmp/icons -o "${{ env.VST3_PATH }}/Icon"$'\r'
+#           Rez -a /tmp/icons -o "${{ env.AU_PATH }}/Icon"$'\r'
+#           Rez -a /tmp/icons -o "${{ env.CLAP_PATH }}/Icon"$'\r'
 
           # Set custom icon attribute
-          SetFile -a C "${{ env.VST3_PATH }}"
-          SetFile -a C "${{ env.AU_PATH }}"
-          SetFile -a C "${{ env.CLAP_PATH }}"
+#           SetFile -a C "${{ env.VST3_PATH }}"
+#           SetFile -a C "${{ env.AU_PATH }}"
+#           SetFile -a C "${{ env.CLAP_PATH }}"
 
-      - name: pkgbuild, Productbuild and Notarize
-        if: ${{ runner.os == 'macOS' }}
-        timeout-minutes: 5
-        run: |
-          pkgbuild --identifier "${{ env.BUNDLE_ID }}.au.pkg" --version $VERSION --component "${{ env.AU_PATH }}" --install-location "/Library/Audio/Plug-Ins/Components"  "packaging/${{ env.PRODUCT_NAME }}.au.pkg"
-          pkgbuild --identifier "${{ env.BUNDLE_ID }}.vst3.pkg" --version $VERSION --component "${{ env.VST3_PATH }}" --install-location "/Library/Audio/Plug-Ins/VST3" "packaging/${{ env.PRODUCT_NAME }}.vst3.pkg"
-          pkgbuild --identifier "${{ env.BUNDLE_ID }}.clap.pkg" --version $VERSION --component "${{ env.CLAP_PATH }}" --install-location "/Library/Audio/Plug-Ins/CLAP" "packaging/${{ env.PRODUCT_NAME }}.clap.pkg"
+#       - name: pkgbuild, Productbuild and Notarize
+#         if: ${{ runner.os == 'macOS' }}
+#         timeout-minutes: 5
+#         run: |
+#           pkgbuild --identifier "${{ env.BUNDLE_ID }}.au.pkg" --version $VERSION --component "${{ env.AU_PATH }}" --install-location "/Library/Audio/Plug-Ins/Components"  "packaging/${{ env.PRODUCT_NAME }}.au.pkg"
+#           pkgbuild --identifier "${{ env.BUNDLE_ID }}.vst3.pkg" --version $VERSION --component "${{ env.VST3_PATH }}" --install-location "/Library/Audio/Plug-Ins/VST3" "packaging/${{ env.PRODUCT_NAME }}.vst3.pkg"
+#           pkgbuild --identifier "${{ env.BUNDLE_ID }}.clap.pkg" --version $VERSION --component "${{ env.CLAP_PATH }}" --install-location "/Library/Audio/Plug-Ins/CLAP" "packaging/${{ env.PRODUCT_NAME }}.clap.pkg"
 
           # Standalone is special, needs a boolean to always install in /Applications
-          pkgbuild --analyze --root "$(dirname "${{ env.STANDALONE_PATH }}")" standalone.plist
-          plutil -replace BundleIsRelocatable -bool NO standalone.plist
-          pkgbuild --identifier "${{ env.BUNDLE_ID }}.app.pkg" --version $VERSION --root "$(dirname "${{ env.STANDALONE_PATH }}")" --component-plist standalone.plist --install-location "/Applications" "packaging/${{ env.PRODUCT_NAME }}.app.pkg"
+#           pkgbuild --analyze --root "$(dirname "${{ env.STANDALONE_PATH }}")" standalone.plist
+#           plutil -replace BundleIsRelocatable -bool NO standalone.plist
+#           pkgbuild --identifier "${{ env.BUNDLE_ID }}.app.pkg" --version $VERSION --root "$(dirname "${{ env.STANDALONE_PATH }}")" --component-plist standalone.plist --install-location "/Applications" "packaging/${{ env.PRODUCT_NAME }}.app.pkg"
 
-          cd packaging
-          envsubst < distribution.xml.template > distribution.xml
-          productbuild --resources ./resources --distribution distribution.xml --sign "${{ secrets.DEVELOPER_ID_INSTALLER }}" --timestamp "${{ env.ARTIFACT_NAME }}.pkg"
+#           cd packaging
+#           envsubst < distribution.xml.template > distribution.xml
+#           productbuild --resources ./resources --distribution distribution.xml --sign "${{ secrets.DEVELOPER_ID_INSTALLER }}" --timestamp "${{ env.ARTIFACT_NAME }}.pkg"
 
-          xcrun notarytool submit "${{ env.ARTIFACT_NAME }}.pkg" --apple-id ${{ secrets.NOTARIZATION_USERNAME }} --password ${{ secrets.NOTARIZATION_PASSWORD }} --team-id ${{ secrets.TEAM_ID }} --wait
-          xcrun stapler staple "${{ env.ARTIFACT_NAME }}.pkg"
+#           xcrun notarytool submit "${{ env.ARTIFACT_NAME }}.pkg" --apple-id ${{ secrets.NOTARIZATION_USERNAME }} --password ${{ secrets.NOTARIZATION_PASSWORD }} --team-id ${{ secrets.TEAM_ID }} --wait
+#           xcrun stapler staple "${{ env.ARTIFACT_NAME }}.pkg"
 
-      - name: Zip
-        if: ${{ runner.os == 'Linux' }}
-        working-directory: ${{ env.ARTIFACTS_PATH }}
-        run: 7z a -tzip "${{ env.ARTIFACT_NAME }}.zip" "-xr!lib${{ env.PRODUCT_NAME }}_SharedCode.a" .
+#       - name: Zip
+#         if: ${{ runner.os == 'Linux' }}
+#         working-directory: ${{ env.ARTIFACTS_PATH }}
+#         run: 7z a -tzip "${{ env.ARTIFACT_NAME }}.zip" "-xr!lib${{ env.PRODUCT_NAME }}_SharedCode.a" .
 
-      - name: Generate Installer
-        if: ${{ runner.os == 'Windows' }}
-        run: |
-          iscc "packaging\installer.iss"
-          mv "packaging/Output/${{ env.ARTIFACT_NAME }}.exe" "${{ env.ARTIFACTS_PATH }}/"
+#       - name: Generate Installer
+#         if: ${{ runner.os == 'Windows' }}
+#         run: |
+#           iscc "packaging\installer.iss"
+#           mv "packaging/Output/${{ env.ARTIFACT_NAME }}.exe" "${{ env.ARTIFACTS_PATH }}/"
 
-      - name: Codesign with Azure Trusted Signing
-        if: ${{ runner.os == 'Windows' }}
-        uses: azure/artifact-signing-action@v2
-        with:
+#       - name: Codesign with Azure Trusted Signing
+#         if: ${{ runner.os == 'Windows' }}
+#         uses: azure/artifact-signing-action@v2
+#         with:
           # The Azure Active Directory tenant (directory) ID.
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+#           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
 
           # The client (application) ID of an App Registration in the tenant.
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+#           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
 
           # A client secret that was generated for the App Registration.
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+#           azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
 
           # The Code Signing Account endpoint. The URI value must have a URI that aligns to the region your Code Signing Account and Certificate Profile you are specifying were created in during the setup of these resources.
-          endpoint: ${{ secrets.AZURE_ENDPOINT }}
+#           endpoint: ${{ secrets.AZURE_ENDPOINT }}
 
           # The Code Signing Account name.
-          signing-account-name: ${{ secrets.AZURE_CODE_SIGNING_NAME }}
+#           signing-account-name: ${{ secrets.AZURE_CODE_SIGNING_NAME }}
 
           # The Certificate Profile name.
-          certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
+#           certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
 
           # This signs all exes inside the folder
-          files-folder: ${{ env.ARTIFACTS_PATH }}
-          files-folder-filter: exe
+#           files-folder: ${{ env.ARTIFACTS_PATH }}
+#           files-folder-filter: exe
 
-      - name: Upload Exe (Windows)
-        if: ${{ runner.os == 'Windows' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.ARTIFACT_NAME }}.exe
-          path: "${{ env.ARTIFACTS_PATH }}/${{ env.ARTIFACT_NAME }}.exe"
+#       - name: Upload Exe (Windows)
+#         if: ${{ runner.os == 'Windows' }}
+#         uses: actions/upload-artifact@v7
+#         with:
+#           name: ${{ env.ARTIFACT_NAME }}.exe
+#           path: "${{ env.ARTIFACTS_PATH }}/${{ env.ARTIFACT_NAME }}.exe"
 
-      - name: Upload Zip (Linux)
-        if: ${{ runner.os == 'Linux' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.ARTIFACT_NAME }}.zip
-          path: "${{ env.ARTIFACTS_PATH }}/${{ env.ARTIFACT_NAME }}.zip"
+#       - name: Upload Zip (Linux)
+#         if: ${{ runner.os == 'Linux' }}
+#         uses: actions/upload-artifact@v7
+#         with:
+#           name: ${{ env.ARTIFACT_NAME }}.zip
+#           path: "${{ env.ARTIFACTS_PATH }}/${{ env.ARTIFACT_NAME }}.zip"
 
-      - name: Upload pkg (macOS)
-        if: ${{ runner.os == 'macOS' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.ARTIFACT_NAME }}.pkg
-          path: packaging/${{ env.ARTIFACT_NAME }}.pkg
+#       - name: Upload pkg (macOS)
+#         if: ${{ runner.os == 'macOS' }}
+#         uses: actions/upload-artifact@v7
+#         with:
+#           name: ${{ env.ARTIFACT_NAME }}.pkg
+#           path: packaging/${{ env.ARTIFACT_NAME }}.pkg
 
   release:
     if: contains(github.ref, 'tags/v')

@@ -1,21 +1,48 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-//==============================================================================
-PluginProcessor::PluginProcessor()
-     : AudioProcessor (BusesProperties()
-                     #if ! JucePlugin_IsMidiEffect
-                      #if ! JucePlugin_IsSynth
-                       .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-                      #endif
-                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
-                     #endif
-                       )
+namespace
 {
+    constexpr float echoBeats[] = { 0.25f, 0.5f, 0.75f, 1.0f };
+    constexpr float toneOpenHz = 20000.0f;
+    constexpr float toneDarkHz = 1200.0f;
 }
 
-PluginProcessor::~PluginProcessor()
+//==============================================================================
+PluginProcessor::PluginProcessor()
+    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      apvts (*this, nullptr, "Parameters", createLayout())
 {
+    formatManager.registerBasicFormats();
+}
+
+PluginProcessor::~PluginProcessor() = default;
+
+juce::AudioProcessorValueTreeState::ParameterLayout PluginProcessor::createLayout()
+{
+    using juce::AudioParameterBool;
+    using juce::AudioParameterChoice;
+    using juce::AudioParameterFloat;
+    using juce::AudioParameterInt;
+    using juce::NormalisableRange;
+    using juce::ParameterID;
+
+    const auto percent = [] (float value, int) { return juce::String (juce::roundToInt (value * 100.0f)) + "%"; };
+
+    juce::AudioProcessorValueTreeState::ParameterLayout layout;
+
+    layout.add (std::make_unique<AudioParameterInt> (ParameterID { ParamIDs::stack, 1 }, "Stack", 1, StackEngine::maxStack, 3));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::spread, 1 }, "Spread", NormalisableRange<float> (0.0f, 1.0f), 0.5f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::octave, 1 }, "Octave", NormalisableRange<float> (0.0f, 1.0f), 0.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::tone, 1 }, "Tone", NormalisableRange<float> (0.0f, 1.0f), 1.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::dirt, 1 }, "Dirt", NormalisableRange<float> (0.0f, 1.0f), 0.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::echo, 1 }, "Echo", NormalisableRange<float> (0.0f, 1.0f), 0.2f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamIDs::echoTime, 1 }, "Echo Time", juce::StringArray { "1/16", "1/8", "1/8 dotted", "1/4" }, 1));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::space, 1 }, "Space", NormalisableRange<float> (0.0f, 1.0f), 0.2f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::gain, 1 }, "Gain", NormalisableRange<float> (-24.0f, 6.0f), 0.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float value, int) { return juce::String (value, 1) + " dB"; })));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::oneShot, 1 }, "One-Shot", true));
+
+    return layout;
 }
 
 //==============================================================================
@@ -53,7 +80,8 @@ bool PluginProcessor::isMidiEffect() const
 
 double PluginProcessor::getTailLengthSeconds() const
 {
-    return 0.0;
+    // the echo repeats and the reverb ring on after the last note
+    return 6.0;
 }
 
 int PluginProcessor::getNumPrograms()
@@ -87,75 +115,168 @@ void PluginProcessor::changeProgramName (int index, const juce::String& newName)
 //==============================================================================
 void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    // Use this method as the place to do any pre-playback
-    // initialisation that you need..
-    juce::ignoreUnused (sampleRate, samplesPerBlock);
+    juce::ignoreUnused (samplesPerBlock);
+    currentSampleRate = sampleRate;
+
+    engine.prepare (sampleRate);
+    echo.prepare (sampleRate);
+    reverb.setSampleRate (sampleRate);
+    reverb.reset();
+    toneL.reset();
+    toneR.reset();
+
+    const auto smooth = [sampleRate] (juce::SmoothedValue<float>& value, float start)
+    {
+        value.reset (sampleRate, 0.03);
+        value.setCurrentAndTargetValue (start);
+    };
+
+    smooth (echoMix, apvts.getRawParameterValue (ParamIDs::echo)->load());
+    smooth (spaceMix, apvts.getRawParameterValue (ParamIDs::space)->load());
+    smooth (dirtAmount, apvts.getRawParameterValue (ParamIDs::dirt)->load());
+    smooth (outputGain, juce::Decibels::decibelsToGain (apvts.getRawParameterValue (ParamIDs::gain)->load()));
+
+    // the engine only points at the sample, so hand it over again after a re-prepare
+    {
+        const juce::ScopedLock lock (sampleLock);
+
+        if (displaySample != nullptr)
+            engine.setSample (displaySample.get());
+    }
 }
 
 void PluginProcessor::releaseResources()
 {
-    // When playback stops, you can use this as an opportunity to free up any
-    // spare memory, etc.
 }
 
 bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-  #if JucePlugin_IsMidiEffect
-    juce::ignoreUnused (layouts);
-    return true;
-  #else
-    // This is the place where you check if the layout is supported.
-    // In this template code we only support mono or stereo.
-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
-     && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
-        return false;
-
-    // This checks if the input layout matches the output layout
-   #if ! JucePlugin_IsSynth
-    if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
-        return false;
-   #endif
-
-    return true;
-  #endif
+    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
 }
 
-void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
-                                              juce::MidiBuffer& midiMessages)
+StackParams PluginProcessor::readStackParams() const
 {
-    juce::ignoreUnused (midiMessages);
+    StackParams params;
+    params.stack = juce::roundToInt (apvts.getRawParameterValue (ParamIDs::stack)->load());
+    params.spread = apvts.getRawParameterValue (ParamIDs::spread)->load();
+    params.octave = apvts.getRawParameterValue (ParamIDs::octave)->load();
+    params.oneShot = apvts.getRawParameterValue (ParamIDs::oneShot)->load() >= 0.5f;
+    return params;
+}
 
-    juce::ScopedNoDenormals noDenormals;
-    auto totalNumInputChannels  = getTotalNumInputChannels();
-    auto totalNumOutputChannels = getTotalNumOutputChannels();
+void PluginProcessor::renderEffects (float* left, float* right, int numSamples)
+{
+    const auto toneAmount = apvts.getRawParameterValue (ParamIDs::tone)->load();
+    const auto cutoff = toneDarkHz * std::pow (toneOpenHz / toneDarkHz, toneAmount);
+    toneL.setCutoff (cutoff, currentSampleRate);
+    toneR.setCutoff (cutoff, currentSampleRate);
 
-    // In case we have more outputs than inputs, this code clears any output
-    // channels that didn't contain input data, (because these aren't
-    // guaranteed to be empty - they may contain garbage).
-    // This is here to avoid people getting screaming feedback
-    // when they first compile a plugin, but obviously you don't need to keep
-    // this code if your algorithm always overwrites all the output channels.
-    for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear (i, 0, buffer.getNumSamples());
+    echoMix.setTargetValue (apvts.getRawParameterValue (ParamIDs::echo)->load());
+    spaceMix.setTargetValue (apvts.getRawParameterValue (ParamIDs::space)->load());
+    dirtAmount.setTargetValue (apvts.getRawParameterValue (ParamIDs::dirt)->load());
+    outputGain.setTargetValue (juce::Decibels::decibelsToGain (apvts.getRawParameterValue (ParamIDs::gain)->load()));
 
-    // This is the place where you'd normally do the guts of your plugin's
-    // audio processing...
-    // Make sure to reset the state if your inner loop is processing
-    // the samples and the outer loop is handling the channels.
-    // Alternatively, you can process the samples with the channels
-    // interleaved by keeping the same state.
-    for (int channel = 0; channel < totalNumInputChannels; ++channel)
+    double bpm = 120.0;
+
+    if (auto* host = getPlayHead())
+        if (auto position = host->getPosition())
+            if (auto hostBpm = position->getBpm())
+                bpm = juce::jlimit (30.0, 300.0, *hostBpm);
+
+    const auto timeIndex = juce::jlimit (0, 3, juce::roundToInt (apvts.getRawParameterValue (ParamIDs::echoTime)->load()));
+    echo.setDelaySeconds (echoBeats[timeIndex] * static_cast<float> (60.0 / bpm));
+
+    for (int i = 0; i < numSamples; ++i)
     {
-        auto* channelData = buffer.getWritePointer (channel);
-        juce::ignoreUnused (channelData);
-        // ..do something to the data...
+        auto l = toneL.process (left[i]);
+        auto r = toneR.process (right[i]);
+
+        const auto dirt = dirtAmount.getNextValue();
+
+        if (dirt > 0.001f)
+        {
+            const auto drive = 1.0f + dirt * 7.0f;
+            const auto norm = 1.0f / std::tanh (drive);
+            l = std::tanh (l * drive) * norm;
+            r = std::tanh (r * drive) * norm;
+        }
+
+        echo.process (l, r, echoMix.getNextValue());
+
+        left[i] = l;
+        right[i] = r;
     }
+
+    juce::Reverb::Parameters reverbParams;
+    reverbParams.roomSize = 0.7f;
+    reverbParams.damping = 0.5f;
+    reverbParams.width = 1.0f;
+    reverbParams.dryLevel = 1.0f;
+    reverbParams.wetLevel = spaceMix.getTargetValue() * 0.4f;
+    reverbParams.freezeMode = 0.0f;
+    reverb.setParameters (reverbParams);
+    reverb.processStereo (left, right, numSamples);
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const auto g = outputGain.getNextValue();
+        left[i] = softClip (left[i] * g);
+        right[i] = softClip (right[i] * g);
+    }
+}
+
+void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+{
+    juce::ScopedNoDenormals noDenormals;
+
+    buffer.clear();
+
+    if (buffer.getNumChannels() < 2)
+        return;
+
+    const auto numSamples = buffer.getNumSamples();
+    keyboardState.processNextMidiBuffer (midiMessages, 0, numSamples, true);
+
+    if (auto* incoming = pendingSample.exchange (nullptr))
+        engine.setSample (incoming);
+
+    const auto params = readStackParams();
+    auto* left = buffer.getWritePointer (0);
+    auto* right = buffer.getWritePointer (1);
+
+    // render up to each MIDI event so notes start on the exact sample
+    int position = 0;
+
+    for (const auto metadata : midiMessages)
+    {
+        const auto eventPosition = juce::jlimit (position, numSamples, metadata.samplePosition);
+
+        if (eventPosition > position)
+        {
+            engine.render (left + position, right + position, eventPosition - position);
+            position = eventPosition;
+        }
+
+        const auto message = metadata.getMessage();
+
+        if (message.isNoteOn())
+            engine.noteOn (message.getNoteNumber(), message.getFloatVelocity(), params);
+        else if (message.isNoteOff())
+            engine.noteOff (message.getNoteNumber());
+        else if (message.isAllNotesOff() || message.isAllSoundOff())
+            engine.allNotesOff();
+    }
+
+    if (position < numSamples)
+        engine.render (left + position, right + position, numSamples - position);
+
+    renderEffects (left, right, numSamples);
 }
 
 //==============================================================================
 bool PluginProcessor::hasEditor() const
 {
-    return true; // (change this to false if you choose to not supply an editor)
+    return true;
 }
 
 juce::AudioProcessorEditor* PluginProcessor::createEditor()
@@ -164,19 +285,79 @@ juce::AudioProcessorEditor* PluginProcessor::createEditor()
 }
 
 //==============================================================================
+bool PluginProcessor::loadSampleFromFile (const juce::File& file, juce::String& errorMessage)
+{
+    auto loaded = SampleData::fromFile (file, formatManager, errorMessage);
+
+    if (loaded == nullptr)
+        return false;
+
+    setSample (std::move (loaded));
+    return true;
+}
+
+void PluginProcessor::setSample (std::shared_ptr<const SampleData> newSample)
+{
+    if (newSample == nullptr)
+        return;
+
+    {
+        const juce::ScopedLock lock (sampleLock);
+        displaySample = newSample;
+        recentSamples[recentIndex] = newSample;
+        recentIndex = (recentIndex + 1) % recentSamples.size();
+    }
+
+    pendingSample.store (newSample.get());
+}
+
+std::shared_ptr<const SampleData> PluginProcessor::getSample() const
+{
+    const juce::ScopedLock lock (sampleLock);
+    return displaySample;
+}
+
+//==============================================================================
 void PluginProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    // You should use this method to store your parameters in the memory block.
-    // You could do that either as raw data, or use the XML or ValueTree classes
-    // as intermediaries to make it easy to save and load complex data.
-    juce::ignoreUnused (destData);
+    auto state = apvts.copyState();
+
+    if (auto sample = getSample())
+    {
+        juce::ValueTree sampleTree ("Sample");
+        sampleTree.setProperty ("name", sample->name, nullptr);
+        sampleTree.setProperty ("sampleRate", sample->sampleRate, nullptr);
+        sampleTree.setProperty ("data", sample->toBase64(), nullptr);
+        state.appendChild (sampleTree, nullptr);
+    }
+
+    if (auto xml = state.createXml())
+        copyXmlToBinary (*xml, destData);
 }
 
 void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    // You should use this method to restore your parameters from this memory block,
-    // whose contents will have been created by the getStateInformation() call.
-    juce::ignoreUnused (data, sizeInBytes);
+    auto xml = getXmlFromBinary (data, sizeInBytes);
+
+    if (xml == nullptr)
+        return;
+
+    auto state = juce::ValueTree::fromXml (*xml);
+
+    if (! state.hasType (apvts.state.getType()))
+        return;
+
+    auto sampleTree = state.getChildWithName ("Sample");
+
+    if (sampleTree.isValid())
+    {
+        state.removeChild (sampleTree, nullptr);
+
+        if (auto restored = SampleData::fromBase64 (sampleTree["data"].toString(), sampleTree["sampleRate"], sampleTree["name"].toString()))
+            setSample (std::move (restored));
+    }
+
+    apvts.replaceState (state);
 }
 
 //==============================================================================
