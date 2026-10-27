@@ -14,6 +14,12 @@ PluginProcessor::PluginProcessor()
       apvts (*this, nullptr, "Parameters", createLayout())
 {
     formatManager.registerBasicFormats();
+
+    // look the parameters up once, so the audio thread never searches by name
+    const auto find = [this] (const char* id) { return apvts.getRawParameterValue (id); };
+    raw = { find (ParamIDs::stack), find (ParamIDs::spread), find (ParamIDs::octave), find (ParamIDs::tone),
+            find (ParamIDs::dirt), find (ParamIDs::echo), find (ParamIDs::echoTime), find (ParamIDs::space),
+            find (ParamIDs::gain), find (ParamIDs::oneShot) };
 }
 
 PluginProcessor::~PluginProcessor() = default;
@@ -131,10 +137,10 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
         value.setCurrentAndTargetValue (start);
     };
 
-    smooth (echoMix, apvts.getRawParameterValue (ParamIDs::echo)->load());
-    smooth (spaceMix, apvts.getRawParameterValue (ParamIDs::space)->load());
-    smooth (dirtAmount, apvts.getRawParameterValue (ParamIDs::dirt)->load());
-    smooth (outputGain, juce::Decibels::decibelsToGain (apvts.getRawParameterValue (ParamIDs::gain)->load()));
+    smooth (echoMix, raw.echo->load());
+    smooth (spaceMix, raw.space->load());
+    smooth (dirtAmount, raw.dirt->load());
+    smooth (outputGain, juce::Decibels::decibelsToGain (raw.gain->load()));
 
     // the engine only points at the sample, so hand it over again after a re-prepare
     {
@@ -157,24 +163,24 @@ bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 StackParams PluginProcessor::readStackParams() const
 {
     StackParams params;
-    params.stack = juce::roundToInt (apvts.getRawParameterValue (ParamIDs::stack)->load());
-    params.spread = apvts.getRawParameterValue (ParamIDs::spread)->load();
-    params.octave = apvts.getRawParameterValue (ParamIDs::octave)->load();
-    params.oneShot = apvts.getRawParameterValue (ParamIDs::oneShot)->load() >= 0.5f;
+    params.stack = juce::roundToInt (raw.stack->load());
+    params.spread = raw.spread->load();
+    params.octave = raw.octave->load();
+    params.oneShot = raw.oneShot->load() >= 0.5f;
     return params;
 }
 
 void PluginProcessor::renderEffects (float* left, float* right, int numSamples)
 {
-    const auto toneAmount = apvts.getRawParameterValue (ParamIDs::tone)->load();
+    const auto toneAmount = raw.tone->load();
     const auto cutoff = toneDarkHz * std::pow (toneOpenHz / toneDarkHz, toneAmount);
     toneL.setCutoff (cutoff, currentSampleRate);
     toneR.setCutoff (cutoff, currentSampleRate);
 
-    echoMix.setTargetValue (apvts.getRawParameterValue (ParamIDs::echo)->load());
-    spaceMix.setTargetValue (apvts.getRawParameterValue (ParamIDs::space)->load());
-    dirtAmount.setTargetValue (apvts.getRawParameterValue (ParamIDs::dirt)->load());
-    outputGain.setTargetValue (juce::Decibels::decibelsToGain (apvts.getRawParameterValue (ParamIDs::gain)->load()));
+    echoMix.setTargetValue (raw.echo->load());
+    spaceMix.setTargetValue (raw.space->load());
+    dirtAmount.setTargetValue (raw.dirt->load());
+    outputGain.setTargetValue (juce::Decibels::decibelsToGain (raw.gain->load()));
 
     double bpm = 120.0;
 
@@ -183,7 +189,7 @@ void PluginProcessor::renderEffects (float* left, float* right, int numSamples)
             if (auto hostBpm = position->getBpm())
                 bpm = juce::jlimit (30.0, 300.0, *hostBpm);
 
-    const auto timeIndex = juce::jlimit (0, 3, juce::roundToInt (apvts.getRawParameterValue (ParamIDs::echoTime)->load()));
+    const auto timeIndex = juce::jlimit (0, 3, juce::roundToInt (raw.echoTime->load()));
     echo.setDelaySeconds (echoBeats[timeIndex] * static_cast<float> (60.0 / bpm));
 
     for (int i = 0; i < numSamples; ++i)

@@ -69,6 +69,21 @@ private:
     StackParams readStackParams() const;
     void renderEffects (float* left, float* right, int numSamples);
 
+    struct RawParams
+    {
+        std::atomic<float>* stack = nullptr;
+        std::atomic<float>* spread = nullptr;
+        std::atomic<float>* octave = nullptr;
+        std::atomic<float>* tone = nullptr;
+        std::atomic<float>* dirt = nullptr;
+        std::atomic<float>* echo = nullptr;
+        std::atomic<float>* echoTime = nullptr;
+        std::atomic<float>* space = nullptr;
+        std::atomic<float>* gain = nullptr;
+        std::atomic<float>* oneShot = nullptr;
+    };
+
+    RawParams raw;
     StackEngine engine;
     PingPongEcho echo;
     juce::Reverb reverb;
