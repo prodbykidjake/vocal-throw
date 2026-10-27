@@ -26,8 +26,9 @@ private:
 /** Everything inside the plugin window, laid out in design pixels on the fixed 1480 x 860 canvas. The
     editor scales this one component to the real window size.
 
-    The spectrum fills the canvas; the controls sit on glass panels in a column on either side, the band
-    editor is a dock along the bottom, and the header floats over the top. */
+    The spectrum fills the canvas; the controls sit on small glass tiles scattered over it at uneven
+    positions and sizes (one table in EditorContent.cpp), the band editor is a dock along the bottom, and
+    the header floats over the top. */
 class EditorContent : public juce::Component, private juce::ChangeListener
 {
 public:
@@ -59,23 +60,22 @@ private:
     bool deltaOn = false, bypassOn = false;
     juce::ParameterAttachment deltaAttachment, bypassAttachment;
 
-    // the graph, then the panels, then the controls on them
+    // the graph, then the tiles, then the controls on them
     SpectrumView spectrum;
-    GlassPanel detectPanel, stereoPanel, timePanel, outputPanel, sidechainPanel, qualityPanel;
+    GlassPanel sidechainTile, qualityTile, depthTile, detailTile, modeTile, outputTile, timeTile, stereoTile, switchesTile;
 
-    // left column
     SegmentedControl mode;
     Knob depth, detail, selectivity, balance;
     ChoiceButton stereo;
     ValueSlider link;
 
-    // right column
     Knob attack, release;
     ChoiceButton quality;
     LockButton lock;
     CircleIconToggle sidechain, keyListen;
     MiniMeter meter;
-    ValueSlider mix, trim;
+    Knob mix;
+    ValueSlider trim;
     RoundToggle delta, bypass;
 
     // dock, header and overlays

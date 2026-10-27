@@ -55,10 +55,17 @@ float SpectrumView::hzForX (float x) const noexcept
 float SpectrumView::yForDb (float db) const noexcept { return zeroLineY() - juce::jlimit (-maxDb, maxDb, db) * pxPerDb(); }
 float SpectrumView::dbForY (float y) const noexcept { return juce::jlimit (-maxDb, maxDb, (zeroLineY() - y) / pxPerDb()); }
 
+void SpectrumView::setAddButtonPosition (juce::Point<float> centre)
+{
+    addButtonCentre = centre;
+    repaint();
+}
+
 juce::Rectangle<float> SpectrumView::addButtonArea() const noexcept
 {
     const auto plot = plotArea();
-    return { plot.getRight() - 16.0f - 32.0f, plot.getBottom() - 16.0f - 32.0f - freqLabelHeight, 32.0f, 32.0f };
+    const auto centre = addButtonCentre.value_or (juce::Point<float> (plot.getRight() - 32.0f, plot.getBottom() - 32.0f));
+    return juce::Rectangle<float> (32.0f, 32.0f).withCentre (centre);
 }
 
 //==============================================================================
@@ -221,23 +228,25 @@ void SpectrumView::paint (juce::Graphics& g)
     if (bypassed)
         g.beginTransparencyLayer (0.55f);
 
-    // standard frequencies: hairlines and tiny labels along the bottom of the plot
-    const auto labelY = plot.getBottom() - freqLabelHeight;
+    // standard frequencies: tiny labels along the top of the plot (the strip under the header stays clear
+    // of the tiles) and hairlines fading in towards the zero line and out below it
+    const auto labelY = plot.getY();
+    const auto linesTop = labelY + freqLabelHeight;
     const auto labelFont = fonts::make (500, 10.0f, 0.08f);
     for (const int hz : { 50, 100, 200, 500, 1000, 2000, 5000, 10000 })
     {
         const auto x = xForHz ((float) hz);
         const auto major = hz == 100 || hz == 1000 || hz == 10000;
-        g.setGradientFill (juce::ColourGradient (pal.edge.withAlpha (0.0f), x, plot.getY() + 20.0f, pal.edge.withAlpha (major ? 0.07f : 0.035f), x, zeroY, false));
-        g.fillRect (x - 0.5f, plot.getY() + 20.0f, 1.0f, zeroY - plot.getY() - 20.0f);
-        g.setGradientFill (juce::ColourGradient (pal.edge.withAlpha (major ? 0.07f : 0.035f), x, zeroY, pal.edge.withAlpha (0.0f), x, labelY, false));
-        g.fillRect (x - 0.5f, zeroY, 1.0f, labelY - zeroY);
+        g.setGradientFill (juce::ColourGradient (pal.edge.withAlpha (0.0f), x, linesTop, pal.edge.withAlpha (major ? 0.07f : 0.035f), x, zeroY, false));
+        g.fillRect (x - 0.5f, linesTop, 1.0f, zeroY - linesTop);
+        g.setGradientFill (juce::ColourGradient (pal.edge.withAlpha (major ? 0.07f : 0.035f), x, zeroY, pal.edge.withAlpha (0.0f), x, plot.getBottom(), false));
+        g.fillRect (x - 0.5f, zeroY, 1.0f, plot.getBottom() - zeroY);
     }
     for (const float hz : { 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f, 20000.0f })
         fonts::draw (g, frequencyLabel (hz), juce::Rectangle<float> (44.0f, freqLabelHeight).withCentre ({ xForHz (hz), labelY + freqLabelHeight * 0.5f }),
             labelFont, pal.inkDim);
 
-    // dB scale on the right edge of the plot
+    // dB scale on the left edge of the plot
     const auto minus = juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));
     for (int i = 3; i >= -3; --i)
     {
@@ -246,9 +255,9 @@ void SpectrumView::paint (juce::Graphics& g)
         const auto db = i * (int) dbPerGrid;
         const auto y = zeroY - (float) i * dbPerGrid * ppd;
         const auto text = db > 0 ? "+" + juce::String (db) : minus + juce::String (-db);
-        fonts::draw (g, text, juce::Rectangle<float> (plot.getRight() - 40.0f, y - 8.0f, 30.0f, 16.0f), labelFont, pal.inkDim, juce::Justification::centredRight);
+        fonts::draw (g, text, juce::Rectangle<float> (plot.getX() + 10.0f, y - 8.0f, 30.0f, 16.0f), labelFont, pal.inkDim, juce::Justification::centredLeft);
         g.setColour (pal.edge.withAlpha (0.12f));
-        g.fillRect (plot.getRight() - 6.0f, y - 0.5f, 4.0f, 1.0f);
+        g.fillRect (plot.getX() + 2.0f, y - 0.5f, 4.0f, 1.0f);
     }
 
     // zero line: a hairline that fades out towards the sides
@@ -268,7 +277,7 @@ void SpectrumView::paint (juce::Graphics& g)
         for (int i = 0; i < (int) shown.size(); ++i)
         {
             const auto x = xForHz (vs::ResonanceSuppressor::displayPointFrequency (i));
-            const auto y = juce::jmin (zeroY + shown[(size_t) i] * ppd, labelY - 6.0f);
+            const auto y = juce::jmin (zeroY + shown[(size_t) i] * ppd, plot.getBottom() - 6.0f);
             deepest = juce::jmax (deepest, y);
             line.lineTo (x, y);
         }

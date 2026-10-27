@@ -51,11 +51,11 @@ namespace fmt
 
 //==============================================================================
 Knob::Knob (Theme& t, juce::AudioProcessorValueTreeState& state, const juce::String& paramID, const juce::String& captionText,
-    Format formatToUse, bool isLarge)
+    Format formatToUse, Size sizeToUse)
     : theme (t),
       caption (captionText),
       format (std::move (formatToUse)),
-      large (isLarge),
+      size (sizeToUse),
       attachment (*state.getParameter (paramID), slider, state.undoManager)
 {
     prepareParameterSlider (slider);
@@ -76,13 +76,14 @@ void Knob::setBipolar (bool shouldBeBipolar)
 
 void Knob::resized()
 {
-    const auto size = sizeFor (large);
-    slider.setBounds ((getWidth() - size) / 2, 0, size, size);
+    const auto d = sizeFor (size);
+    slider.setBounds ((getWidth() - d) / 2, 0, d, d);
 }
 
 void Knob::paint (juce::Graphics& g)
 {
     const auto& pal = theme.p();
+    const auto large = size == Size::large;
     const auto top = (float) slider.getBottom() + (large ? 0.0f : 2.0f);
     fonts::draw (g, caption.toLowerCase(), { 0.0f, top, (float) getWidth(), 16.0f }, fonts::make (500, large ? 12.0f : 11.0f, 0.16f), pal.inkSoft);
 }
@@ -92,8 +93,10 @@ void Knob::paintOverChildren (juce::Graphics& g)
     // the value sits in the middle of the arc
     const auto& pal = theme.p();
     const auto centre = slider.getBounds().toFloat().getCentre();
-    if (large)
+    if (size == Size::large)
         fonts::draw (g, format (slider.getValue()), juce::Rectangle<float> (140.0f, 40.0f).withCentre (centre), fonts::make (500, 32.0f, -0.01f), pal.ink);
+    else if (size == Size::medium)
+        fonts::draw (g, format (slider.getValue()), juce::Rectangle<float> (90.0f, 24.0f).withCentre (centre), fonts::make (500, 17.0f), pal.ink);
     else
         fonts::draw (g, format (slider.getValue()), juce::Rectangle<float> (64.0f, 18.0f).withCentre (centre), fonts::make (500, 12.0f), pal.ink);
 }

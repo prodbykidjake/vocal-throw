@@ -27,6 +27,8 @@ public:
     /** Keeps the axes clear of the panels floating over the graph. */
     void setPlotInsets (juce::BorderSize<int> insets);
     juce::Rectangle<float> plotArea() const noexcept;
+    /** Where the "+" (add band) button sits; by default the bottom-right corner of the plot. */
+    void setAddButtonPosition (juce::Point<float> centre);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -81,5 +83,6 @@ private:
     bool dragging = false;
     bool overAdd = false;
     juce::BorderSize<int> plotInsets;
+    std::optional<juce::Point<float>> addButtonCentre;
 };
 } // namespace vox

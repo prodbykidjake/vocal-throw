@@ -23,8 +23,10 @@ namespace fmt
 class Knob : public juce::Component
 {
 public:
+    enum class Size { small, medium, large };
+
     Knob (Theme& theme, juce::AudioProcessorValueTreeState& state, const juce::String& paramID, const juce::String& caption,
-        Format format, bool large = false);
+        Format format, Size size = Size::small);
 
     /** Fills the arc from the centre (for signed values such as the stereo balance). */
     void setBipolar (bool shouldBeBipolar);
@@ -35,15 +37,15 @@ public:
 
     juce::Slider& getSlider() noexcept { return slider; }
 
-    static constexpr int sizeFor (bool large) noexcept { return large ? 176 : 74; }
-    static constexpr int heightFor (bool large) noexcept { return sizeFor (large) + 20; }
+    static constexpr int sizeFor (Size s) noexcept { return s == Size::large ? 176 : (s == Size::medium ? 110 : 74); }
+    static constexpr int heightFor (Size s) noexcept { return sizeFor (s) + 20; }
 
 private:
     Theme& theme;
     juce::Slider slider;
     juce::String caption;
     Format format;
-    bool large;
+    Size size;
     juce::SliderParameterAttachment attachment;
 };
 

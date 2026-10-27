@@ -17,7 +17,7 @@ public:
         setLookAndFeel (&laf);
         laf.setDefaultSansSerifTypeface (fonts::make (400, 12.0f).getTypefacePtr());
 
-        large = std::make_unique<Knob> (theme, p.apvts, ParamIDs::depth, "DEPTH", fmt::percent, true);
+        large = std::make_unique<Knob> (theme, p.apvts, ParamIDs::depth, "DEPTH", fmt::percent, Knob::Size::large);
         small = std::make_unique<Knob> (theme, p.apvts, ParamIDs::detail, "DETAIL", fmt::percent);
         deepSmall = std::make_unique<Knob> (theme, p.apvts, ParamIDs::attack, "ATTACK", fmt::percent);
         balance = std::make_unique<Knob> (theme, p.apvts, ParamIDs::stereoBalance, "BALANCE", fmt::balance);
@@ -40,14 +40,14 @@ public:
 
     void resized() override
     {
-        large->setBounds (30, 10, 240, vox::Knob::heightFor (true));
-        small->setBounds (290, 10, 110, vox::Knob::heightFor (false));
-        balance->setBounds (290, 150, 110, vox::Knob::heightFor (false));
+        large->setBounds (30, 10, 240, vox::Knob::heightFor (vox::Knob::Size::large));
+        small->setBounds (290, 10, 110, vox::Knob::heightFor (vox::Knob::Size::small));
+        balance->setBounds (290, 150, 110, vox::Knob::heightFor (vox::Knob::Size::small));
         mode->setBounds (30, 255, 232, 32);
         stereo->setBounds (30, 300, 90, 30);
         delta->setBounds (150, 300, 110, 28);
         bypass->setBounds (150, 335, 110, 28);
-        deepSmall->setBounds (440, 10, 110, vox::Knob::heightFor (false));
+        deepSmall->setBounds (440, 10, 110, vox::Knob::heightFor (vox::Knob::Size::small));
         quality->setBounds (440, 150, 119, 30);
         sidechain->setBounds (440, 195, 40, 40);
         keyListen->setBounds (490, 195, 40, 40);

@@ -15,9 +15,6 @@ namespace layout
     inline constexpr int designHeight = 860;
     inline constexpr int margin = 24;      // between the canvas edge and the panels
     inline constexpr int headerHeight = 60;
-    inline constexpr int columnWidth = 268; // the glass columns on either side
-    inline constexpr int columnTop = 72;
-    inline constexpr int columnBottom = 744;
     inline constexpr int dockHeight = 84;   // the band editor along the bottom
 } // namespace layout
 
