@@ -1,9 +1,10 @@
 #pragma once
 
+#include "DesignLookAndFeel.h"
 #include "PluginProcessor.h"
 #include <juce_audio_utils/juce_audio_utils.h>
 
-// Shows the loaded clip, and accepts a dropped audio file or a click to browse.
+// Shows the loaded clip as bars, and accepts a dropped audio file or a click to browse.
 class WaveformView : public juce::Component, public juce::FileDragAndDropTarget
 {
 public:
@@ -11,6 +12,7 @@ public:
 
     void setSample (std::shared_ptr<const SampleData> newSample);
     void setMessage (const juce::String& newMessage);
+    void openChooser();
 
     void paint (juce::Graphics&) override;
     void mouseUp (const juce::MouseEvent&) override;
@@ -27,14 +29,9 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
 };
 
-class StackLookAndFeel : public juce::LookAndFeel_V4
-{
-public:
-    StackLookAndFeel();
-};
-
 //==============================================================================
-class PluginEditor : public juce::AudioProcessorEditor, private juce::Timer
+// The editor draws everything at the design's 1180 x 700 and scales it to the window.
+class PluginEditor : public juce::AudioProcessorEditor
 {
 public:
     explicit PluginEditor (PluginProcessor&);
@@ -44,32 +41,13 @@ public:
     void resized() override;
 
 private:
-    struct Knob
-    {
-        juce::Slider slider;
-        juce::Label label;
-        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
-    };
-
-    void timerCallback() override;
-    void addKnob (Knob& knob, const juce::String& name, const char* parameterId);
-    void loadFile (const juce::File& file);
+    class Content;
 
     PluginProcessor& processorRef;
-    StackLookAndFeel lookAndFeel;
-
-    WaveformView waveform;
-    Knob stackKnob, spreadKnob, octaveKnob, toneKnob, dirtKnob, echoKnob, spaceKnob, gainKnob;
-
-    juce::ComboBox echoTimeBox;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> echoTimeAttachment;
-    juce::Label echoTimeLabel { {}, "Echo time" };
-    juce::ToggleButton oneShotButton { "One-Shot" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> oneShotAttachment;
-    juce::Label hintLabel { {}, "C3 plays the clip at its original pitch" };
-
-    juce::MidiKeyboardComponent keyboard;
-    std::shared_ptr<const SampleData> shownSample;
+    DesignLookAndFeel lookAndFeel;
+    juce::ComponentBoundsConstrainer constrainer;
+    std::unique_ptr<Content> content;
+    juce::ResizableCornerComponent resizer;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

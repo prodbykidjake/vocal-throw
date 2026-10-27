@@ -280,6 +280,9 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     const auto numSamples = buffer.getNumSamples();
     keyboardState.processNextMidiBuffer (midiMessages, 0, numSamples, true);
 
+    if (clearRequested.exchange (false))
+        engine.setSample (nullptr);
+
     if (auto* incoming = pendingSample.exchange (nullptr))
         engine.setSample (incoming);
 
@@ -354,6 +357,17 @@ void PluginProcessor::setSample (std::shared_ptr<const SampleData> newSample)
     pendingSample.store (newSample.get());
 }
 
+void PluginProcessor::clearSample()
+{
+    {
+        const juce::ScopedLock lock (sampleLock);
+        displaySample.reset();
+    }
+
+    pendingSample.store (nullptr);
+    clearRequested.store (true);
+}
+
 std::shared_ptr<const SampleData> PluginProcessor::getSample() const
 {
     const juce::ScopedLock lock (sampleLock);
@@ -392,7 +406,9 @@ void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     auto sampleTree = state.getChildWithName ("Sample");
 
-    if (sampleTree.isValid())
+    if (! sampleTree.isValid())
+        clearSample();
+    else
     {
         state.removeChild (sampleTree, nullptr);
 

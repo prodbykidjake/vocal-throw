@@ -59,6 +59,7 @@ public:
     // Message thread only. Returns false and fills errorMessage if the file can't be used.
     bool loadSampleFromFile (const juce::File& file, juce::String& errorMessage);
     void setSample (std::shared_ptr<const SampleData> newSample);
+    void clearSample();
     std::shared_ptr<const SampleData> getSample() const;
 
     juce::AudioProcessorValueTreeState apvts;
@@ -100,6 +101,7 @@ private:
     std::array<std::shared_ptr<const SampleData>, 4> recentSamples;
     size_t recentIndex = 0;
     std::atomic<const SampleData*> pendingSample { nullptr };
+    std::atomic<bool> clearRequested { false };
 
     juce::AudioFormatManager formatManager;
 

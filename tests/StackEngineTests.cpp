@@ -292,6 +292,45 @@ TEST_CASE ("Processor", "[processor]")
         CHECK (buffer.getMagnitude (0, 300, 212) > 0.0f);
     }
 
+    SECTION ("clearing the clip silences the plugin")
+    {
+        // no echo or reverb, so nothing rings on after the notes stop
+        for (auto id : { ParamIDs::echo, ParamIDs::space })
+            processor.apvts.getParameter (id)->setValueNotifyingHost (0.0f);
+
+        processor.setSample (makeSine());
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+        renderBlock (midi);
+        CHECK (renderBlock ({}).getMagnitude (0, 0, 512) > 0.05f);
+
+        processor.clearSample();
+        CHECK (processor.getSample() == nullptr);
+
+        // let the effect smoothing settle, then nothing should come out
+        for (int i = 0; i < 6; ++i)
+            renderBlock ({});
+
+        CHECK (renderBlock ({}).getMagnitude (0, 0, 512) == Catch::Approx (0.0f).margin (0.001));
+
+        // a new note does nothing until another clip is loaded
+        juce::MidiBuffer again;
+        again.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+        renderBlock (again);
+        CHECK (renderBlock ({}).getMagnitude (0, 0, 512) == Catch::Approx (0.0f).margin (0.001));
+    }
+
+    SECTION ("a project saved without a clip clears the loaded one")
+    {
+        PluginProcessor empty;
+        juce::MemoryBlock emptyState;
+        empty.getStateInformation (emptyState);
+
+        processor.setSample (makeSine());
+        processor.setStateInformation (emptyState.getData(), static_cast<int> (emptyState.getSize()));
+        CHECK (processor.getSample() == nullptr);
+    }
+
     SECTION ("the clip is saved and restored with the project")
     {
         auto sample = makeSine();

@@ -13,7 +13,10 @@ Derived from the [Pamplejuce](https://github.com/sudara/pamplejuce) template (CM
 - `StackEngine` - preallocated layer pool; each note starts a "stack" of copies (pitch/pan/delay spread, optional octave copy). No JUCE processor dependency, so it is unit tested directly
 - `Effects.h` - one-pole lowpass, ping-pong echo, soft clipper
 - `PluginProcessor` - parameters (APVTS), MIDI splitting, effects chain, state. The message thread hands new samples to the audio thread via an atomic pointer (`pendingSample`)
-- `PluginEditor` - waveform drop zone, knobs, on-screen keyboard
+- `PluginEditor` - the UI from the Figma design (Figma Make file "Stack Buddy Audio Plugin"). Everything is laid out at 1180 x 700 design pixels (`Design::width/height`) inside a `Content` component that is scaled to the window, so resizing keeps the proportions
+- `DesignTokens` - colours (sampled from the design), Space Grotesk Medium/Bold embedded from `assets/fonts` (OFL licence kept next to them), layout constants
+- `DesignLookAndFeel` - knob, switch, pill button, preset box and keyboard drawing
+- UI preview without a DAW: `STACKBUDDY_SNAPSHOT_DIR=<folder> ./Builds/Tests "[snapshot]"` (run under Xvfb on Linux) writes empty/loaded/small PNGs of the editor
 
 ### Ideas not built yet
 Formant-preserving pitch shift (Signalsmith Stretch via CPM), scale snap, auto-chop of long takes, recording from a sidechain input, echo ducking.
