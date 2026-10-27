@@ -91,6 +91,7 @@ private:
 
     juce::SmoothedValue<float> echoMix, spaceMix, dirtAmount, outputGain;
     double currentSampleRate = 44100.0;
+    int currentProgram = 0;
 
     // The message thread hands finished samples to the audio thread through `pendingSample`.
     // `recentSamples` keeps the last few alive so the audio thread never frees one.

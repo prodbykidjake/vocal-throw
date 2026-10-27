@@ -2,6 +2,7 @@
 #include <StackEngine.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <set>
 
 namespace
 {
@@ -315,5 +316,67 @@ TEST_CASE ("Processor", "[processor]")
         const char junk[] = "not a plugin state";
         processor.setStateInformation (junk, sizeof (junk));
         CHECK (processor.getSample() == nullptr);
+    }
+}
+
+TEST_CASE ("Presets", "[processor]")
+{
+    PluginProcessor processor;
+
+    SECTION ("every preset has a unique name")
+    {
+        std::set<juce::String> names;
+
+        for (int i = 0; i < processor.getNumPrograms(); ++i)
+        {
+            const auto name = processor.getProgramName (i);
+            CHECK (name.isNotEmpty());
+            names.insert (name);
+        }
+
+        CHECK (static_cast<int> (names.size()) == processor.getNumPrograms());
+    }
+
+    SECTION ("choosing a preset sets the knobs")
+    {
+        const auto wide = [&]
+        {
+            for (int i = 0; i < processor.getNumPrograms(); ++i)
+                if (processor.getProgramName (i) == "Wide Stack")
+                    return i;
+
+            return -1;
+        }();
+
+        REQUIRE (wide >= 0);
+        processor.setCurrentProgram (wide);
+
+        CHECK (processor.getCurrentProgram() == wide);
+        CHECK (juce::roundToInt (processor.apvts.getRawParameterValue (ParamIDs::stack)->load()) == 6);
+        CHECK (processor.apvts.getRawParameterValue (ParamIDs::spread)->load() == Catch::Approx (1.0f));
+    }
+
+    SECTION ("every preset stays inside the parameter ranges")
+    {
+        for (int i = 0; i < processor.getNumPrograms(); ++i)
+        {
+            processor.setCurrentProgram (i);
+
+            for (auto* parameter : processor.getParameters())
+            {
+                CHECK (parameter->getValue() >= 0.0f);
+                CHECK (parameter->getValue() <= 1.0f);
+            }
+
+            CHECK (juce::roundToInt (processor.apvts.getRawParameterValue (ParamIDs::stack)->load()) >= 1);
+            CHECK (juce::roundToInt (processor.apvts.getRawParameterValue (ParamIDs::echoTime)->load()) <= 3);
+        }
+    }
+
+    SECTION ("out-of-range program numbers are ignored")
+    {
+        processor.setCurrentProgram (-1);
+        processor.setCurrentProgram (999);
+        CHECK (processor.getCurrentProgram() == 0);
     }
 }

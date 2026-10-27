@@ -6,6 +6,23 @@ namespace
     constexpr float echoBeats[] = { 0.25f, 0.5f, 0.75f, 1.0f };
     constexpr float toneOpenHz = 20000.0f;
     constexpr float toneDarkHz = 1200.0f;
+
+    struct Preset
+    {
+        const char* name;
+        float stack, spread, octave, tone, dirt, echo, echoTime, space;
+    };
+
+    // echoTime is an index: 0 = 1/16, 1 = 1/8, 2 = 1/8 dotted, 3 = 1/4
+    constexpr Preset presets[] = {
+        { "Default",        3.0f, 0.50f, 0.00f, 1.00f, 0.00f, 0.20f, 1.0f, 0.20f },
+        { "Double",         2.0f, 0.30f, 0.00f, 1.00f, 0.00f, 0.10f, 1.0f, 0.15f },
+        { "Wide Stack",     6.0f, 1.00f, 0.00f, 1.00f, 0.10f, 0.25f, 1.0f, 0.30f },
+        { "Octave Whisper", 3.0f, 0.60f, 0.70f, 0.55f, 0.00f, 0.30f, 2.0f, 0.45f },
+        { "Echo Out",       3.0f, 0.50f, 0.00f, 0.80f, 0.00f, 0.65f, 2.0f, 0.25f },
+        { "Dirty Hype",     4.0f, 0.70f, 0.30f, 1.00f, 0.60f, 0.20f, 0.0f, 0.15f },
+    };
+    constexpr int numPresets = static_cast<int> (sizeof (presets) / sizeof (presets[0]));
 }
 
 //==============================================================================
@@ -92,25 +109,45 @@ double PluginProcessor::getTailLengthSeconds() const
 
 int PluginProcessor::getNumPrograms()
 {
-    return 1;   // NB: some hosts don't cope very well if you tell them there are 0 programs,
-                // so this should be at least 1, even if you're not really implementing programs.
+    return numPresets;
 }
 
 int PluginProcessor::getCurrentProgram()
 {
-    return 0;
+    return currentProgram;
 }
 
 void PluginProcessor::setCurrentProgram (int index)
 {
-    juce::ignoreUnused (index);
+    if (index < 0 || index >= numPresets)
+        return;
+
+    currentProgram = index;
+    const auto& preset = presets[index];
+
+    const auto set = [this] (const char* id, float value)
+    {
+        if (auto* parameter = apvts.getParameter (id))
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+    };
+
+    set (ParamIDs::stack, preset.stack);
+    set (ParamIDs::spread, preset.spread);
+    set (ParamIDs::octave, preset.octave);
+    set (ParamIDs::tone, preset.tone);
+    set (ParamIDs::dirt, preset.dirt);
+    set (ParamIDs::echo, preset.echo);
+    set (ParamIDs::echoTime, preset.echoTime);
+    set (ParamIDs::space, preset.space);
 }
 
 const juce::String PluginProcessor::getProgramName (int index)
 {
-    juce::ignoreUnused (index);
-    // Steinberg's VST3 validator fails plugins whose single default program has no name
-    return "Default";
+    // Steinberg's VST3 validator fails plugins whose programs have no name
+    if (index < 0 || index >= numPresets)
+        return "Default";
+
+    return presets[index].name;
 }
 
 void PluginProcessor::changeProgramName (int index, const juce::String& newName)

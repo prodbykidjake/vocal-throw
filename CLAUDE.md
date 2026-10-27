@@ -16,7 +16,7 @@ Derived from the [Pamplejuce](https://github.com/sudara/pamplejuce) template (CM
 - `PluginEditor` - waveform drop zone, knobs, on-screen keyboard
 
 ### Ideas not built yet
-Formant-preserving pitch shift (Signalsmith Stretch via CPM), scale snap, auto-chop of long takes, recording from a sidechain input, echo ducking, presets.
+Formant-preserving pitch shift (Signalsmith Stretch via CPM), scale snap, auto-chop of long takes, recording from a sidechain input, echo ducking.
 
 ### Linux build notes
 Building on Linux (cloud sessions) needs JUCE's system packages: `libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libxi-dev libxrender-dev libxcomposite-dev libasound2-dev libfreetype-dev libfontconfig1-dev mesa-common-dev libgl1-mesa-dev libcurl4-openssl-dev`. AU only builds on macOS.
