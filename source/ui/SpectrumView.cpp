@@ -7,8 +7,8 @@ namespace vox
 namespace
 {
     constexpr float sidePad = 28.0f;      // the frequency axis starts and ends this far inside the plot area
-    constexpr float zeroFraction = 0.42f; // the zero line, as a fraction of the plot height (reduction hangs below it)
-    constexpr float topRoom = 34.0f;      // +18 dB sits this far below the top of the plot
+    constexpr float zeroFraction = 0.4f;  // the zero line, as a fraction of the plot height (reduction hangs below it)
+    constexpr float topRoom = 26.0f;      // +18 dB sits this far below the top of the plot (under the frequency labels)
     constexpr float dbPerGrid = 6.0f;
     constexpr float freqLabelHeight = 22.0f;
     constexpr float dotStep = 22.0f;      // the background dot grid

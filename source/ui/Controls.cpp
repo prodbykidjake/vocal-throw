@@ -94,7 +94,7 @@ void Knob::paintOverChildren (juce::Graphics& g)
     const auto& pal = theme.p();
     const auto centre = slider.getBounds().toFloat().getCentre();
     if (size == Size::large)
-        fonts::draw (g, format (slider.getValue()), juce::Rectangle<float> (140.0f, 40.0f).withCentre (centre), fonts::make (500, 32.0f, -0.01f), pal.ink);
+        fonts::draw (g, format (slider.getValue()), juce::Rectangle<float> (120.0f, 34.0f).withCentre (centre), fonts::make (500, 26.0f, -0.01f), pal.ink);
     else if (size == Size::medium)
         fonts::draw (g, format (slider.getValue()), juce::Rectangle<float> (90.0f, 24.0f).withCentre (centre), fonts::make (500, 17.0f), pal.ink);
     else

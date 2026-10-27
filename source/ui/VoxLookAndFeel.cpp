@@ -45,7 +45,7 @@ void VoxLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int widt
     const auto centre = area.getCentre();
     const bool large = d > 110.0f;
     const auto thickness = large ? 4.0f : 2.6f;
-    const auto radius = d * 0.5f - thickness * 3.0f; // room for the glow
+    const auto radius = d * 0.5f - thickness * 3.0f - (large ? 6.0f : 0.0f); // room for the glow (and the ticks)
     const auto valueAngle = startAngle + pos * (endAngle - startAngle);
     const bool bipolar = slider.getProperties().contains ("bipolar");
     const auto fromAngle = bipolar ? (startAngle + endAngle) * 0.5f : startAngle;
@@ -65,7 +65,7 @@ void VoxLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int widt
         for (int i = 0; i <= 24; ++i)
         {
             const auto a = startAngle + (float) i / 24.0f * (endAngle - startAngle);
-            const auto r1 = radius + thickness + 5.0f;
+            const auto r1 = radius + thickness + 3.0f;
             const auto r2 = r1 + (i % 6 == 0 ? 6.0f : 3.0f);
             g.drawLine (centre.x + std::sin (a) * r1, centre.y - std::cos (a) * r1, centre.x + std::sin (a) * r2, centre.y - std::cos (a) * r2, 1.0f);
         }

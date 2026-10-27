@@ -11,24 +11,33 @@
 
 namespace vox
 {
-/** A titled glass panel floating over the graph. The controls inside it are siblings laid on top. */
-class GlassPanel : public juce::Component
+/** One continuous glass strip split into titled sections by hairline dividers. The controls of each
+    section are siblings laid on top, placed with sectionBounds(). */
+class GlassStrip : public juce::Component
 {
 public:
-    GlassPanel (Theme& t, const juce::String& panelTitle) : theme (t), title (panelTitle) { setInterceptsMouseClicks (true, false); }
+    struct Section
+    {
+        juce::String title;
+        int width;
+    };
+
+    GlassStrip (Theme& t, std::vector<Section> stripSections) : theme (t), sections (std::move (stripSections)) { setInterceptsMouseClicks (true, false); }
+
+    /** Section `index` in the parent's coordinates (the strip must already have its bounds). */
+    juce::Rectangle<int> sectionBounds (int index) const;
     void paint (juce::Graphics&) override;
 
 private:
     Theme& theme;
-    juce::String title;
+    std::vector<Section> sections;
 };
 
 /** Everything inside the plugin window, laid out in design pixels on the fixed 1480 x 860 canvas. The
     editor scales this one component to the real window size.
 
-    The spectrum fills the canvas; the controls sit on small glass tiles scattered over it at uneven
-    positions and sizes (one table in EditorContent.cpp), the band editor is a dock along the bottom, and
-    the header floats over the top. */
+    The header floats over the top, then a glass strip of controls, the graph, a second strip and the band
+    editor dock along the bottom. */
 class EditorContent : public juce::Component, private juce::ChangeListener
 {
 public:
@@ -60,9 +69,9 @@ private:
     bool deltaOn = false, bypassOn = false;
     juce::ParameterAttachment deltaAttachment, bypassAttachment;
 
-    // the graph, then the tiles, then the controls on them
+    // the graph, then the strips, then the controls on them
     SpectrumView spectrum;
-    GlassPanel sidechainTile, qualityTile, depthTile, detailTile, modeTile, outputTile, timeTile, stereoTile, switchesTile;
+    GlassStrip topStrip, bottomStrip;
 
     SegmentedControl mode;
     Knob depth, detail, selectivity, balance;

@@ -37,7 +37,7 @@ public:
 
     juce::Slider& getSlider() noexcept { return slider; }
 
-    static constexpr int sizeFor (Size s) noexcept { return s == Size::large ? 176 : (s == Size::medium ? 110 : 74); }
+    static constexpr int sizeFor (Size s) noexcept { return s == Size::large ? 136 : (s == Size::medium ? 110 : 74); }
     static constexpr int heightFor (Size s) noexcept { return sizeFor (s) + 20; }
 
 private:
