@@ -6,8 +6,8 @@ namespace vox
 {
 namespace
 {
-    constexpr int pad = 18;
-    constexpr int gap = 12;
+    constexpr int pad = 22;
+    constexpr int gap = 18;
 
     juce::String dot (const char* utf8) { return juce::String (juce::CharPointer_UTF8 (utf8)); }
 }
@@ -25,6 +25,8 @@ AdvancedDrawer::AdvancedDrawer (Theme& t, juce::AudioProcessorValueTreeState& s)
 {
     for (auto* c : { &maxCut, &wetTrim, &detailLow, &detailHigh, &attackLow, &attackHigh, &releaseLow, &releaseHigh })
         addAndMakeVisible (c);
+    for (auto* c : { &wetTrim, &detailLow, &detailHigh, &attackLow, &attackHigh, &releaseLow, &releaseHigh })
+        c->setBipolar (true);
 }
 
 void AdvancedDrawer::resized()
@@ -34,32 +36,24 @@ void AdvancedDrawer::resized()
         left.setBounds (pad, y, colW, ValueSlider::height);
         right.setBounds (pad + colW + gap, y, colW, ValueSlider::height);
     };
-    row (maxCut, wetTrim, 44);
-    row (detailLow, detailHigh, 158);
-    row (attackLow, attackHigh, 158 + 71);
-    row (releaseLow, releaseHigh, 158 + 142);
+    row (maxCut, wetTrim, 50);
+    row (detailLow, detailHigh, 162);
+    row (attackLow, attackHigh, 162 + 54);
+    row (releaseLow, releaseHigh, 162 + 108);
 }
 
 void AdvancedDrawer::paint (juce::Graphics& g)
 {
     const auto& pal = theme.p();
-    const auto area = getLocalBounds().toFloat();
-    juce::Path p;
-    p.addRoundedRectangle (area.getX(), area.getY(), area.getWidth() + 12.0f, area.getHeight(), 10.0f);
-    juce::DropShadow (pal.shade.withAlpha (0.22f), 30, { -4, 12 }).drawForPath (g, p);
+    theme.paintGlass (g, getLocalBounds().toFloat().reduced (1.0f), 16.0f, 0.94f);
 
-    g.setColour (pal.panel.withAlpha (0.97f));
-    g.fillPath (p);
-    g.setColour (theme.sheen (0.25f));
-    g.strokePath (p, juce::PathStrokeType (1.0f));
+    const auto title = fonts::make (600, 11.0f, 0.22f);
+    fonts::draw (g, "advanced", { (float) pad, 16.0f, 200.0f, 16.0f }, title, pal.accent, juce::Justification::centredLeft);
+    fonts::draw (g, "tilt", { (float) pad, 120.0f, 200.0f, 16.0f }, title, pal.accent, juce::Justification::centredLeft);
+    fonts::draw (g, "low acts below 500 Hz, high above 2 kHz", { (float) pad, 136.0f, (float) width - 2.0f * pad, 14.0f },
+        fonts::make (400, 10.0f, 0.04f), pal.inkDim, juce::Justification::centredLeft);
 
-    const auto ink = pal.label;
-    fonts::draw (g, "ADVANCED", { (float) pad, 16.0f, 200.0f, 14.0f }, fonts::make (700, 10.0f, 0.08f), ink, juce::Justification::centredLeft);
-    fonts::draw (g, "TILT", { (float) pad, 126.0f, 200.0f, 14.0f }, fonts::make (700, 10.0f, 0.08f), ink, juce::Justification::centredLeft);
-    fonts::draw (g, "Low acts below 500 Hz, high above 2 kHz.", { (float) pad, 138.0f, (float) width - 2.0f * pad, 14.0f },
-        fonts::make (400, 10.0f), pal.soft, juce::Justification::centredLeft);
-
-    g.setColour (pal.shade.withAlpha (0.13f));
-    g.fillRect (pad, 114, width - 2 * pad, 1);
+    g.setColour (pal.edge.withAlpha (0.07f));
+    g.fillRect (pad, 108, width - 2 * pad, 1);
 }
 } // namespace vox

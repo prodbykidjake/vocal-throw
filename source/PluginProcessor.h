@@ -47,11 +47,6 @@ public:
     float getUiScale() const noexcept { return uiScale; }
     void setUiScale (float scale) noexcept { uiScale = juce::jlimit (0.7f, 1.0f, scale); }
 
-    /** The editor's look (a vox::Look), saved with the session. */
-    int getLook() const noexcept { return look.load(); }
-    void setLook (int newLook) noexcept { look = juce::jlimit (0, numLooks - 1, newLook); }
-    static constexpr int numLooks = 5;
-
     int getActiveSlot() const noexcept { return activeSlot; }
     void switchToSlot (int slot);
     void copyActiveToOtherSlot();
@@ -71,7 +66,6 @@ private:
 
     int currentProgram = 0;
     float uiScale = 0.85f;
-    std::atomic<int> look { 0 };
     int activeSlot = 0;
     std::array<juce::ValueTree, 2> abState;
 

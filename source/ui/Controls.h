@@ -3,7 +3,7 @@
 #include "Theme.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 
-/** The design's controls. All are sized in design pixels and read their colours from the Theme when they
+/** The editor's controls. All are sized in design pixels and read their colours from the Theme when they
     paint, so delta and bypass restyle them without being rebuilt. Each one is bound to a parameter. */
 namespace vox
 {
@@ -19,22 +19,24 @@ namespace fmt
     juce::String signedPercent (double v); // "+30%", "-20%", "0%"
 }
 
-/** Draws the rounded value read-out used under knobs and sliders. */
-void drawPill (juce::Graphics& g, const Theme& theme, juce::Rectangle<float> area, const juce::String& text, float fontPx);
-
-/** A knob with its caption above and a value pill below. */
+/** A knob: a glowing arc with the value in its middle and the caption underneath. */
 class Knob : public juce::Component
 {
 public:
     Knob (Theme& theme, juce::AudioProcessorValueTreeState& state, const juce::String& paramID, const juce::String& caption,
-        Format format, bool large = false, bool onDeepRail = false);
+        Format format, bool large = false);
+
+    /** Fills the arc from the centre (for signed values such as the stereo balance). */
+    void setBipolar (bool shouldBeBipolar);
 
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
 
     juce::Slider& getSlider() noexcept { return slider; }
 
-    static int heightFor (bool large) noexcept { return large ? 231 : 125; }
+    static constexpr int sizeFor (bool large) noexcept { return large ? 176 : 74; }
+    static constexpr int heightFor (bool large) noexcept { return sizeFor (large) + 20; }
 
 private:
     Theme& theme;
@@ -42,19 +44,20 @@ private:
     juce::String caption;
     Format format;
     bool large;
-    bool deepRail;
     juce::SliderParameterAttachment attachment;
 };
 
-/** A caption, a thin slider and a value pill (the design's ".value-slider"). */
+/** A caption and value on one line over a hairline slider. */
 class ValueSlider : public juce::Component
 {
 public:
     ValueSlider (Theme& theme, juce::AudioProcessorValueTreeState& state, const juce::String& paramID, const juce::String& caption,
         Format format);
 
-    /** Overrides the thumb colour (the band editor uses the selected band's colour). */
+    /** Overrides the fill colour (the band editor uses the selected band's colour). */
     void setAccent (juce::Colour colour);
+    /** Fills from the centre (for signed values). */
+    void setBipolar (bool shouldBeBipolar);
     /** Re-binds to another parameter (the band editor follows the selected band). */
     void bindTo (juce::AudioProcessorValueTreeState& state, const juce::String& paramID);
 
@@ -64,7 +67,7 @@ public:
     juce::Slider& getSlider() noexcept { return slider; }
     void setEnabledLook (bool shouldBeEnabled);
 
-    static constexpr int height = 61;
+    static constexpr int height = 38;
 
 private:
     Theme& theme;
@@ -75,7 +78,7 @@ private:
     juce::UndoManager* undo = nullptr;
 };
 
-/** A ring that fills with coral when on (DELTA, BYPASS). */
+/** A ring that lights up when on (delta, bypass). */
 class RoundToggle : public juce::Button
 {
 public:
@@ -88,7 +91,7 @@ private:
     juce::ButtonParameterAttachment attachment;
 };
 
-/** Two or more labelled segments bound to a choice parameter (SOFT | HARD). */
+/** Two or more labelled segments bound to a choice parameter (soft | hard). */
 class SegmentedControl : public juce::Component
 {
 public:

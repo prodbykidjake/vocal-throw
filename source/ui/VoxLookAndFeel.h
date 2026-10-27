@@ -5,11 +5,12 @@
 
 namespace vox
 {
-/** Draws sliders the way the design does: soft knobs (a white value ring around a charcoal face) and the
-    thin value sliders. Both use design pixels, the editor scales everything with a transform.
+/** Draws sliders in the editor's style: knobs are thin glowing arcs (the large one gets tick marks and a
+    violet-to-mint sweep), linear sliders are hairline tracks with a glowing fill. Both use design pixels;
+    the editor scales everything with a transform.
 
-    Slider properties (set with getProperties().set): "bg" (ARGB int) is the colour the knob ring sits on,
-    "accent" (ARGB int) overrides the thumb colour of a linear slider. */
+    Slider properties (set with getProperties().set): "bipolar" makes the fill start from the centre,
+    "accent" (ARGB int) overrides the colour of a linear slider. */
 class VoxLookAndFeel : public juce::LookAndFeel_V4, private juce::ChangeListener
 {
 public:

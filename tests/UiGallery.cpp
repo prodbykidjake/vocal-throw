@@ -5,7 +5,7 @@
 #include <ui/Icons.h>
 #include <ui/VoxLookAndFeel.h>
 
-// Renders every control primitive on both rail colours. Set VOX_GALLERY_PATH to save the PNG and look at it.
+// Renders every control primitive on the background and on a glass panel. Set VOX_GALLERY_PATH to save the PNG and look at it.
 namespace
 {
 class Gallery : public juce::Component
@@ -19,7 +19,7 @@ public:
 
         large = std::make_unique<Knob> (theme, p.apvts, ParamIDs::depth, "DEPTH", fmt::percent, true);
         small = std::make_unique<Knob> (theme, p.apvts, ParamIDs::detail, "DETAIL", fmt::percent);
-        deepSmall = std::make_unique<Knob> (theme, p.apvts, ParamIDs::attack, "ATTACK", fmt::percent, false, true);
+        deepSmall = std::make_unique<Knob> (theme, p.apvts, ParamIDs::attack, "ATTACK", fmt::percent);
         balance = std::make_unique<Knob> (theme, p.apvts, ParamIDs::stereoBalance, "BALANCE", fmt::balance);
         mix = std::make_unique<ValueSlider> (theme, p.apvts, ParamIDs::mix, "MIX", fmt::percent);
         trim = std::make_unique<ValueSlider> (theme, p.apvts, ParamIDs::outGain, "TRIM", fmt::decibels);
@@ -58,23 +58,25 @@ public:
     void paint (juce::Graphics& g) override
     {
         const auto& pal = theme.p();
-        g.setColour (pal.rail);
-        g.fillRect (0, 0, 420, getHeight());
-        g.setColour (pal.railDeep);
-        g.fillRect (420, 0, getWidth() - 420, getHeight());
+        g.fillAll (pal.bg);
+        theme.paintGlass (g, { 425.0f, 4.0f, 145.0f, (float) getHeight() - 8.0f });
+
+        // an accent swatch in the corner, for the delta/bypass checks
+        g.setColour (pal.accent);
+        g.fillRect (0, 0, 12, 12);
 
         // the wave logo and the icon set
         vox::icons::stroke (g, vox::icons::wave(), juce::Rectangle<float> (34.0f, 18.0f).translated (290.0f, 330.0f), pal.accent, 2.0f);
-        vox::fonts::draw (g, "VOX SMOOVE", { 290.0f, 352.0f, 130.0f, 30.0f }, vox::fonts::make (700, 18.0f, 0.09f), juce::Colour (0xff33444d), juce::Justification::centredLeft);
+        vox::fonts::draw (g, "VOX SMOOVE", { 290.0f, 352.0f, 130.0f, 30.0f }, vox::fonts::make (700, 18.0f, 0.09f), pal.ink, juce::Justification::centredLeft);
 
         for (int shape = 0; shape < vs::numBandShapes; ++shape)
             vox::icons::stroke (g, vox::icons::bandShape ((vs::BandShape) shape), juce::Rectangle<float> (20.0f, 22.0f).translated (580.0f + 36.0f * (float) (shape % 4), 20.0f + 36.0f * (float) (shape / 4)), pal.accent, 2.0f);
-        vox::icons::stroke (g, vox::icons::lock (true), juce::Rectangle<float> (18.0f, 18.0f).translated (580.0f, 100.0f), pal.muted, 1.5f);
-        vox::icons::stroke (g, vox::icons::lock (false), juce::Rectangle<float> (18.0f, 18.0f).translated (610.0f, 100.0f), pal.muted, 1.5f);
-        vox::icons::stroke (g, vox::icons::chevron (false), juce::Rectangle<float> (18.0f, 18.0f).translated (640.0f, 100.0f), pal.muted, 1.5f);
-        vox::icons::stroke (g, vox::icons::chevron (true), juce::Rectangle<float> (18.0f, 18.0f).translated (670.0f, 100.0f), pal.muted, 1.5f);
-        vox::icons::stroke (g, vox::icons::plus(), juce::Rectangle<float> (18.0f, 18.0f).translated (700.0f, 100.0f), pal.muted, 1.5f);
-        g.setColour (pal.muted);
+        vox::icons::stroke (g, vox::icons::lock (true), juce::Rectangle<float> (18.0f, 18.0f).translated (580.0f, 100.0f), pal.inkSoft, 1.5f);
+        vox::icons::stroke (g, vox::icons::lock (false), juce::Rectangle<float> (18.0f, 18.0f).translated (610.0f, 100.0f), pal.inkSoft, 1.5f);
+        vox::icons::stroke (g, vox::icons::chevron (false), juce::Rectangle<float> (18.0f, 18.0f).translated (640.0f, 100.0f), pal.inkSoft, 1.5f);
+        vox::icons::stroke (g, vox::icons::chevron (true), juce::Rectangle<float> (18.0f, 18.0f).translated (670.0f, 100.0f), pal.inkSoft, 1.5f);
+        vox::icons::stroke (g, vox::icons::plus(), juce::Rectangle<float> (18.0f, 18.0f).translated (700.0f, 100.0f), pal.inkSoft, 1.5f);
+        g.setColour (pal.inkSoft);
         juce::Path gear = vox::icons::gear();
         g.fillPath (gear, juce::AffineTransform::scale (20.0f).translated (580.0f, 130.0f));
 
@@ -124,7 +126,7 @@ TEST_CASE ("UI primitives render", "[ui]")
         theme.setState (true, false);
         auto delta = gallery.createComponentSnapshot (gallery.getLocalBounds(), true, 1.0f);
         save (delta, "VOX_GALLERY_PATH", "-delta");
-        CHECK (delta.getPixelAt (5, 5) != image.getPixelAt (5, 5)); // the rail went warm
+        CHECK (delta.getPixelAt (5, 5) != image.getPixelAt (5, 5)); // the accent went warm
 
         theme.setState (false, true);
         auto bypassed = gallery.createComponentSnapshot (gallery.getLocalBounds(), true, 1.0f);

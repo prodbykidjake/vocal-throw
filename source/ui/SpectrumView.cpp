@@ -6,11 +6,12 @@ namespace vox
 {
 namespace
 {
-    constexpr float sidePad = 33.0f;           // the frequency axis starts and ends this far from the edges
-    constexpr float zeroFraction = 0.4875f;    // the zero line sits at 312 of the design's 640-unit viewBox
-    constexpr float gridStepPx = 93.4f;        // the design's horizontal grid spacing (6 dB)
+    constexpr float sidePad = 28.0f;      // the frequency axis starts and ends this far inside the plot area
+    constexpr float zeroFraction = 0.42f; // the zero line, as a fraction of the plot height (reduction hangs below it)
+    constexpr float topRoom = 34.0f;      // +18 dB sits this far below the top of the plot
     constexpr float dbPerGrid = 6.0f;
-    constexpr float freqLabelHeight = 32.0f;
+    constexpr float freqLabelHeight = 22.0f;
+    constexpr float dotStep = 22.0f;      // the background dot grid
 
     const char* const shapeNames[] = { "Low Cut", "Low Shelf", "High Shelf", "High Cut", "Bell", "Bandpass", "Band Reject", "Tilt" };
 
@@ -29,17 +30,26 @@ SpectrumView::SpectrumView (Theme& t, PluginProcessor& p) : theme (t), processor
 }
 
 //==============================================================================
-float SpectrumView::pxPerDb() const noexcept { return gridStepPx / dbPerGrid * ((float) getHeight() / 766.0f); }
-float SpectrumView::zeroLineY() const noexcept { return (float) getHeight() * zeroFraction; }
+void SpectrumView::setPlotInsets (juce::BorderSize<int> insets)
+{
+    plotInsets = insets;
+    repaint();
+}
+
+juce::Rectangle<float> SpectrumView::plotArea() const noexcept { return plotInsets.subtractedFrom (getLocalBounds()).toFloat(); }
+float SpectrumView::pxPerDb() const noexcept { return juce::jmax (1.0f, (plotArea().getHeight() * zeroFraction - topRoom) / maxDb); }
+float SpectrumView::zeroLineY() const noexcept { return plotArea().getY() + plotArea().getHeight() * zeroFraction; }
 
 float SpectrumView::xForHz (float hz) const noexcept
 {
-    return sidePad + ((float) getWidth() - 2.0f * sidePad) * std::log (juce::jmax (hz, 1.0f) / 20.0f) / std::log (1000.0f);
+    const auto plot = plotArea();
+    return plot.getX() + sidePad + (plot.getWidth() - 2.0f * sidePad) * std::log (juce::jmax (hz, 1.0f) / 20.0f) / std::log (1000.0f);
 }
 
 float SpectrumView::hzForX (float x) const noexcept
 {
-    return 20.0f * std::pow (1000.0f, (x - sidePad) / ((float) getWidth() - 2.0f * sidePad));
+    const auto plot = plotArea();
+    return 20.0f * std::pow (1000.0f, (x - plot.getX() - sidePad) / (plot.getWidth() - 2.0f * sidePad));
 }
 
 float SpectrumView::yForDb (float db) const noexcept { return zeroLineY() - juce::jlimit (-maxDb, maxDb, db) * pxPerDb(); }
@@ -47,7 +57,8 @@ float SpectrumView::dbForY (float y) const noexcept { return juce::jlimit (-maxD
 
 juce::Rectangle<float> SpectrumView::addButtonArea() const noexcept
 {
-    return { (float) getWidth() - 27.0f - 30.0f, (float) getHeight() - 22.0f - 30.0f, 30.0f, 30.0f };
+    const auto plot = plotArea();
+    return { plot.getRight() - 16.0f - 32.0f, plot.getBottom() - 16.0f - 32.0f - freqLabelHeight, 32.0f, 32.0f };
 }
 
 //==============================================================================
@@ -163,99 +174,127 @@ void SpectrumView::timerCallback()
         select (next);
     }
 
-    repaint();
+    // only the plot moves; the panels floating over the rest don't need repainting 30 times a second
+    repaint (plotArea().toNearestInt());
 }
 
 //==============================================================================
 void SpectrumView::resized() {}
 
+void SpectrumView::paintBackground (juce::Graphics& g, juce::Rectangle<float> plot)
+{
+    const auto& pal = theme.p();
+    const auto w = (float) getWidth();
+    const auto h = (float) getHeight();
+
+    // deep vertical gradient with a soft light behind the plot
+    g.setGradientFill (juce::ColourGradient (pal.bg, 0.0f, 0.0f, pal.bgDeep, 0.0f, h, false));
+    g.fillAll();
+    juce::ColourGradient glow (pal.bgGlow.withAlpha (0.9f), plot.getCentreX(), zeroLineY(), pal.bgGlow.withAlpha (0.0f), plot.getCentreX() + plot.getWidth() * 0.55f,
+        zeroLineY(), true);
+    g.setGradientFill (glow);
+    g.fillAll();
+
+    // the dot grid, brighter on the plot's dB lines
+    const auto clip = g.getClipBounds().toFloat();
+    g.setColour (pal.edge.withAlpha (0.06f));
+    for (auto y = std::fmod (zeroLineY(), dotStep); y < h; y += dotStep)
+    {
+        if (y < clip.getY() - 2.0f || y > clip.getBottom() + 2.0f)
+            continue;
+        for (auto x = std::fmod (plot.getCentreX(), dotStep); x < w; x += dotStep)
+            if (x >= clip.getX() - 2.0f && x <= clip.getRight() + 2.0f)
+                g.fillRect (x - 0.75f, y - 0.75f, 1.5f, 1.5f);
+    }
+}
+
 void SpectrumView::paint (juce::Graphics& g)
 {
     const auto& pal = theme.p();
     const auto bypassed = theme.isBypassed();
-    const auto w = (float) getWidth();
-    const auto h = (float) getHeight();
+    const auto plot = plotArea();
     const auto zeroY = zeroLineY();
     const auto ppd = pxPerDb();
 
-    // CSS: the whole graph goes grey and 45 % opaque when bypassed
+    paintBackground (g, plot);
+
     if (bypassed)
-        g.beginTransparencyLayer (0.45f);
-    auto tone = [&] (juce::Colour c) { return bypassed ? c.withSaturation (0.0f) : c; };
+        g.beginTransparencyLayer (0.55f);
 
-    g.fillAll (tone (pal.graph));
-    g.setGradientFill (juce::ColourGradient (theme.sheen (0.14f), 0.0f, 0.0f, theme.sheen (0.0f), 0.0f, h * 0.38f, false));
-    g.fillRect (0.0f, 0.0f, w, h * 0.38f);
-
-    // grid: 6 dB steps, and the standard frequencies
-    g.setColour (tone (pal.graphInk.withAlpha (0.22f)));
-    for (int i = -3; i <= 3; ++i)
-        if (i != 0)
-            g.fillRect (0.0f, zeroY - (float) i * dbPerGrid * ppd - 0.5f, w, 1.0f);
-    for (const float hz : { 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f })
-        g.fillRect (xForHz (hz) - 0.5f, 0.0f, 1.0f, h);
-
-    // frequency labels along the top
-    const auto labelColour = tone (pal.graphInk.withAlpha (0.88f));
+    // standard frequencies: hairlines and tiny labels along the bottom of the plot
+    const auto labelY = plot.getBottom() - freqLabelHeight;
+    const auto labelFont = fonts::make (500, 10.0f, 0.08f);
+    for (const int hz : { 50, 100, 200, 500, 1000, 2000, 5000, 10000 })
+    {
+        const auto x = xForHz ((float) hz);
+        const auto major = hz == 100 || hz == 1000 || hz == 10000;
+        g.setGradientFill (juce::ColourGradient (pal.edge.withAlpha (0.0f), x, plot.getY() + 20.0f, pal.edge.withAlpha (major ? 0.07f : 0.035f), x, zeroY, false));
+        g.fillRect (x - 0.5f, plot.getY() + 20.0f, 1.0f, zeroY - plot.getY() - 20.0f);
+        g.setGradientFill (juce::ColourGradient (pal.edge.withAlpha (major ? 0.07f : 0.035f), x, zeroY, pal.edge.withAlpha (0.0f), x, labelY, false));
+        g.fillRect (x - 0.5f, zeroY, 1.0f, labelY - zeroY);
+    }
     for (const float hz : { 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f, 20000.0f })
-        fonts::draw (g, frequencyLabel (hz), juce::Rectangle<float> (40.0f, freqLabelHeight).withCentre ({ xForHz (hz), freqLabelHeight * 0.5f }),
-            fonts::make (400, 12.0f), labelColour);
+        fonts::draw (g, frequencyLabel (hz), juce::Rectangle<float> (44.0f, freqLabelHeight).withCentre ({ xForHz (hz), labelY + freqLabelHeight * 0.5f }),
+            labelFont, pal.inkDim);
 
-    // dB labels on the right
+    // dB scale on the right edge of the plot
     const auto minus = juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));
     for (int i = 3; i >= -3; --i)
     {
+        if (i == 0)
+            continue;
         const auto db = i * (int) dbPerGrid;
-        const auto text = db > 0 ? "+" + juce::String (db) : (db < 0 ? minus + juce::String (-db) : juce::String ("0"));
-        fonts::draw (g, text, juce::Rectangle<float> (w - 11.0f - 22.0f, zeroY - (float) i * dbPerGrid * ppd - 8.0f, 22.0f, 16.0f),
-            fonts::make (400, 11.0f), tone (pal.graphInk.withAlpha (0.86f)), juce::Justification::centredLeft);
+        const auto y = zeroY - (float) i * dbPerGrid * ppd;
+        const auto text = db > 0 ? "+" + juce::String (db) : minus + juce::String (-db);
+        fonts::draw (g, text, juce::Rectangle<float> (plot.getRight() - 40.0f, y - 8.0f, 30.0f, 16.0f), labelFont, pal.inkDim, juce::Justification::centredRight);
+        g.setColour (pal.edge.withAlpha (0.12f));
+        g.fillRect (plot.getRight() - 6.0f, y - 0.5f, 4.0f, 1.0f);
     }
 
-    // zero line
-    g.setColour (tone (pal.coral));
-    g.fillRect (0.0f, zeroY - 0.75f, w, 1.5f);
+    // zero line: a hairline that fades out towards the sides
+    {
+        juce::ColourGradient line (pal.ink.withAlpha (0.0f), plot.getX(), zeroY, pal.ink.withAlpha (0.0f), plot.getRight(), zeroY, false);
+        line.addColour (0.15, pal.ink.withAlpha (0.18f));
+        line.addColour (0.85, pal.ink.withAlpha (0.18f));
+        g.setGradientFill (line);
+        g.fillRect (plot.getX(), zeroY - 0.5f, plot.getWidth(), 1.0f);
+    }
 
-    // the gain reduction: a wash and a glowing white line hanging below the zero line
+    // the gain reduction: a gradient wash and a glowing line hanging below the zero line
     {
         juce::Path line;
         float deepest = zeroY;
-        line.startNewSubPath (0.0f, zeroY);
+        line.startNewSubPath (plot.getX() + sidePad, zeroY);
         for (int i = 0; i < (int) shown.size(); ++i)
         {
             const auto x = xForHz (vs::ResonanceSuppressor::displayPointFrequency (i));
-            const auto y = juce::jmin (zeroY + shown[(size_t) i] * ppd, h - 4.0f);
+            const auto y = juce::jmin (zeroY + shown[(size_t) i] * ppd, labelY - 6.0f);
             deepest = juce::jmax (deepest, y);
             line.lineTo (x, y);
         }
-        line.lineTo (w, zeroY);
+        line.lineTo (plot.getRight() - sidePad, zeroY);
 
         juce::Path wash (line);
-        wash.lineTo (w, zeroY);
         wash.closeSubPath();
-
-        g.setGradientFill (juce::ColourGradient (tone (pal.reductionTop).withAlpha (0.75f), 0.0f, zeroY, tone (pal.reductionBottom).withAlpha (0.08f), 0.0f, juce::jmax (zeroY + 20.0f, deepest), false));
+        g.setGradientFill (juce::ColourGradient (pal.accent.withAlpha (0.32f), 0.0f, zeroY, pal.accent2.withAlpha (0.0f), 0.0f,
+            juce::jmax (zeroY + 24.0f, deepest), false));
         g.fillPath (wash);
 
-        // soft glow, then the line itself. With nothing being reduced it would just hide the coral zero line.
+        // with nothing being reduced the line would just sit on the zero line
         if (deepest - zeroY > 0.75f)
-        {
-            g.setColour (tone (pal.graphInk.withAlpha (0.14f)));
-            g.strokePath (line, juce::PathStrokeType (9.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-            g.setColour (tone (pal.graphInk.withAlpha (0.2f)));
-            g.strokePath (line, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-            g.setColour (tone (pal.graphInk.withAlpha (0.95f)));
-            g.strokePath (line, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        }
+            theme.strokeGlow (g, line, pal.accent, 1.8f);
     }
 
-    // the depth curve
+    // the depth curve, a violet dashed line
     {
         const auto bands = readAll();
         juce::Path curve;
-        const int steps = juce::jmax (2, (int) w / 3);
+        const int steps = juce::jmax (2, (int) plot.getWidth() / 3);
+        const auto left = plot.getX() + sidePad;
+        const auto span = plot.getWidth() - 2.0f * sidePad;
         for (int i = 0; i <= steps; ++i)
         {
-            const auto x = (float) i / (float) steps * w;
+            const auto x = left + (float) i / (float) steps * span;
             const auto weight = vs::DepthCurve::weightAt (bands, hzForX (x));
             const auto y = yForDb (20.0f * std::log10 (juce::jmax (weight, 1.0e-3f)));
             if (i == 0)
@@ -264,14 +303,19 @@ void SpectrumView::paint (juce::Graphics& g)
                 curve.lineTo (x, y);
         }
 
+        if (pal.glow > 0.0f)
+        {
+            g.setColour (pal.accent2.withAlpha (0.1f));
+            g.strokePath (curve, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
         juce::Path dashed;
-        const float dashes[] = { 5.0f, 4.0f };
-        juce::PathStrokeType (1.5f).createDashedStroke (dashed, curve, dashes, 2);
-        g.setColour (tone (pal.curve.withAlpha (0.62f)));
+        const float dashes[] = { 4.0f, 5.0f };
+        juce::PathStrokeType (1.4f).createDashedStroke (dashed, curve, dashes, 2);
+        g.setColour (pal.accent2.withAlpha (0.9f));
         g.fillPath (dashed);
     }
 
-    // nodes: the selected one is drawn last, on top
+    // nodes: rings in the band colours, the selected one drawn last with a halo
     std::vector<int> order;
     for (int b = 0; b < ParamIDs::numBands; ++b)
         if (isActive (b) && b != selected)
@@ -284,38 +328,36 @@ void SpectrumView::paint (juce::Graphics& g)
         const auto s = readBand (b);
         const auto centre = nodePosition (b);
         const auto emphasised = b == selected || b == hovered;
-        const auto radius = nodeRadius * (emphasised ? 1.16f : 1.0f);
+        const auto radius = nodeRadius * (emphasised ? 0.82f : 0.7f);
         const auto circle = juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (centre);
-        const auto colour = tone (Theme::bandColour (b));
+        const auto colour = theme.adj (Theme::bandColour (b));
 
-        if (b == selected)
+        if (b == selected && pal.glow > 0.0f)
         {
-            g.setColour (tone (pal.graphInk.withAlpha (0.23f)));
-            g.fillEllipse (circle.expanded (7.0f));
+            g.setColour (colour.withAlpha (0.12f));
+            g.fillEllipse (circle.expanded (10.0f));
+            g.setColour (colour.withAlpha (0.35f));
+            g.drawEllipse (circle.expanded (6.0f), 1.0f);
         }
 
-        juce::Path shadowShape;
-        shadowShape.addEllipse (circle);
-        juce::DropShadow (pal.shade.withAlpha (0.25f), 5, { 0, 2 }).drawForPath (g, shadowShape);
-
+        g.setColour (pal.bgDeep.withAlpha (0.85f));
+        g.fillEllipse (circle);
         if (s.enabled)
         {
-            g.setColour (colour);
+            g.setColour (colour.withAlpha (0.22f));
             g.fillEllipse (circle);
-            g.setColour (tone (pal.graphInk.withAlpha (0.86f)));
+            g.setColour (colour);
             g.drawEllipse (circle.reduced (1.0f), 2.0f);
+            g.fillEllipse (circle.withSizeKeepingCentre (5.0f, 5.0f));
         }
         else
         {
-            // bypassed: hollow and dim
-            g.setColour (colour.withAlpha (0.28f));
-            g.fillEllipse (circle);
-            g.setColour (tone (pal.graphInk.withAlpha (0.6f)));
             juce::Path ring;
             ring.addEllipse (circle.reduced (1.0f));
             juce::Path dashedRing;
             const float ringDashes[] = { 3.0f, 3.0f };
-            juce::PathStrokeType (2.0f).createDashedStroke (dashedRing, ring, ringDashes, 2);
+            juce::PathStrokeType (1.6f).createDashedStroke (dashedRing, ring, ringDashes, 2);
+            g.setColour (colour.withAlpha (0.6f));
             g.fillPath (dashedRing);
         }
     }
@@ -323,11 +365,11 @@ void SpectrumView::paint (juce::Graphics& g)
     // "+" add band
     {
         const auto area = addButtonArea();
-        g.setColour (pal.tint.withAlpha (overAdd ? 0.3f : 0.17f));
+        g.setColour (pal.glass.withAlpha (0.85f));
         g.fillEllipse (area);
-        g.setColour (tone (pal.graphInk.withAlpha (0.65f)));
+        g.setColour (overAdd ? pal.accent.withAlpha (0.7f) : pal.edge.withAlpha (0.14f));
         g.drawEllipse (area.reduced (0.5f), 1.0f);
-        icons::stroke (g, icons::plus(), area.withSizeKeepingCentre (14.0f, 14.0f), tone (pal.graphInk), 1.6f);
+        icons::stroke (g, icons::plus(), area.withSizeKeepingCentre (12.0f, 12.0f), overAdd ? pal.accent : pal.inkSoft, 1.5f);
     }
 
     // read-out for the node being dragged or hovered
@@ -335,16 +377,18 @@ void SpectrumView::paint (juce::Graphics& g)
     if (info >= 0 && isActive (info))
     {
         const auto s = readBand (info);
-        auto text = juce::String (shapeNames[(int) s.shape]) + "  " + (s.freqHz >= 1000.0f ? juce::String (s.freqHz / 1000.0f, 2) + " kHz" : juce::String (juce::roundToInt (s.freqHz)) + " Hz");
+        auto text = juce::String (shapeNames[(int) s.shape]).toLowerCase() + "   " + (s.freqHz >= 1000.0f ? juce::String (s.freqHz / 1000.0f, 2) + " kHz" : juce::String (juce::roundToInt (s.freqHz)) + " Hz");
         if (vs::shapeUsesGain (s.shape))
-            text << "  " << (s.gainDb > 0.0f ? "+" : "") << juce::String (s.gainDb, 1) << " dB";
+            text << "   " << (s.gainDb > 0.0f ? "+" : "") << juce::String (s.gainDb, 1) << " dB";
 
         const auto pos = nodePosition (info);
-        auto box = juce::Rectangle<float> (176.0f, 22.0f).withCentre ({ pos.x, pos.y - 34.0f });
-        box = box.withX (juce::jlimit (4.0f, w - 4.0f - box.getWidth(), box.getX())).withY (juce::jmax (freqLabelHeight, box.getY()));
-        g.setColour (pal.charcoal.withAlpha (0.94f));
-        g.fillRoundedRectangle (box, 5.0f);
-        fonts::draw (g, text, box, fonts::make (500, 11.0f), pal.barText);
+        auto box = juce::Rectangle<float> (196.0f, 26.0f).withCentre ({ pos.x, pos.y - 36.0f });
+        box = box.withX (juce::jlimit (plot.getX() + 4.0f, plot.getRight() - 4.0f - box.getWidth(), box.getX())).withY (juce::jmax (plot.getY() + 4.0f, box.getY()));
+        g.setColour (pal.glass.withAlpha (0.92f));
+        g.fillRoundedRectangle (box, 13.0f);
+        g.setColour (theme.adj (Theme::bandColour (info)).withAlpha (0.6f));
+        g.drawRoundedRectangle (box.reduced (0.5f), 13.0f, 1.0f);
+        fonts::draw (g, text, box, fonts::make (500, 11.0f, 0.04f), pal.ink);
     }
 
     if (bypassed)

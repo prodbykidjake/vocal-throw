@@ -6,11 +6,12 @@ namespace vox
 {
 namespace
 {
-    constexpr int padX = 18;
-    constexpr int colGap = 13;
-    constexpr int headingW = 95;
-    constexpr int sliderW = 104;
-    constexpr int shapesW = 236;
+    constexpr int padX = 22;
+    constexpr int colGap = 28;
+    constexpr int headingW = 120;
+    constexpr int sliderW = 196;
+    constexpr int shapeW = 32;
+    constexpr int shapeGap = 6;
 }
 
 class BandEditor::ShapeButton : public juce::Button
@@ -26,20 +27,23 @@ public:
 
     void paintButton (juce::Graphics& g, bool over, bool) override
     {
-        const auto area = getLocalBounds().toFloat();
+        const auto& pal = theme.p();
+        const auto area = getLocalBounds().toFloat().reduced (0.5f);
+        const auto colour = theme.adj (accent);
         if (selected)
         {
-            g.setColour (theme.adj (accent));
-            g.fillRoundedRectangle (area, 4.0f);
+            g.setColour (colour.withAlpha (0.16f));
+            g.fillRoundedRectangle (area, 8.0f);
+            g.setColour (colour.withAlpha (0.7f));
+            g.drawRoundedRectangle (area, 8.0f, 1.0f);
         }
         else if (over)
         {
-            g.setColour (theme.p().tint.withAlpha (0.15f));
-            g.fillRoundedRectangle (area, 4.0f);
+            g.setColour (pal.edge.withAlpha (0.06f));
+            g.fillRoundedRectangle (area, 8.0f);
         }
 
-        icons::stroke (g, icons::bandShape (shape), area.withSizeKeepingCentre (18.0f, 17.0f),
-            selected ? theme.p().onAccent : theme.p().muted, 1.8f);
+        icons::stroke (g, icons::bandShape (shape), area.withSizeKeepingCentre (17.0f, 16.0f), selected ? colour : pal.inkSoft, 1.6f);
     }
 
 private:
@@ -66,8 +70,14 @@ public:
         g.setColour (colour.withAlpha (bandEnabled ? 1.0f : 0.6f));
         if (bandEnabled)
         {
-            g.drawEllipse (circle, 2.0f);
-            g.fillEllipse (circle.withSizeKeepingCentre (7.0f, 7.0f));
+            if (theme.p().glow > 0.0f)
+            {
+                g.setColour (colour.withAlpha (0.18f));
+                g.fillEllipse (circle.expanded (4.0f));
+                g.setColour (colour);
+            }
+            g.drawEllipse (circle, 1.6f);
+            g.fillEllipse (circle.withSizeKeepingCentre (8.0f, 8.0f));
         }
         else
         {
@@ -94,6 +104,8 @@ BandEditor::BandEditor (Theme& t, juce::AudioProcessorValueTreeState& s)
 {
     for (auto* c : { &frequency, &sensitivity, &q, &balance })
         addAndMakeVisible (c);
+    sensitivity.setBipolar (true);
+    balance.setBipolar (true);
 
     for (int i = 0; i < vs::numBandShapes; ++i)
     {
@@ -199,7 +211,7 @@ void BandEditor::timerCallback()
 
 void BandEditor::resized()
 {
-    power->setBounds (padX, 19, 22, 22);
+    power->setBounds (padX, (height - 22) / 2, 22, 22);
 
     int x = padX + headingW + colGap;
     const auto y = (height - ValueSlider::height) / 2;
@@ -209,32 +221,30 @@ void BandEditor::resized()
         x += sliderW + colGap;
     }
 
-    // eight 26 px buttons, evenly spread across the last column
-    const auto gap = (float) (shapesW - 8 * 26) / 7.0f;
+    // the eight shape buttons, right-aligned
+    x = width - padX - 8 * shapeW - 7 * shapeGap;
     for (int i = 0; i < vs::numBandShapes; ++i)
-        shapes[(size_t) i]->setBounds (juce::roundToInt ((float) x + (float) i * (26.0f + gap)), (height - 32) / 2, 26, 32);
+        shapes[(size_t) i]->setBounds (x + i * (shapeW + shapeGap), (height - 32) / 2, shapeW, 32);
 }
 
 void BandEditor::paint (juce::Graphics& g)
 {
     const auto& pal = theme.p();
-    const auto area = getLocalBounds().toFloat().reduced (1.0f);
-    juce::Path p;
-    p.addRoundedRectangle (area, 10.0f);
-    juce::DropShadow (pal.shade.withAlpha (0.17f), 35, { 0, 15 }).drawForPath (g, p);
-
-    g.setColour (pal.panel.withAlpha (0.91f));
-    g.fillPath (p);
-    g.setColour (theme.sheen (0.25f));
-    g.strokePath (p, juce::PathStrokeType (1.0f));
+    theme.paintGlass (g, getLocalBounds().toFloat().reduced (1.0f), 18.0f, 0.82f);
 
     const auto active = band >= 0 && shownActive;
-    const auto text = band >= 0 ? "BAND " + juce::String (band + 1) : juce::String ("NO BAND");
-    fonts::draw (g, text, { (float) padX + 30.0f, 19.0f, 80.0f, 22.0f }, fonts::make (700, 10.0f, 0.07f),
-        pal.ink.withMultipliedAlpha (active && shownEnabled ? 1.0f : 0.35f), juce::Justification::centredLeft);
+    const auto text = band >= 0 ? "band " + juce::String (band + 1) : juce::String ("no band");
+    const auto h = (float) height;
+    fonts::draw (g, text, { (float) padX + 34.0f, h * 0.5f - 18.0f, 90.0f, 18.0f }, fonts::make (600, 12.0f, 0.16f),
+        pal.ink.withMultipliedAlpha (active && shownEnabled ? 1.0f : 0.4f), juce::Justification::centredLeft);
+    fonts::draw (g, active ? juce::String (shownEnabled ? "detection shape" : "bypassed") : juce::String ("double-click the graph"),
+        { (float) padX + 34.0f, h * 0.5f, 120.0f, 16.0f }, fonts::make (400, 10.0f, 0.08f), pal.inkDim, juce::Justification::centredLeft);
 
-    if (! active)
-        fonts::draw (g, "Double-click the graph to add a band", { (float) padX + headingW + colGap, 8.0f, 400.0f, 14.0f }, fonts::make (400, 10.0f),
-            pal.soft, juce::Justification::centredLeft);
+    // hairline dividers between the sections
+    g.setColour (pal.edge.withAlpha (0.07f));
+    const auto dividerX = (float) (padX + headingW + colGap / 2);
+    g.fillRect (dividerX, 18.0f, 1.0f, h - 36.0f);
+    const auto shapesX = (float) (width - padX - 8 * shapeW - 7 * shapeGap) - (float) colGap * 0.5f;
+    g.fillRect (shapesX, 18.0f, 1.0f, h - 36.0f);
 }
 } // namespace vox

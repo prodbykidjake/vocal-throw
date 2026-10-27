@@ -11,8 +11,23 @@
 
 namespace vox
 {
+/** A titled glass panel floating over the graph. The controls inside it are siblings laid on top. */
+class GlassPanel : public juce::Component
+{
+public:
+    GlassPanel (Theme& t, const juce::String& panelTitle) : theme (t), title (panelTitle) { setInterceptsMouseClicks (true, false); }
+    void paint (juce::Graphics&) override;
+
+private:
+    Theme& theme;
+    juce::String title;
+};
+
 /** Everything inside the plugin window, laid out in design pixels on the fixed 1480 x 860 canvas. The
-    editor scales this one component to the real window size. */
+    editor scales this one component to the real window size.
+
+    The spectrum fills the canvas; the controls sit on glass panels in a column on either side, the band
+    editor is a dock along the bottom, and the header floats over the top. */
 class EditorContent : public juce::Component, private juce::ChangeListener
 {
 public:
@@ -30,9 +45,6 @@ public:
     bool isDrawerOpen() const noexcept { return drawerOpen; }
     void showPopover (Popover::Kind kind);
 
-    /** Switches the look and remembers it in the session (what the look chips in Settings do). */
-    void setLook (Look look);
-
     SpectrumView& getSpectrum() noexcept { return spectrum; }
     BandEditor& getBandEditor() noexcept { return bandEditor; }
 
@@ -47,13 +59,17 @@ private:
     bool deltaOn = false, bypassOn = false;
     juce::ParameterAttachment deltaAttachment, bypassAttachment;
 
-    // main rail
+    // the graph, then the panels, then the controls on them
+    SpectrumView spectrum;
+    GlassPanel detectPanel, stereoPanel, timePanel, outputPanel, sidechainPanel, qualityPanel;
+
+    // left column
     SegmentedControl mode;
     Knob depth, detail, selectivity, balance;
     ChoiceButton stereo;
     ValueSlider link;
 
-    // utility rail
+    // right column
     Knob attack, release;
     ChoiceButton quality;
     LockButton lock;
@@ -62,9 +78,8 @@ private:
     ValueSlider mix, trim;
     RoundToggle delta, bypass;
 
-    // work area
+    // dock, header and overlays
     TopBar topBar;
-    SpectrumView spectrum;
     BandEditor bandEditor;
     AdvancedDrawer drawer;
     Popover popover;

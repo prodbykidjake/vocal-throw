@@ -47,9 +47,11 @@ float TopBarButton::getIdealWidth() const
 
 void TopBarButton::paintButton (juce::Graphics& g, bool over, bool)
 {
-    const auto base = theme.p().topBarInk.withAlpha (over ? 1.0f : 0.88f);
-    const auto colour = muted ? base.withMultipliedAlpha (0.38f / 0.88f) : base;
+    const auto& pal = theme.p();
     const auto area = getLocalBounds().toFloat();
+    auto colour = activeLook ? pal.accent : (over ? pal.ink : pal.inkSoft);
+    if (muted)
+        colour = pal.inkDim.withMultipliedAlpha (0.6f);
 
     if (kind == Kind::gear)
     {
@@ -60,11 +62,18 @@ void TopBarButton::paintButton (juce::Graphics& g, bool over, bool)
         return;
     }
 
-    fonts::draw (g, getButtonText(), area, fonts::make (weight, fontPx), colour);
+    fonts::draw (g, getButtonText(), area, fonts::make (weight, fontPx, 0.04f), colour);
     if (activeLook)
     {
-        g.setColour (theme.p().topBarInk);
-        g.fillRect (area.getX(), area.getCentreY() + 10.0f, area.getWidth(), 1.0f);
+        // a small glowing dot under the active item
+        const auto dot = juce::Rectangle<float> (4.0f, 4.0f).withCentre ({ area.getCentreX(), area.getCentreY() + 12.0f });
+        if (pal.glow > 0.0f)
+        {
+            g.setColour (pal.accent.withAlpha (0.3f));
+            g.fillEllipse (dot.expanded (3.0f));
+        }
+        g.setColour (pal.accent);
+        g.fillEllipse (dot);
     }
 }
 
@@ -79,7 +88,8 @@ LockButton::LockButton (Theme& t, juce::AudioProcessorValueTreeState& state)
 
 void LockButton::paintButton (juce::Graphics& g, bool over, bool)
 {
-    const auto colour = over ? theme.p().ink : theme.p().soft;
+    const auto& pal = theme.p();
+    const auto colour = getToggleState() ? pal.accent : (over ? pal.ink : pal.inkDim);
     icons::stroke (g, icons::lock (getToggleState()), getLocalBounds().toFloat().withSizeKeepingCentre (15.0f, 15.0f), colour, 1.4f);
 }
 
@@ -113,9 +123,9 @@ void MiniMeter::paint (juce::Graphics& g)
     for (int i = 0; i < bars; ++i)
     {
         const auto active = i < lit;
-        const auto h = active ? (i % 3 == 2 ? 10.0f : 6.0f) : 3.0f;
-        g.setColour (active ? pal.accent : pal.shade.withAlpha (0.18f));
-        g.fillRoundedRectangle ((float) i * (w + gap), (float) getHeight() - h, w, h, 2.0f);
+        const auto h = (float) getHeight() * (0.35f + 0.65f * (float) i / (float) (bars - 1));
+        g.setColour (active ? pal.accent.withAlpha (0.5f + 0.5f * (float) i / (float) bars) : pal.track);
+        g.fillRoundedRectangle ((float) i * (w + gap), (float) getHeight() - h, w, h, 1.5f);
     }
 }
 } // namespace vox

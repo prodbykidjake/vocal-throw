@@ -44,7 +44,7 @@ void PluginEditor::setScale (float scale)
 
 void PluginEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (theme.p().graph);
+    g.fillAll (theme.p().bgDeep);
 }
 
 void PluginEditor::resized()

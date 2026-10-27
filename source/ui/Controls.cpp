@@ -49,23 +49,13 @@ namespace fmt
     }
 } // namespace fmt
 
-void drawPill (juce::Graphics& g, const Theme& theme, juce::Rectangle<float> area, const juce::String& text, float fontPx)
-{
-    g.setColour (theme.p().surface.withAlpha (0.7f));
-    g.fillRoundedRectangle (area, 4.0f);
-    g.setColour (theme.sheen (0.38f));
-    g.drawLine (area.getX() + 3.0f, area.getY() + 0.5f, area.getRight() - 3.0f, area.getY() + 0.5f, 1.0f);
-    fonts::draw (g, text, area, fonts::make (400, fontPx), theme.p().ink);
-}
-
 //==============================================================================
 Knob::Knob (Theme& t, juce::AudioProcessorValueTreeState& state, const juce::String& paramID, const juce::String& captionText,
-    Format formatToUse, bool isLarge, bool onDeepRail)
+    Format formatToUse, bool isLarge)
     : theme (t),
       caption (captionText),
       format (std::move (formatToUse)),
       large (isLarge),
-      deepRail (onDeepRail),
       attachment (*state.getParameter (paramID), slider, state.undoManager)
 {
     prepareParameterSlider (slider);
@@ -75,26 +65,37 @@ Knob::Knob (Theme& t, juce::AudioProcessorValueTreeState& state, const juce::Str
     setOpaque (false);
 }
 
+void Knob::setBipolar (bool shouldBeBipolar)
+{
+    if (shouldBeBipolar)
+        slider.getProperties().set ("bipolar", true);
+    else
+        slider.getProperties().remove ("bipolar");
+    repaint();
+}
+
 void Knob::resized()
 {
-    const auto captionHeight = large ? 18.0f : 15.0f;
-    const auto size = large ? 174.0f : 72.0f;
-    const auto top = captionHeight + (large ? 2.0f : 0.0f) + 5.0f;
-    slider.setBounds (juce::Rectangle<float> (size, size).withCentre ({ (float) getWidth() * 0.5f, top + size * 0.5f }).toNearestInt());
+    const auto size = sizeFor (large);
+    slider.setBounds ((getWidth() - size) / 2, 0, size, size);
 }
 
 void Knob::paint (juce::Graphics& g)
 {
-    // the ring sits on the rail, whose colour changes with delta and bypass
-    slider.getProperties().set ("bg", (int) (deepRail ? theme.p().railDeep : theme.p().rail).getARGB());
+    const auto& pal = theme.p();
+    const auto top = (float) slider.getBottom() + (large ? 0.0f : 2.0f);
+    fonts::draw (g, caption.toLowerCase(), { 0.0f, top, (float) getWidth(), 16.0f }, fonts::make (500, large ? 12.0f : 11.0f, 0.16f), pal.inkSoft);
+}
 
-    const auto w = (float) getWidth();
-    const auto captionHeight = large ? 18.0f : 15.0f;
-    fonts::draw (g, caption, { 0.0f, 0.0f, w, captionHeight }, fonts::make (700, large ? 12.0f : 10.0f, 0.08f), theme.p().label);
-
-    const auto pillW = large ? 98.0f : 70.0f;
-    const auto pillTop = (float) slider.getBottom() + (large ? 4.0f : 5.0f);
-    drawPill (g, theme, juce::Rectangle<float> (pillW, 28.0f).withCentre ({ w * 0.5f, pillTop + 14.0f }), format (slider.getValue()), large ? 16.0f : 13.0f);
+void Knob::paintOverChildren (juce::Graphics& g)
+{
+    // the value sits in the middle of the arc
+    const auto& pal = theme.p();
+    const auto centre = slider.getBounds().toFloat().getCentre();
+    if (large)
+        fonts::draw (g, format (slider.getValue()), juce::Rectangle<float> (140.0f, 40.0f).withCentre (centre), fonts::make (500, 32.0f, -0.01f), pal.ink);
+    else
+        fonts::draw (g, format (slider.getValue()), juce::Rectangle<float> (64.0f, 18.0f).withCentre (centre), fonts::make (500, 12.0f), pal.ink);
 }
 
 //==============================================================================
@@ -126,6 +127,15 @@ void ValueSlider::setAccent (juce::Colour colour)
     repaint();
 }
 
+void ValueSlider::setBipolar (bool shouldBeBipolar)
+{
+    if (shouldBeBipolar)
+        slider.getProperties().set ("bipolar", true);
+    else
+        slider.getProperties().remove ("bipolar");
+    repaint();
+}
+
 void ValueSlider::setEnabledLook (bool shouldBeEnabled)
 {
     setAlpha (shouldBeEnabled ? 1.0f : 0.35f);
@@ -134,15 +144,15 @@ void ValueSlider::setEnabledLook (bool shouldBeEnabled)
 
 void ValueSlider::resized()
 {
-    // caption 13.5 + gap 5, then a 10 px band around the 4 px track (3 px margins): the track's centre is at y = 24
-    slider.setBounds (0, 14, getWidth(), 20);
+    slider.setBounds (0, 18, getWidth(), 20);
 }
 
 void ValueSlider::paint (juce::Graphics& g)
 {
+    const auto& pal = theme.p();
     const auto w = (float) getWidth();
-    fonts::draw (g, caption, { 0.0f, 0.0f, w, 13.5f }, fonts::make (600, 10.0f, 0.06f), theme.p().soft, juce::Justification::centredLeft);
-    drawPill (g, theme, { 0.0f, 33.5f + 0.0f, w, 27.0f }, format (slider.getValue()), 11.0f);
+    fonts::draw (g, caption.toLowerCase(), { 0.0f, 0.0f, w, 16.0f }, fonts::make (500, 11.0f, 0.12f), pal.inkSoft, juce::Justification::centredLeft);
+    fonts::draw (g, format (slider.getValue()), { 0.0f, 0.0f, w, 16.0f }, fonts::make (500, 12.0f), pal.ink, juce::Justification::centredRight);
 }
 
 //==============================================================================
@@ -150,28 +160,32 @@ RoundToggle::RoundToggle (Theme& t, juce::AudioProcessorValueTreeState& state, c
     : juce::Button (label), theme (t), attachment (*state.getParameter (paramID), *this, state.undoManager)
 {
     setClickingTogglesState (true);
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
-void RoundToggle::paintButton (juce::Graphics& g, bool, bool)
+void RoundToggle::paintButton (juce::Graphics& g, bool over, bool)
 {
     const auto& pal = theme.p();
-    const auto circle = juce::Rectangle<float> (17.0f, 17.0f).withCentre ({ 4.0f + 8.5f, (float) getHeight() * 0.5f });
+    const auto area = getLocalBounds().toFloat().reduced (0.5f);
+    const auto on = getToggleState();
 
-    if (getToggleState())
-    {
-        g.setColour (pal.coral);
-        g.fillEllipse (circle);
-        g.setColour (pal.onAccent);
-        g.fillEllipse (circle.reduced (5.0f));
-    }
-    else
-    {
-        g.setColour (pal.outline.withAlpha (0.8f));
-        g.drawEllipse (circle.reduced (1.0f), 2.0f);
-    }
+    // a pill with a status light on the left
+    g.setColour (on ? pal.accent.withAlpha (0.12f) : pal.edge.withAlpha (over ? 0.06f : 0.03f));
+    g.fillRoundedRectangle (area, area.getHeight() * 0.5f);
+    g.setColour (on ? pal.accent.withAlpha (0.55f) : pal.edge.withAlpha (0.1f));
+    g.drawRoundedRectangle (area, area.getHeight() * 0.5f, 1.0f);
 
-    fonts::draw (g, getButtonText(), { circle.getRight() + 8.0f, 0.0f, (float) getWidth() - circle.getRight() - 8.0f, (float) getHeight() },
-        fonts::make (600, 10.0f, 0.06f), pal.label, juce::Justification::centredLeft);
+    const auto light = juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ area.getX() + 16.0f, area.getCentreY() });
+    if (on && pal.glow > 0.0f)
+    {
+        g.setColour (pal.accent.withAlpha (0.3f));
+        g.fillEllipse (light.expanded (4.0f));
+    }
+    g.setColour (on ? pal.accent : pal.inkDim);
+    g.fillEllipse (light);
+
+    fonts::draw (g, getButtonText().toLowerCase(), area.withTrimmedLeft (28.0f), fonts::make (500, 11.0f, 0.14f), on ? pal.ink : pal.inkSoft,
+        juce::Justification::centredLeft);
 }
 
 //==============================================================================
@@ -181,14 +195,18 @@ SegmentedControl::SegmentedControl (Theme& t, juce::AudioProcessorValueTreeState
       attachment (*state.getParameter (paramID), [this] (float v) { selected = juce::roundToInt (v); repaint(); }, state.undoManager)
 {
     attachment.sendInitialUpdate();
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
 void SegmentedControl::paint (juce::Graphics& g)
 {
     const auto& pal = theme.p();
-    const auto area = getLocalBounds().toFloat();
-    g.setColour (pal.tint.withAlpha (0.18f));
-    g.fillRoundedRectangle (area, 7.0f);
+    const auto area = getLocalBounds().toFloat().reduced (0.5f);
+    const auto radius = area.getHeight() * 0.5f;
+    g.setColour (pal.edge.withAlpha (0.03f));
+    g.fillRoundedRectangle (area, radius);
+    g.setColour (pal.edge.withAlpha (0.1f));
+    g.drawRoundedRectangle (area, radius, 1.0f);
 
     const auto n = juce::jmax (1, items.size());
     const auto cell = area.getWidth() / (float) n;
@@ -198,13 +216,18 @@ void SegmentedControl::paint (juce::Graphics& g)
         const auto active = i == selected;
         if (active)
         {
-            juce::Path p;
-            p.addRoundedRectangle (r, 7.0f);
-            juce::DropShadow (pal.shade.withAlpha (0.12f), 10, { 0, 3 }).drawForPath (g, p);
-            g.setColour (pal.surface.withAlpha (0.94f));
-            g.fillRoundedRectangle (r, 7.0f);
+            const auto pill = r.reduced (3.0f);
+            if (pal.glow > 0.0f)
+            {
+                g.setColour (pal.accent.withAlpha (0.08f));
+                g.fillRoundedRectangle (pill.expanded (2.0f), pill.getHeight() * 0.5f + 2.0f);
+            }
+            g.setColour (pal.accent.withAlpha (0.16f));
+            g.fillRoundedRectangle (pill, pill.getHeight() * 0.5f);
+            g.setColour (pal.accent.withAlpha (0.6f));
+            g.drawRoundedRectangle (pill, pill.getHeight() * 0.5f, 1.0f);
         }
-        fonts::draw (g, items[i], r, fonts::make (600, 11.0f, 0.07f), active ? pal.ink : pal.soft);
+        fonts::draw (g, items[i].toLowerCase(), r, fonts::make (500, 11.0f, 0.16f), active ? pal.accent : pal.inkSoft);
     }
 }
 
@@ -232,20 +255,23 @@ ChoiceButton::ChoiceButton (Theme& t, juce::AudioProcessorValueTreeState& state,
 void ChoiceButton::paint (juce::Graphics& g)
 {
     const auto& pal = theme.p();
-    const auto area = getLocalBounds().toFloat();
+    const auto area = getLocalBounds().toFloat().reduced (0.5f);
+    const auto radius = area.getHeight() * 0.5f;
+    g.setColour (pal.edge.withAlpha (isMouseOver() ? 0.06f : 0.03f));
+    g.fillRoundedRectangle (area, radius);
+    g.setColour (pal.edge.withAlpha (0.1f));
+    g.drawRoundedRectangle (area, radius, 1.0f);
+
+    const auto text = items[selected].toLowerCase();
     if (chevron)
     {
-        g.setColour (pal.surface.withAlpha (0.33f));
-        g.fillRoundedRectangle (area, 4.0f);
-        fonts::draw (g, items[selected].toUpperCase(), area.withTrimmedLeft (9.0f), fonts::make (400, fontPx, 0.0f), pal.label, juce::Justification::centredLeft);
-        icons::stroke (g, icons::chevron (true), juce::Rectangle<float> (14.0f, 14.0f).withCentre ({ area.getRight() - 14.0f, area.getCentreY() }),
-            pal.label, 1.4f);
+        fonts::draw (g, text, area.withTrimmedLeft (14.0f), fonts::make (weight, fontPx, 0.08f), pal.ink, juce::Justification::centredLeft);
+        icons::stroke (g, icons::chevron (true), juce::Rectangle<float> (12.0f, 12.0f).withCentre ({ area.getRight() - 16.0f, area.getCentreY() }),
+            pal.accent, 1.4f);
     }
     else
     {
-        g.setColour (pal.surface.withAlpha (0.72f));
-        g.fillRoundedRectangle (area, 4.0f);
-        fonts::draw (g, items[selected], area, fonts::make (weight, fontPx), pal.ink);
+        fonts::draw (g, text, area, fonts::make (weight, fontPx, 0.08f), pal.ink);
     }
 }
 
@@ -261,29 +287,26 @@ CircleIconToggle::CircleIconToggle (Theme& t, juce::AudioProcessorValueTreeState
 {
     setClickingTogglesState (true);
     setTooltip (tooltip);
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
 void CircleIconToggle::paintButton (juce::Graphics& g, bool over, bool)
 {
     const auto& pal = theme.p();
-    const auto circle = getLocalBounds().toFloat().withSizeKeepingCentre (37.0f, 37.0f);
+    const auto circle = getLocalBounds().toFloat().withSizeKeepingCentre (34.0f, 34.0f);
     const auto on = getToggleState();
 
-    if (on)
+    if (on && pal.glow > 0.0f)
     {
-        g.setColour (pal.accent.withAlpha (0.17f));
+        g.setColour (pal.accent.withAlpha (0.1f));
         g.fillEllipse (circle.expanded (4.0f));
-        g.setColour (pal.accent);
-        g.fillEllipse (circle);
     }
-    else if (over)
-    {
-        g.setColour (theme.sheen (0.18f));
-        g.fillEllipse (circle);
-    }
+    g.setColour (on ? pal.accent.withAlpha (0.14f) : pal.edge.withAlpha (over ? 0.07f : 0.03f));
+    g.fillEllipse (circle);
+    g.setColour (on ? pal.accent.withAlpha (0.7f) : pal.edge.withAlpha (0.12f));
+    g.drawEllipse (circle.reduced (0.5f), 1.0f);
 
-    const auto iconColour = on ? pal.onAccent : pal.outline.withAlpha (0.72f);
-    const auto iconArea = circle.withSizeKeepingCentre (17.0f, 17.0f);
-    icons::stroke (g, icon == Icon::power ? icons::power() : icons::keyListen(), iconArea, iconColour, 1.6f);
+    const auto iconArea = circle.withSizeKeepingCentre (15.0f, 15.0f);
+    icons::stroke (g, icon == Icon::power ? icons::power() : icons::keyListen(), iconArea, on ? pal.accent : pal.inkSoft, 1.5f);
 }
 } // namespace vox

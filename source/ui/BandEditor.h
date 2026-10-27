@@ -6,7 +6,7 @@
 
 namespace vox
 {
-/** The floating panel under the graph that edits the selected band: power dot, frequency, sensitivity,
+/** The glass dock along the bottom that edits the selected band: power dot, frequency, sensitivity,
     Q and balance, and the shape buttons. It re-binds its controls whenever the selection changes. */
 class BandEditor : public juce::Component, private juce::Timer
 {
@@ -23,8 +23,8 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    static constexpr int width = 850;
-    static constexpr int height = 120;
+    static constexpr int width = 1432;
+    static constexpr int height = 84;
 
 private:
     class ShapeButton;

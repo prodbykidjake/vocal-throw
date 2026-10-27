@@ -1,6 +1,7 @@
 #include "TopBar.h"
 #include "../PluginProcessor.h"
 #include "Fonts.h"
+#include "Icons.h"
 
 namespace vox
 {
@@ -13,18 +14,19 @@ public:
         setTooltip ("Next preset");
     }
 
-    static float dotsWidth() { return fonts::width (fonts::make (500, 16.0f, 0.13f), juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2"))); }
-    float getIdealWidth() const
-    {
-        return dotsWidth() + 11.0f + fonts::width (fonts::make (500, 16.0f, 0.03f), processor.getProgramName (processor.getCurrentProgram())) + 8.0f;
-    }
+    static juce::Font font() { return fonts::make (500, 15.0f, 0.02f); }
+    float getIdealWidth() const { return fonts::width (font(), processor.getProgramName (processor.getCurrentProgram())) + 40.0f; }
 
     void paintButton (juce::Graphics& g, bool over, bool) override
     {
-        const auto colour = theme.p().topBarInk.withAlpha (over ? 1.0f : 0.88f);
-        const auto area = getLocalBounds().toFloat();
-        fonts::draw (g, juce::CharPointer_UTF8 ("\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2"), area.withWidth (dotsWidth()), fonts::make (500, 16.0f, 0.13f), colour, juce::Justification::centredLeft);
-        fonts::draw (g, processor.getProgramName (processor.getCurrentProgram()), area.withTrimmedLeft (dotsWidth() + 11.0f), fonts::make (500, 16.0f, 0.03f), colour, juce::Justification::centredLeft);
+        // the preset name in a glass capsule
+        const auto& pal = theme.p();
+        const auto area = getLocalBounds().toFloat().reduced (0.5f, 9.0f);
+        g.setColour (pal.edge.withAlpha (over ? 0.07f : 0.035f));
+        g.fillRoundedRectangle (area, area.getHeight() * 0.5f);
+        g.setColour (pal.edge.withAlpha (0.1f));
+        g.drawRoundedRectangle (area, area.getHeight() * 0.5f, 1.0f);
+        fonts::draw (g, processor.getProgramName (processor.getCurrentProgram()), area, font(), pal.ink);
     }
 
 private:
@@ -35,8 +37,8 @@ private:
 TopBar::TopBar (Theme& t, PluginProcessor& p)
     : theme (t),
       processor (p),
-      previous (t, juce::CharPointer_UTF8 ("\xe2\x80\xb9"), TopBarButton::Kind::text, 27.0f),
-      next (t, juce::CharPointer_UTF8 ("\xe2\x80\xba"), TopBarButton::Kind::text, 27.0f),
+      previous (t, juce::CharPointer_UTF8 ("\xe2\x80\xb9"), TopBarButton::Kind::text, 24.0f),
+      next (t, juce::CharPointer_UTF8 ("\xe2\x80\xba"), TopBarButton::Kind::text, 24.0f),
       undo (t, "undo"),
       redo (t, "redo"),
       a (t, "a"),
@@ -104,25 +106,49 @@ void TopBar::timerCallback()
 
 void TopBar::paint (juce::Graphics& g)
 {
-    g.fillAll (theme.p().topBar);
+    // no bar: the wordmark and the buttons float over the graph
+    const auto& pal = theme.p();
+    const auto h = (float) getHeight();
+    icons::stroke (g, icons::wave(), juce::Rectangle<float> (28.0f, 15.0f).withCentre ({ 14.0f, h * 0.5f }), pal.accent, 2.0f);
+    const auto wordmark = fonts::make (600, 16.0f, 0.22f);
+    fonts::draw (g, "vox smoove", { 38.0f, 0.0f, 160.0f, h }, wordmark, pal.ink, juce::Justification::centredLeft);
+    auto x = 38.0f + fonts::width (wordmark, "vox smoove") + 14.0f;
+    fonts::draw (g, "playbox audio", { x, 0.0f, 140.0f, h }, fonts::make (400, 10.0f, 0.2f), pal.inkDim, juce::Justification::centredLeft);
+    x += fonts::width (fonts::make (400, 10.0f, 0.2f), "playbox audio") + 18.0f;
+
+    // a status chip while delta or bypass is on
+    if (theme.isDelta() || theme.isBypassed())
+    {
+        const juce::String text = theme.isBypassed() ? "bypassed" : "delta";
+        const auto font = fonts::make (600, 10.0f, 0.2f);
+        const auto chip = juce::Rectangle<float> (x, h * 0.5f - 11.0f, fonts::width (font, text) + 24.0f, 22.0f);
+        const auto colour = theme.isBypassed() ? pal.inkSoft : pal.accent;
+        g.setColour (colour.withAlpha (0.14f));
+        g.fillRoundedRectangle (chip, 11.0f);
+        g.setColour (colour.withAlpha (0.6f));
+        g.drawRoundedRectangle (chip.reduced (0.5f), 11.0f, 1.0f);
+        fonts::draw (g, text, chip, font, colour);
+    }
 }
 
 void TopBar::resized()
 {
     const auto h = getHeight();
 
-    // left: [‹][›][••• name]
-    previous.setBounds (11, 0, 28, h);
-    next.setBounds (39, 0, 28, h);
-    title->setBounds (67, 0, juce::roundToInt (title->getIdealWidth()) + 4, h);
+    // centre: [‹][ name ][›]
+    const auto titleW = juce::jmax (180, juce::roundToInt (title->getIdealWidth()));
+    const auto titleX = (getWidth() - titleW) / 2;
+    title->setBounds (titleX, 0, titleW, h);
+    previous.setBounds (titleX - 34, 0, 30, h);
+    next.setBounds (titleX + titleW + 4, 0, 30, h);
 
-    // right: undo redo a b a→b adv ? ⚙, 15 px apart, 11 px from the edge
-    float x = (float) getWidth() - 11.0f + 4.0f;
+    // right: undo redo a b a→b adv ? ⚙
+    float x = (float) getWidth() + 4.0f;
     for (auto* button : { &settings, &help, &advanced, &copy, &b, &a, &redo, &undo })
     {
         const auto w = button->getIdealWidth();
         button->setBounds (juce::Rectangle<float> (x - w, 0.0f, w, (float) h).toNearestInt());
-        x -= w + 7.0f; // 15 px between the labels, 8 of which is padding inside the buttons
+        x -= w + 10.0f; // 18 px between the labels, 8 of which is padding inside the buttons
     }
 }
 } // namespace vox

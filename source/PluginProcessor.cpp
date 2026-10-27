@@ -230,7 +230,6 @@ void PluginProcessor::getStateInformation (juce::MemoryBlock& destData)
     session.setAttribute ("slot", activeSlot);
     session.setAttribute ("program", currentProgram);
     session.setAttribute ("uiScale", (double) uiScale);
-    session.setAttribute ("look", getLook());
 
     if (auto live = apvts.copyState().createXml())
         session.addChildElement (live.release());
@@ -254,7 +253,6 @@ void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
         activeSlot = juce::jlimit (0, 1, xml->getIntAttribute ("slot", 0));
         currentProgram = juce::jlimit (0, juce::jmax (0, presets::count() - 1), xml->getIntAttribute ("program", 0));
         setUiScale ((float) xml->getDoubleAttribute ("uiScale", (double) uiScale));
-        setLook (xml->getIntAttribute ("look", 0)); // older sessions: the original look
 
         abState = {};
         if (auto* live = xml->getFirstChildElement())

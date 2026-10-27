@@ -5,8 +5,10 @@
 
 namespace vox
 {
-/** The main graph: the live gain reduction (hanging below the zero line), the dashed depth curve and its
-    draggable band nodes, on a log-frequency axis from 20 Hz to 20 kHz and a +-18 dB scale.
+/** The graph that fills the editor: the live gain reduction (a glowing line hanging below the zero line),
+    the dashed depth curve and its draggable band nodes, on a log-frequency axis from 20 Hz to 20 kHz and a
+    +-18 dB scale. The background covers the whole component; the axes use the plot area, which is the
+    component minus the insets set by the editor (the glass panels float over the rest).
 
     Interaction: drag a node = frequency and depth, wheel over a node = Q, double-click empty space = add a
     bell, double-click a node = bypass it, right-click a node = shape menu / delete, "+" = add a band.
@@ -21,6 +23,10 @@ public:
 
     int getSelectedBand() const noexcept { return selected; }
     void setSelectedBand (int band);
+
+    /** Keeps the axes clear of the panels floating over the graph. */
+    void setPlotInsets (juce::BorderSize<int> insets);
+    juce::Rectangle<float> plotArea() const noexcept;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -62,6 +68,7 @@ private:
     void select (int band);
     juce::Rectangle<float> addButtonArea() const noexcept;
     float pxPerDb() const noexcept;
+    void paintBackground (juce::Graphics& g, juce::Rectangle<float> plot);
 
     Theme& theme;
     PluginProcessor& processor;
@@ -73,5 +80,6 @@ private:
     int hovered = -1;
     bool dragging = false;
     bool overAdd = false;
+    juce::BorderSize<int> plotInsets;
 };
 } // namespace vox

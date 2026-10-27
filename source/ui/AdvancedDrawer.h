@@ -15,7 +15,7 @@ public:
     void resized() override;
 
     static constexpr int width = 300;
-    static constexpr int height = 380;
+    static constexpr int height = 330;
 
 private:
     Theme& theme;
