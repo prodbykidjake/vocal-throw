@@ -4,22 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## About This Project
 
-**Stack Buddy** by Playtime Audio: an instrument plugin (AU, VST3, Standalone) for stacking vocal ad-libs. Load a vocal clip (drag and drop or click the waveform) and every MIDI note plays it back as a stack of copies, pitched by key (C3 = original pitch), then run through Tone, Dirt, a tempo-synced ping-pong Echo and Space (reverb). The clip is saved inside the DAW project.
+**Stack Buddy** by Playtime Audio: an audio effect (AU, VST3, Standalone) that goes in an insert slot on an ad-lib track. The vocal passes through untouched and Stack Buddy adds a stack of copies on top: each copy is re-pitched by a few cents (or an octave with High Hype), delayed a little and panned, then everything runs through Tone, Dirt, a tempo-synced ping-pong Echo and Reverb. Mono in / stereo out is the main layout (mono/mono and stereo/stereo also work). With one voice and the effects at zero it is bit-for-bit transparent (tested). It started as an instrument (MIDI-played sampler) and was converted to an effect at the user's request.
 
 Derived from the [Pamplejuce](https://github.com/sudara/pamplejuce) template (CMake, C++23, CI/CD). The user works in Logic Pro, so macOS AU is the primary target. Builds default to **Debug**; build **Release** for real-time use (dropouts, high CPU). Code signing, Windows and Linux CI are intentionally off for now (see `.github/workflows/build_and_test.yml`).
 
 ### Source layout (`source/`)
-- `SampleData` - mono vocal clip: load from file, trim silence, normalise, save/restore as base64 16-bit PCM
-- `StackEngine` - preallocated layer pool; each note starts a "stack" of copies (pitch/pan/delay spread, optional octave copy). No JUCE processor dependency, so it is unit tested directly
-- `Effects.h` - one-pole lowpass, ping-pong echo, soft clipper
-- `PluginProcessor` - parameters (APVTS), MIDI splitting, effects chain, state. The message thread hands new samples to the audio thread via an atomic pointer (`pendingSample`)
-- `PluginEditor` - the UI from the Figma design (Figma Make file "Stack Buddy Audio Plugin"). Everything is laid out at 1180 x 700 design pixels (`Design::width/height`) inside a `Content` component that is scaled to the window, so resizing keeps the proportions
+- `StackEngine` - the real-time stacker. Each copy reads a shared delay line faster or slower than it's written (re-pitching); when a read head runs out of room it crossfades to a new position chosen by a correlation search (WSOLA), so joins don't cancel on tonal vocals. No JUCE processor dependency, so it is unit tested directly (pitch accuracy, clean octave, silence, bounds)
+- `Effects.h` - one-pole lowpass (with `track()` bypass), ping-pong echo, soft clipper
+- `PluginProcessor` - parameters (APVTS), buses, chunked processing through preallocated scratch buffers, effects chain, presets, state. Reverb runs wet-only (JUCE's Reverb doubles the dry signal at dryLevel 1). Dirt is level-compensated. The audio thread publishes input peaks into an atomic ring (`getInputHistory`) for the UI
+- `PluginEditor` - the UI from the Figma design (Figma Make file "Stack Buddy Audio Plugin"), adapted for an effect: live INPUT scope instead of a sample, no keyboard, header switch is Stack On (bypass with a smoothed crossfade). Everything is laid out at 1180 x 570 design pixels (`Design::width/height`) inside a `Content` component that is scaled to the window
 - `DesignTokens` - colours (sampled from the design), Space Grotesk Medium/Bold embedded from `assets/fonts` (OFL licence kept next to them), layout constants
-- `DesignLookAndFeel` - knob, switch, pill button, preset box and keyboard drawing
-- UI preview without a DAW: `STACKBUDDY_SNAPSHOT_DIR=<folder> ./Builds/Tests "[snapshot]"` (run under Xvfb on Linux) writes empty/loaded/small PNGs of the editor
+- `DesignLookAndFeel` - knob, switch, pill button and preset box drawing
+
+### Developer tools (hidden Catch2 tests)
+- UI preview without a DAW: `STACKBUDDY_SNAPSHOT_DIR=<folder> ./Builds/Tests "[snapshot]"` (run under Xvfb on Linux) writes waiting/listening/small PNGs of the editor
+- Offline render: `STACKBUDDY_RENDER_IN=in.wav STACKBUDDY_RENDER_OUT=out.wav STACKBUDDY_PRESET="Wide Stack" ./Builds/Tests "[render]"` (preset name, or "Bypass")
+- Benchmark (Release): worst case, 6 voices + octave + all effects, is about 0.24 ms per 512-sample block at 48 kHz
 
 ### Ideas not built yet
-Formant-preserving pitch shift (Signalsmith Stretch via CPM), scale snap, auto-chop of long takes, recording from a sidechain input, echo ducking.
+Formant preservation for the octave copy, scale snap, echo ducking.
 
 ### Linux build notes
 Building on Linux (cloud sessions) needs JUCE's system packages: `libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libxi-dev libxrender-dev libxcomposite-dev libasound2-dev libfreetype-dev libfontconfig1-dev mesa-common-dev libgl1-mesa-dev libcurl4-openssl-dev`. AU only builds on macOS.

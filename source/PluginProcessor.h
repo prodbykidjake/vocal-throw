@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Effects.h"
-#include "SampleData.h"
 #include "StackEngine.h"
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -20,12 +19,15 @@ namespace ParamIDs
     inline constexpr auto echoTime = "echoTime";
     inline constexpr auto space = "space";
     inline constexpr auto gain = "gain";
-    inline constexpr auto oneShot = "oneShot";
+    inline constexpr auto active = "active";
 }
 
+// An insert effect for an ad-lib track: the vocal passes through untouched and the stack is added on top.
 class PluginProcessor : public juce::AudioProcessor
 {
 public:
+    static constexpr int scopeSize = 256;
+
     PluginProcessor();
     ~PluginProcessor() override;
 
@@ -56,19 +58,17 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    // Message thread only. Returns false and fills errorMessage if the file can't be used.
-    bool loadSampleFromFile (const juce::File& file, juce::String& errorMessage);
-    void setSample (std::shared_ptr<const SampleData> newSample);
-    void clearSample();
-    std::shared_ptr<const SampleData> getSample() const;
+    // Message thread. Fills dest with the input's recent peak levels, oldest first (one value per ~35 ms).
+    void getInputHistory (float* dest, int count) const;
 
     juce::AudioProcessorValueTreeState apvts;
-    juce::MidiKeyboardState keyboardState; // lets the editor's keyboard play the plugin
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     StackParams readStackParams() const;
+    void processChunk (const float* inL, const float* inR, float* outL, float* outR, int numSamples);
     void renderEffects (float* left, float* right, int numSamples);
+    void pushScope (const float* mono, int numSamples) noexcept;
 
     struct RawParams
     {
@@ -81,7 +81,7 @@ private:
         std::atomic<float>* echoTime = nullptr;
         std::atomic<float>* space = nullptr;
         std::atomic<float>* gain = nullptr;
-        std::atomic<float>* oneShot = nullptr;
+        std::atomic<float>* active = nullptr;
     };
 
     RawParams raw;
@@ -90,20 +90,19 @@ private:
     juce::Reverb reverb;
     OnePoleLowpass toneL, toneR;
 
-    juce::SmoothedValue<float> echoMix, spaceMix, dirtAmount, outputGain;
+    juce::SmoothedValue<float> echoMix, spaceMix, dirtAmount, outputGain, activeMix;
     double currentSampleRate = 44100.0;
     int currentProgram = 0;
 
-    // The message thread hands finished samples to the audio thread through `pendingSample`.
-    // `recentSamples` keeps the last few alive so the audio thread never frees one.
-    mutable juce::CriticalSection sampleLock;
-    std::shared_ptr<const SampleData> displaySample;
-    std::array<std::shared_ptr<const SampleData>, 4> recentSamples;
-    size_t recentIndex = 0;
-    std::atomic<const SampleData*> pendingSample { nullptr };
-    std::atomic<bool> clearRequested { false };
+    // scratch space for one chunk of audio, sized in prepareToPlay
+    std::vector<float> reverbL, reverbR, wetL, wetR, mono;
 
-    juce::AudioFormatManager formatManager;
+    // input levels for the UI's scrolling display: written by the audio thread, read by the message thread
+    std::array<std::atomic<float>, scopeSize> scopePeaks {};
+    std::atomic<int> scopeWrite { 0 };
+    float scopePeak = 0.0f;
+    int scopeCount = 0;
+    int scopeStride = 1500;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)
 };

@@ -2,35 +2,26 @@
 
 #include "DesignLookAndFeel.h"
 #include "PluginProcessor.h"
-#include <juce_audio_utils/juce_audio_utils.h>
 
-// Shows the loaded clip as bars, and accepts a dropped audio file or a click to browse.
-class WaveformView : public juce::Component, public juce::FileDragAndDropTarget
+// The live vocal coming into the plugin, drawn as scrolling bars (newest on the right).
+class InputScope : public juce::Component
 {
 public:
-    std::function<void (const juce::File&)> onFileChosen;
+    static constexpr int maxBars = PluginProcessor::scopeSize;
 
-    void setSample (std::shared_ptr<const SampleData> newSample);
-    void setMessage (const juce::String& newMessage);
-    void openChooser();
+    // How many bars fit, so the caller knows how much history to fetch.
+    int getBarCount() const;
+    void setLevels (const float* levels, int count);
 
     void paint (juce::Graphics&) override;
-    void mouseUp (const juce::MouseEvent&) override;
-
-    bool isInterestedInFileDrag (const juce::StringArray& files) override;
-    void fileDragEnter (const juce::StringArray&, int, int) override;
-    void fileDragExit (const juce::StringArray&) override;
-    void filesDropped (const juce::StringArray& files, int, int) override;
 
 private:
-    std::shared_ptr<const SampleData> sample;
-    juce::String message;
-    bool dragging = false;
-    std::unique_ptr<juce::FileChooser> chooser;
+    std::array<float, maxBars> levels {};
+    int numLevels = 0;
 };
 
 //==============================================================================
-// The editor draws everything at the design's 1180 x 700 and scales it to the window.
+// The editor draws everything at the design's 1180 x 570 and scales it to the window.
 class PluginEditor : public juce::AudioProcessorEditor
 {
 public:

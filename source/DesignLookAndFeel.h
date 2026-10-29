@@ -24,16 +24,3 @@ public:
 
     void drawCornerResizer (juce::Graphics&, int width, int height, bool isMouseOver, bool isMouseDragging) override;
 };
-
-// The on-screen keyboard: rounded keys that light up when played.
-class StackKeyboard : public juce::MidiKeyboardComponent
-{
-public:
-    StackKeyboard (juce::MidiKeyboardState&);
-
-protected:
-    void drawWhiteNote (int midiNoteNumber, juce::Graphics&, juce::Rectangle<float> area, bool isDown, bool isOver,
-                        juce::Colour lineColour, juce::Colour textColour) override;
-    void drawBlackNote (int midiNoteNumber, juce::Graphics&, juce::Rectangle<float> area, bool isDown, bool isOver,
-                        juce::Colour noteFillColour) override;
-};

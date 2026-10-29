@@ -5,14 +5,11 @@ namespace
 {
     using Rect = juce::Rectangle<float>;
 
-    juce::String formatDuration (double seconds)
-    {
-        const auto totalHundredths = juce::roundToInt (seconds * 100.0);
-        const auto minutes = totalHundredths / 6000;
-        const auto secs = (totalHundredths / 100) % 60;
-        const auto hundredths = totalHundredths % 100;
-        return juce::String (minutes) + ":" + juce::String (secs).paddedLeft ('0', 2) + "." + juce::String (hundredths).paddedLeft ('0', 2);
-    }
+    constexpr float barPitch = 10.0f;
+    constexpr float barWidth = 6.0f;
+    constexpr float barMargin = 31.0f;
+    constexpr float floorDb = -48.0f;    // quieter than this draws as the flat baseline
+    constexpr float signalDb = -50.0f;   // louder than this counts as "listening"
 
     juce::String percent (double value)
     {
@@ -24,7 +21,6 @@ namespace
         return (value > 0.05 ? "+" : "") + juce::String (value, 1) + " dB";
     }
 
-    // small spaced-out caps label
     void drawLabel (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> area, const juce::Font& font,
                     juce::Colour colour, juce::Justification justification)
     {
@@ -35,19 +31,19 @@ namespace
 }
 
 //==============================================================================
-void WaveformView::setSample (std::shared_ptr<const SampleData> newSample)
+int InputScope::getBarCount() const
 {
-    sample = std::move (newSample);
+    return juce::jlimit (1, maxBars, static_cast<int> ((static_cast<float> (getWidth()) - 2.0f * barMargin) / barPitch));
+}
+
+void InputScope::setLevels (const float* newLevels, int count)
+{
+    numLevels = juce::jlimit (0, maxBars, count);
+    std::copy (newLevels, newLevels + numLevels, levels.begin());
     repaint();
 }
 
-void WaveformView::setMessage (const juce::String& newMessage)
-{
-    message = newMessage;
-    repaint();
-}
-
-void WaveformView::paint (juce::Graphics& g)
+void InputScope::paint (juce::Graphics& g)
 {
     const auto bounds = getLocalBounds().toFloat();
 
@@ -62,107 +58,28 @@ void WaveformView::paint (juce::Graphics& g)
 
     g.drawHorizontalLine (juce::roundToInt (bounds.getCentreY()), bounds.getX() + 1.0f, bounds.getRight() - 1.0f);
 
-    g.setColour (dragging ? Design::lime : Design::waveGrid.brighter (0.15f));
-    g.drawRoundedRectangle (bounds.reduced (0.5f), 10.0f, dragging ? 2.0f : 1.0f);
+    g.setColour (Design::waveGrid.brighter (0.15f));
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 10.0f, 1.0f);
 
-    if (sample == nullptr || sample->size() == 0)
+    const auto maxHeight = bounds.getHeight() * 0.74f;
+    const auto midY = bounds.getCentreY() - 4.0f;
+
+    for (int bar = 0; bar < numLevels; ++bar)
     {
-        drawLabel (g, "DROP A VOCAL HERE, OR CLICK TO LOAD ONE", getLocalBounds(), Design::mono (12.0f, true),
-                   dragging ? Design::lime : Design::textDim, juce::Justification::centred);
-    }
-    else
-    {
-        const auto margin = 31.0f;
-        const auto pitch = 10.0f;
-        const auto barWidth = 6.0f;
-        const auto barCount = juce::jmax (1, static_cast<int> ((bounds.getWidth() - 2.0f * margin) / pitch));
-        const auto maxHeight = bounds.getHeight() * 0.74f;
-        const auto samplesPerBar = static_cast<double> (sample->size()) / barCount;
-        const auto midY = bounds.getCentreY() - 4.0f;
+        const auto peak = levels[static_cast<size_t> (bar)];
+        const auto db = juce::Decibels::gainToDecibels (peak, floorDb);
+        const auto level = juce::jlimit (0.0f, 1.0f, (db - floorDb) / -floorDb);
+        const auto barHeight = 5.0f + level * (maxHeight - 5.0f);
+        const auto x = barMargin + static_cast<float> (bar) * barPitch;
 
-        for (int bar = 0; bar < barCount; ++bar)
-        {
-            const auto start = static_cast<int> (bar * samplesPerBar);
-            const auto end = juce::jmin (sample->size(), juce::jmax (start + 1, static_cast<int> ((bar + 1) * samplesPerBar)));
-            float peak = 0.0f;
-
-            for (int i = start; i < end; ++i)
-                peak = juce::jmax (peak, std::abs (sample->samples[static_cast<size_t> (i)]));
-
-            const auto level = juce::jlimit (0.0f, 1.0f, peak / 0.9f);
-            const auto barHeight = 5.0f + level * (maxHeight - 5.0f);
-            const auto x = margin + static_cast<float> (bar) * pitch;
-
-            g.setColour (Design::lime.withAlpha (0.8f + 0.2f * level));
-            g.fillRoundedRectangle (x, midY - barHeight * 0.5f, barWidth, barHeight, 3.0f);
-        }
-
-        drawLabel (g, sample->name.toUpperCase(), getLocalBounds().withTrimmedLeft (10).withTrimmedBottom (6), Design::mono (10.0f),
-                   Design::textDim, juce::Justification::bottomLeft);
-        drawLabel (g, formatDuration (static_cast<double> (sample->size()) / sample->sampleRate),
-                   getLocalBounds().withTrimmedRight (10).withTrimmedBottom (6), Design::mono (10.0f), Design::textDim,
-                   juce::Justification::bottomRight);
-
-        // the key that plays the clip at its original pitch
-        const auto tag = Rect (bounds.getRight() - 33.0f, 11.0f, 24.0f, 17.0f);
-        g.setColour (Design::lime.withAlpha (0.14f));
-        g.fillRoundedRectangle (tag, 5.0f);
-        g.setColour (Design::lime.withAlpha (0.7f));
-        g.drawRoundedRectangle (tag, 5.0f, 1.0f);
-        drawLabel (g, "C3", tag.toNearestInt(), Design::mono (10.0f, true), Design::lime, juce::Justification::centred);
+        g.setColour (level > 0.0f ? Design::lime.withAlpha (0.8f + 0.2f * level) : Design::waveGrid.brighter (0.4f));
+        g.fillRoundedRectangle (x, midY - barHeight * 0.5f, barWidth, barHeight, 3.0f);
     }
 
-    if (message.isNotEmpty())
-        drawLabel (g, message.toUpperCase(), getLocalBounds().reduced (12, 8), Design::mono (10.5f, true), Design::red,
-                   juce::Justification::topLeft);
-}
-
-void WaveformView::openChooser()
-{
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-
-    chooser = std::make_unique<juce::FileChooser> ("Choose a vocal", juce::File(), formats.getWildcardForAllFormats());
-    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                          [this] (const juce::FileChooser& fc)
-                          {
-                              const auto file = fc.getResult();
-
-                              if (file.existsAsFile() && onFileChosen != nullptr)
-                                  onFileChosen (file);
-                          });
-}
-
-void WaveformView::mouseUp (const juce::MouseEvent& event)
-{
-    if (contains (event.getPosition()))
-        openChooser();
-}
-
-bool WaveformView::isInterestedInFileDrag (const juce::StringArray& files)
-{
-    return files.size() == 1;
-}
-
-void WaveformView::fileDragEnter (const juce::StringArray&, int, int)
-{
-    dragging = true;
-    repaint();
-}
-
-void WaveformView::fileDragExit (const juce::StringArray&)
-{
-    dragging = false;
-    repaint();
-}
-
-void WaveformView::filesDropped (const juce::StringArray& files, int, int)
-{
-    dragging = false;
-    repaint();
-
-    if (files.size() == 1 && onFileChosen != nullptr)
-        onFileChosen (juce::File (files[0]));
+    drawLabel (g, "LIVE INPUT", getLocalBounds().withTrimmedLeft (10).withTrimmedBottom (6), Design::mono (10.0f), Design::textDim,
+               juce::Justification::bottomLeft);
+    drawLabel (g, "LAST " + juce::String (juce::roundToInt (numLevels * 0.035)) + " SEC", getLocalBounds().withTrimmedRight (10).withTrimmedBottom (6),
+               Design::mono (10.0f), Design::textDim, juce::Justification::bottomRight);
 }
 
 //==============================================================================
@@ -187,7 +104,6 @@ public:
         attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, parameterId, slider);
     }
 
-    float getDiameter() const { return diameter; }
     juce::Point<int> getCellSize() const { return { static_cast<int> (diameter) + 40, static_cast<int> (diameter) + 46 }; }
 
     void resized() override
@@ -220,20 +136,18 @@ public:
     explicit Content (PluginProcessor& p)
         : processor (p),
           voices (p.apvts, ParamIDs::stack, "Voices", Design::lime, 86.0f,
-                  [] (double v) { return juce::String (juce::roundToInt (v)) + (juce::roundToInt (v) == 1 ? " COPY" : " COPIES"); }, Design::lime),
+                  [] (double v) { return juce::roundToInt (v) == 1 ? juce::String ("JUST YOU") : juce::String (juce::roundToInt (v)) + " VOICES"; }, Design::lime),
           spread (p.apvts, ParamIDs::spread, "Spread", Design::lime, 86.0f, percent, Design::lime),
           highHype (p.apvts, ParamIDs::octave, "High Hype", Design::lime, 86.0f,
                     [] (double v) { return v < 0.01 ? juce::String ("OFF") : "+12 \xc2\xb7 " + percent (v); }, Design::lime),
           tone (p.apvts, ParamIDs::tone, "Tone", Design::lime, 62.0f,
-                [] (double v) { return juce::String (v > 0.66 ? "BRIGHT" : (v > 0.33 ? "WARM" : "DARK")); }, Design::textDim),
+                [] (double v) { return juce::String (v > 0.999 ? "OPEN" : (v > 0.66 ? "BRIGHT" : (v > 0.33 ? "WARM" : "DARK"))); }, Design::textDim),
           dirt (p.apvts, ParamIDs::dirt, "Dirt", Design::red, 62.0f, percent, Design::textDim),
           output (p.apvts, ParamIDs::gain, "Output", Design::lime, 62.0f, decibels, Design::textDim),
           echo (p.apvts, ParamIDs::echo, "Echo", Design::purple, 62.0f, percent, Design::textDim),
-          reverb (p.apvts, ParamIDs::space, "Reverb", Design::purple, 62.0f, percent, Design::textDim),
-          keyboard (p.keyboardState)
+          reverb (p.apvts, ParamIDs::space, "Reverb", Design::purple, 62.0f, percent, Design::textDim)
     {
-        addAndMakeVisible (waveform);
-        waveform.onFileChosen = [this] (const juce::File& file) { loadFile (file); };
+        addAndMakeVisible (scope);
 
         for (auto* knob : { &voices, &spread, &highHype, &tone, &dirt, &output, &echo, &reverb })
             addAndMakeVisible (*knob);
@@ -245,18 +159,9 @@ public:
         presetBox.onChange = [this] { processor.setCurrentProgram (presetBox.getSelectedItemIndex()); };
         addAndMakeVisible (presetBox);
 
-        addAndMakeVisible (oneShotSwitch);
-        oneShotAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (processor.apvts, ParamIDs::oneShot, oneShotSwitch);
-        oneShotSwitch.onStateChange = [this] { repaint ({ 1000, 20, 160, 50 }); };
-
-        replaceButton.onClick = [this] { waveform.openChooser(); };
-        clearButton.onClick = [this]
-        {
-            processor.clearSample();
-            waveform.setMessage ({});
-        };
-        addAndMakeVisible (replaceButton);
-        addAndMakeVisible (clearButton);
+        addAndMakeVisible (activeSwitch);
+        activeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (processor.apvts, ParamIDs::active, activeSwitch);
+        activeSwitch.onStateChange = [this] { repaint (1000, 20, 160, 50); };
 
         static const char* timings[] = { "1/16", "1/8", "1/8.", "1/4" };
         auto* timingParameter = processor.apvts.getParameter (ParamIDs::echoTime);
@@ -278,43 +183,28 @@ public:
 
         timingAttachment->sendInitialUpdate();
 
-        keyboard.setAvailableRange (48, 72);
-        keyboard.setLowestVisibleKey (48);
-        keyboard.setKeyWidth (1029.0f / 15.0f);
-        addAndMakeVisible (keyboard);
-
-        refreshSample();
-        startTimerHz (15);
+        timerCallback();
+        startTimerHz (30);
     }
-
-    ~Content() override = default;
 
     void paint (juce::Graphics& g) override
     {
         g.fillAll (Design::shellBackground);
         paintHeader (g);
-        paintSource (g);
+        paintInput (g);
         paintStackPanel (g);
         paintColorPanel (g);
         paintSpacePanel (g);
 
-        // keyboard panel
-        paintPanel (g, keyboardPanel, Design::sourceBackground, Design::shellBorder);
-        drawLabel (g, "KEYBOARD", { 46, 560, 80, 16 }, Design::mono (10.0f, true), Design::textDim, juce::Justification::centredLeft);
-        drawLabel (g, "PLAY A NOTE", { 46, 636, 90, 16 }, Design::mono (10.0f, true), Design::lime, juce::Justification::centredLeft);
-
-        drawLabel (g, "STACK BUDDY  V" + juce::String (VERSION), { 34, 675, 300, 16 }, Design::mono (10.0f), Design::textFaint,
+        drawLabel (g, "STACK BUDDY  V" + juce::String (VERSION), { 34, 546, 300, 16 }, Design::mono (10.0f), Design::textFaint,
                    juce::Justification::centredLeft);
     }
 
     void resized() override
     {
-        waveform.setBounds (43, 142, 1099, 130);
-        replaceButton.setBounds (1025, 111, 56, 23);
-        clearButton.setBounds (1088, 111, 52, 23);
-
+        scope.setBounds (43, 142, 1099, 130);
         presetBox.setBounds (603, 26, 150, 37);
-        oneShotSwitch.setBounds (1007, 35, 35, 19);
+        activeSwitch.setBounds (1007, 35, 35, 19);
 
         place (voices, 120, 391);
         place (spread, 264, 391);
@@ -327,16 +217,13 @@ public:
 
         for (size_t i = 0; i < pills.size(); ++i)
             pills[i].setBounds (958, 413 + static_cast<int> (i) * 24, 50, 20);
-
-        keyboard.setBounds (116, 557, 1029, 107);
     }
 
 private:
-    static inline const Rect sourcePanel { 33.0f, 102.0f, 1119.0f, 180.0f };
+    static inline const Rect inputPanel { 33.0f, 102.0f, 1119.0f, 180.0f };
     static inline const Rect stackPanelArea { 33.0f, 293.0f, 464.0f, 244.0f };
     static inline const Rect colorPanelArea { 508.0f, 293.0f, 294.0f, 244.0f };
     static inline const Rect spacePanelArea { 813.0f, 293.0f, 339.0f, 244.0f };
-    static inline const Rect keyboardPanel { 33.0f, 548.0f, 1119.0f, 117.0f };
 
     // centres the knob cell on x, with the knob's top edge at y
     void place (KnobCell& cell, int centreX, int top)
@@ -395,23 +282,25 @@ private:
 
         drawLabel (g, "PRESET", { 548, 36, 60, 16 }, Design::mono (10.5f, true), Design::textDim, juce::Justification::centredLeft);
 
-        drawLabel (g, "ONE SHOT", { 1052, 28, 100, 16 }, Design::bold (11.2f).withExtraKerningFactor (0.06f), Design::text,
+        drawLabel (g, "STACK", { 1052, 28, 100, 16 }, Design::bold (11.2f).withExtraKerningFactor (0.06f), Design::text,
                    juce::Justification::centredLeft);
-        const auto on = oneShotSwitch.getToggleState();
-        drawLabel (g, on ? "ON" : "OFF", { 1052, 44, 100, 14 }, Design::mono (10.0f, true), on ? Design::lime : Design::textFaint,
+        const auto on = activeSwitch.getToggleState();
+        drawLabel (g, on ? "ON" : "BYPASSED", { 1052, 44, 100, 14 }, Design::mono (10.0f, true), on ? Design::lime : Design::textFaint,
                    juce::Justification::centredLeft);
     }
 
-    void paintSource (juce::Graphics& g)
+    void paintInput (juce::Graphics& g)
     {
-        paintPanel (g, sourcePanel, Design::sourceBackground, Design::shellBorder);
-        drawLabel (g, "SOURCE", { 51, 113, 120, 18 }, Design::mono (11.0f, true), Design::textDim, juce::Justification::centredLeft);
+        paintPanel (g, inputPanel, Design::sourceBackground, Design::shellBorder);
+        drawLabel (g, "INPUT", { 51, 113, 120, 18 }, Design::mono (11.0f, true), Design::textDim, juce::Justification::centredLeft);
 
-        const auto loaded = shownSample != nullptr;
-        g.setColour (loaded ? Design::lime : Design::textFaint);
-        g.fillEllipse (913.0f, 118.0f, 7.0f, 7.0f);
-        drawLabel (g, loaded ? "SAMPLE READY" : "NO SAMPLE", { 929, 112, 90, 20 }, Design::mono (10.5f, true),
-                   loaded ? Design::lime : Design::textDim, juce::Justification::centredLeft);
+        g.setColour (hearingSignal ? Design::lime : Design::textFaint);
+        g.fillEllipse (875.0f, 118.0f, 7.0f, 7.0f);
+        drawLabel (g, hearingSignal ? "LISTENING" : "WAITING FOR AUDIO", { 891, 112, 140, 20 }, Design::mono (10.5f, true),
+                   hearingSignal ? Design::lime : Design::textDim, juce::Justification::centredLeft);
+
+        const auto peakText = hearingSignal ? "PEAK " + juce::String (juce::Decibels::gainToDecibels (recentPeak), 1) + " DB" : juce::String ("PEAK  --");
+        drawLabel (g, peakText, { 1030, 112, 110, 20 }, Design::mono (10.5f, true), Design::textDim, juce::Justification::centredRight);
     }
 
     void paintStackPanel (juce::Graphics& g)
@@ -419,7 +308,7 @@ private:
         paintPanel (g, stackPanelArea, Design::stackPanel, Design::stackPanelBorder);
         paintPanelHeader (g, stackPanelArea, "01", "The main event", "Build your stack", Design::lime);
 
-        // the copies, drawn as overlapping circles that fan out as Spread goes up
+        // the voices, drawn as overlapping circles that fan out as Spread goes up
         const auto count = juce::jlimit (1, StackEngine::maxStack, juce::roundToInt (processor.apvts.getRawParameterValue (ParamIDs::stack)->load()));
         const auto fan = processor.apvts.getRawParameterValue (ParamIDs::spread)->load();
         const auto step = 3.0f + fan * 4.5f;
@@ -454,30 +343,27 @@ private:
         drawLabel (g, "SYNCED", { 933, 512, 100, 14 }, Design::mono (10.0f), Design::textDim, juce::Justification::centred);
     }
 
-    void loadFile (const juce::File& file)
-    {
-        juce::String error;
-
-        if (processor.loadSampleFromFile (file, error))
-            waveform.setMessage ({});
-        else
-            waveform.setMessage (error);
-    }
-
-    void refreshSample()
-    {
-        shownSample = processor.getSample();
-        waveform.setSample (shownSample);
-        replaceButton.setButtonText (shownSample != nullptr ? "REPLACE" : "LOAD");
-        clearButton.setEnabled (shownSample != nullptr);
-        repaint (900, 102, 260, 40);
-    }
-
     void timerCallback() override
     {
-        // the clip can also change when the host restores a project
-        if (processor.getSample() != shownSample)
-            refreshSample();
+        std::array<float, InputScope::maxBars> history {};
+        const auto bars = scope.getBarCount();
+        processor.getInputHistory (history.data(), bars);
+        scope.setLevels (history.data(), bars);
+
+        // status follows the last half second or so
+        float peak = 0.0f;
+
+        for (int i = juce::jmax (0, bars - 15); i < bars; ++i)
+            peak = juce::jmax (peak, history[static_cast<size_t> (i)]);
+
+        const auto nowHearing = juce::Decibels::gainToDecibels (peak) > signalDb;
+
+        if (nowHearing != hearingSignal || std::abs (peak - recentPeak) > 0.001f)
+        {
+            hearingSignal = nowHearing;
+            recentPeak = peak;
+            repaint (860, 102, 292, 40);
+        }
 
         // the circles next to the panel title follow the Voices and Spread knobs
         repaint (410, 316, 80, 34);
@@ -485,19 +371,18 @@ private:
 
     PluginProcessor& processor;
 
-    WaveformView waveform;
-    juce::TextButton replaceButton { "LOAD" }, clearButton { "CLEAR" };
+    InputScope scope;
     juce::ComboBox presetBox;
-    juce::ToggleButton oneShotSwitch;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> oneShotAttachment;
+    juce::ToggleButton activeSwitch;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> activeAttachment;
 
     KnobCell voices, spread, highHype, tone, dirt, output, echo, reverb;
 
     std::array<juce::TextButton, 4> pills;
     std::unique_ptr<juce::ParameterAttachment> timingAttachment;
 
-    StackKeyboard keyboard;
-    std::shared_ptr<const SampleData> shownSample;
+    bool hearingSignal = false;
+    float recentPeak = 0.0f;
 };
 
 //==============================================================================
@@ -513,13 +398,13 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     addAndMakeVisible (resizer);
 
     // our own corner handle (drawn in the design's style) keeps the window at the design's shape
-    constrainer.setMinimumSize (590, 350);
-    constrainer.setMaximumSize (1770, 1050);
+    constrainer.setMinimumSize (590, 285);
+    constrainer.setMaximumSize (1770, 855);
     constrainer.setFixedAspectRatio (static_cast<double> (Design::width) / Design::height);
     setConstrainer (&constrainer);
     setResizable (true, false);
 
-    setSize (1000, 593);
+    setSize (1000, 483);
 }
 
 PluginEditor::~PluginEditor()

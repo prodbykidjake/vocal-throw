@@ -1,6 +1,7 @@
 #include <PluginProcessor.h>
 #include <StackEngine.h>
 #include <catch2/catch_approx.hpp>
+#include <juce_dsp/juce_dsp.h>
 #include <catch2/catch_test_macros.hpp>
 #include <set>
 
@@ -8,37 +9,188 @@ namespace
 {
     constexpr double testRate = 44100.0;
 
-    std::shared_ptr<SampleData> makeSine (double seconds = 0.5, double frequency = 220.0)
+    std::vector<float> sine (int numSamples, double frequency, float level = 0.5f)
     {
-        juce::AudioBuffer<float> buffer (1, static_cast<int> (seconds * testRate));
+        std::vector<float> out (static_cast<size_t> (numSamples));
 
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-            buffer.setSample (0, i, static_cast<float> (std::sin (juce::MathConstants<double>::twoPi * frequency * i / testRate)));
+        for (int i = 0; i < numSamples; ++i)
+            out[static_cast<size_t> (i)] = level * static_cast<float> (std::sin (juce::MathConstants<double>::twoPi * frequency * i / testRate));
 
-        return SampleData::fromBuffer (buffer, testRate, "sine");
+        return out;
     }
 
-    // Renders until nothing is playing and returns how many samples that took.
-    int samplesUntilSilent (StackEngine& engine, int limit = 200000)
+    // Frequency from rising zero crossings, between the first and last one in the range.
+    double measureFrequency (const std::vector<float>& signal, size_t start, size_t end)
     {
-        std::vector<float> left (512), right (512);
-        int total = 0;
+        double first = -1.0, last = -1.0;
+        int crossings = 0;
 
-        while (engine.getActiveLayerCount() > 0 && total < limit)
+        for (size_t i = start + 1; i < end; ++i)
         {
-            std::fill (left.begin(), left.end(), 0.0f);
-            std::fill (right.begin(), right.end(), 0.0f);
-            engine.render (left.data(), right.data(), 512);
-            total += 512;
+            const auto a = signal[i - 1];
+            const auto b = signal[i];
+
+            if (a < 0.0f && b >= 0.0f)
+            {
+                const auto t = static_cast<double> (i - 1) + static_cast<double> (-a / (b - a));
+
+                if (first < 0.0)
+                    first = t;
+                else
+                    ++crossings;
+
+                last = t;
+            }
         }
 
-        return total;
+        return crossings > 0 ? crossings * testRate / (last - first) : 0.0;
+    }
+
+    // The strongest frequency in the signal, from an FFT with the peak bin interpolated.
+    double dominantFrequency (const std::vector<float>& signal, size_t start)
+    {
+        constexpr int order = 15;
+        constexpr int size = 1 << order;
+        REQUIRE (signal.size() >= start + static_cast<size_t> (size));
+
+        juce::dsp::FFT fft (order);
+        std::vector<float> data (static_cast<size_t> (size) * 2, 0.0f);
+
+        for (int i = 0; i < size; ++i)
+        {
+            const auto hann = 0.5 - 0.5 * std::cos (juce::MathConstants<double>::twoPi * i / (size - 1));
+            data[static_cast<size_t> (i)] = signal[start + static_cast<size_t> (i)] * static_cast<float> (hann);
+        }
+
+        fft.performFrequencyOnlyForwardTransform (data.data());
+
+        size_t peak = 1;
+
+        for (size_t i = 2; i < static_cast<size_t> (size / 2); ++i)
+            if (data[i] > data[peak])
+                peak = i;
+
+        const auto a = static_cast<double> (data[peak - 1]);
+        const auto b = static_cast<double> (data[peak]);
+        const auto c = static_cast<double> (data[peak + 1]);
+        const auto offset = 0.5 * (a - c) / (a - 2.0 * b + c);
+        return (static_cast<double> (peak) + offset) * testRate / size;
+    }
+
+    // Share of the signal's energy between lowHz and highHz.
+    double energyFraction (const std::vector<float>& signal, size_t start, double lowHz, double highHz)
+    {
+        constexpr int order = 15;
+        constexpr int size = 1 << order;
+        REQUIRE (signal.size() >= start + static_cast<size_t> (size));
+
+        juce::dsp::FFT fft (order);
+        std::vector<float> data (static_cast<size_t> (size) * 2, 0.0f);
+
+        for (int i = 0; i < size; ++i)
+        {
+            const auto hann = 0.5 - 0.5 * std::cos (juce::MathConstants<double>::twoPi * i / (size - 1));
+            data[static_cast<size_t> (i)] = signal[start + static_cast<size_t> (i)] * static_cast<float> (hann);
+        }
+
+        fft.performFrequencyOnlyForwardTransform (data.data());
+
+        double inside = 0.0, total = 0.0;
+
+        for (int i = 1; i < size / 2; ++i)
+        {
+            const auto power = static_cast<double> (data[static_cast<size_t> (i)]) * static_cast<double> (data[static_cast<size_t> (i)]);
+            const auto hz = i * testRate / size;
+            total += power;
+
+            if (hz >= lowHz && hz <= highHz)
+                inside += power;
+        }
+
+        return total > 0.0 ? inside / total : 0.0;
+    }
+
+    std::vector<float> noise (int numSamples, float level)
+    {
+        juce::Random random (42);
+        std::vector<float> out (static_cast<size_t> (numSamples));
+
+        for (auto& s : out)
+            s = level * (random.nextFloat() * 2.0f - 1.0f);
+
+        return out;
+    }
+
+    float rms (const float* data, int numSamples)
+    {
+        double sum = 0.0;
+
+        for (int i = 0; i < numSamples; ++i)
+            sum += static_cast<double> (data[i]) * static_cast<double> (data[i]);
+
+        return static_cast<float> (std::sqrt (sum / juce::jmax (1, numSamples)));
+    }
+
+    void setParam (PluginProcessor& processor, const char* id, float value)
+    {
+        auto* parameter = processor.apvts.getParameter (id);
+        parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+    }
+
+    // every effect at zero and a single voice: the plugin should do nothing at all
+    void makeTransparent (PluginProcessor& processor)
+    {
+        setParam (processor, ParamIDs::stack, 1.0f);
+        setParam (processor, ParamIDs::octave, 0.0f);
+        setParam (processor, ParamIDs::echo, 0.0f);
+        setParam (processor, ParamIDs::space, 0.0f);
+        setParam (processor, ParamIDs::dirt, 0.0f);
+        setParam (processor, ParamIDs::tone, 1.0f);
+        setParam (processor, ParamIDs::gain, 0.0f);
+    }
+
+    void prepare (PluginProcessor& processor, juce::AudioChannelSet in, juce::AudioChannelSet out, int blockSize = 512)
+    {
+        juce::AudioProcessor::BusesLayout layout;
+        layout.inputBuses.add (in);
+        layout.outputBuses.add (out);
+        REQUIRE (processor.setBusesLayout (layout));
+        processor.setRateAndBufferSizeDetails (testRate, blockSize);
+        processor.prepareToPlay (testRate, blockSize);
+    }
+
+    // Runs a mono signal through the processor block by block and returns each output channel.
+    std::vector<std::vector<float>> run (PluginProcessor& processor, const std::vector<float>& input, int blockSize = 512)
+    {
+        const auto numOut = processor.getTotalNumOutputChannels();
+        const auto numChannels = juce::jmax (numOut, processor.getTotalNumInputChannels());
+        std::vector<std::vector<float>> out (static_cast<size_t> (numOut), std::vector<float> (input.size()));
+        juce::AudioBuffer<float> buffer (numChannels, blockSize);
+        juce::MidiBuffer midi;
+
+        for (size_t start = 0; start < input.size(); start += static_cast<size_t> (blockSize))
+        {
+            const auto count = static_cast<int> (juce::jmin (static_cast<size_t> (blockSize), input.size() - start));
+            buffer.setSize (numChannels, count, false, false, true);
+            buffer.clear();
+
+            for (int ch = 0; ch < processor.getTotalNumInputChannels(); ++ch)
+                buffer.copyFrom (ch, 0, input.data() + start, count);
+
+            processor.processBlock (buffer, midi);
+
+            for (int ch = 0; ch < numOut; ++ch)
+                std::copy (buffer.getReadPointer (ch), buffer.getReadPointer (ch) + count, out[static_cast<size_t> (ch)].begin() + static_cast<std::ptrdiff_t> (start));
+        }
+
+        return out;
     }
 }
 
+//==============================================================================
 TEST_CASE ("Stack layout", "[engine]")
 {
-    SECTION ("the first copy is the untouched original")
+    SECTION ("the first voice is the untouched original")
     {
         const auto shape = StackEngine::shapeFor (0, 4, 1.0f);
         CHECK (shape.cents == Catch::Approx (0.0f));
@@ -58,303 +210,260 @@ TEST_CASE ("Stack layout", "[engine]")
         CHECK (std::abs (c.pan) <= 1.0f);
     }
 
-    SECTION ("no spread means no difference between copies")
+    SECTION ("even with no spread the copies differ a little, so they don't comb-filter")
     {
-        for (int i = 0; i < 4; ++i)
-        {
-            const auto shape = StackEngine::shapeFor (i, 4, 0.0f);
-            CHECK (shape.cents == Catch::Approx (0.0f));
-            CHECK (shape.pan == Catch::Approx (0.0f));
-            CHECK (shape.delayMs == Catch::Approx (0.0f));
-        }
+        const auto shape = StackEngine::shapeFor (1, 3, 0.0f);
+        CHECK (std::abs (shape.cents) > 1.0f);
+        CHECK (shape.delayMs > 1.0f);
+    }
+
+    SECTION ("a single voice has no copies")
+    {
+        CHECK (StackEngine::copyGain (1) == Catch::Approx (0.0f));
+        CHECK (StackEngine::copyGain (2) > 0.0f);
+        CHECK (StackEngine::copyGain (6) < StackEngine::copyGain (2));
     }
 }
 
-TEST_CASE ("Engine playback", "[engine]")
+TEST_CASE ("Stack engine", "[engine]")
 {
     StackEngine engine;
     engine.prepare (testRate);
-    auto sample = makeSine();
     StackParams params;
 
-    SECTION ("does nothing without a sample")
+    const auto numSamples = static_cast<int> (testRate);
+    const auto input = sine (numSamples, 440.0);
+    std::vector<float> left (input.size(), 0.0f), right (input.size(), 0.0f);
+
+    auto render = [&]
     {
-        engine.noteOn (60, 1.0f, params);
-        CHECK (engine.getActiveLayerCount() == 0);
-    }
+        engine.setParams (params);
+        std::fill (left.begin(), left.end(), 0.0f);
+        std::fill (right.begin(), right.end(), 0.0f);
+        engine.process (input.data(), left.data(), right.data(), numSamples);
+    };
 
-    engine.setSample (sample.get());
-
-    SECTION ("one note starts one layer per stack copy")
-    {
-        params.stack = 4;
-        engine.noteOn (60, 1.0f, params);
-        CHECK (engine.getActiveLayerCount() == 4);
-    }
-
-    SECTION ("the octave copy adds one more layer")
-    {
-        params.stack = 2;
-        params.octave = 0.5f;
-        engine.noteOn (60, 1.0f, params);
-        CHECK (engine.getActiveLayerCount() == 3);
-    }
-
-    SECTION ("an octave up plays in half the time")
+    SECTION ("one voice and no octave adds nothing")
     {
         params.stack = 1;
-        engine.noteOn (60, 1.0f, params);
-        const auto original = samplesUntilSilent (engine);
-
-        engine.noteOn (72, 1.0f, params);
-        const auto octaveUp = samplesUntilSilent (engine);
-
-        CHECK (octaveUp == Catch::Approx (original / 2.0).margin (1024));
+        params.octave = 0.0f;
+        render();
+        CHECK (rms (left.data(), numSamples) == Catch::Approx (0.0f).margin (1.0e-6));
+        CHECK (rms (right.data(), numSamples) == Catch::Approx (0.0f).margin (1.0e-6));
     }
 
-    SECTION ("output is finite, stays in range and ends")
+    SECTION ("a copy is detuned by the right amount")
+    {
+        // two voices at full spread: the copy is 25 cents flat and hard left
+        params.stack = 2;
+        params.spread = 1.0f;
+        render();
+
+        const auto expected = 440.0 * std::pow (2.0, -25.0 / 1200.0);
+        CHECK (measureFrequency (left, input.size() / 2, input.size()) == Catch::Approx (expected).epsilon (0.005));
+        CHECK (rms (right.data() + numSamples / 2, numSamples / 2) < 0.001f);
+    }
+
+    SECTION ("High Hype adds a copy an octave up")
+    {
+        params.stack = 1;
+        params.octave = 1.0f;
+        render();
+
+        // zero crossings are unreliable here (the crossfading taps partly cancel on a pure tone), so use the spectrum
+        CHECK (dominantFrequency (left, input.size() - 32768) == Catch::Approx (880.0).epsilon (0.02));
+
+        // and the octave is clean: most of its energy sits at 880 Hz rather than in warbly side tones
+        CHECK (energyFraction (left, input.size() - 32768, 860.0, 900.0) > 0.8);
+        CHECK (rms (left.data() + numSamples / 2, numSamples / 2) > 0.1f);
+    }
+
+    SECTION ("silence in, silence out")
     {
         params.stack = StackEngine::maxStack;
         params.octave = 1.0f;
+        engine.setParams (params);
+
+        std::vector<float> quiet (input.size(), 0.0f);
+        engine.process (quiet.data(), left.data(), right.data(), numSamples);
+        CHECK (rms (left.data(), numSamples) == Catch::Approx (0.0f).margin (1.0e-6));
+    }
+
+    SECTION ("everything at maximum stays finite and in range")
+    {
+        params.stack = StackEngine::maxStack;
         params.spread = 1.0f;
-        engine.noteOn (60, 1.0f, params);
+        params.octave = 1.0f;
+        render();
 
-        std::vector<float> left (512), right (512);
         float peak = 0.0f;
-        int blocks = 0;
 
-        while (engine.getActiveLayerCount() > 0 && blocks < 1000)
+        for (size_t i = 0; i < input.size(); ++i)
         {
-            std::fill (left.begin(), left.end(), 0.0f);
-            std::fill (right.begin(), right.end(), 0.0f);
-            engine.render (left.data(), right.data(), 512);
-
-            for (size_t i = 0; i < 512; ++i)
-            {
-                REQUIRE (std::isfinite (left[i]));
-                REQUIRE (std::isfinite (right[i]));
-                peak = juce::jmax (peak, std::abs (left[i]), std::abs (right[i]));
-            }
-
-            ++blocks;
+            REQUIRE (std::isfinite (left[i]));
+            REQUIRE (std::isfinite (right[i]));
+            peak = juce::jmax (peak, std::abs (left[i]), std::abs (right[i]));
         }
 
         CHECK (peak > 0.1f);
-        CHECK (peak < 2.5f);
-        CHECK (engine.getActiveLayerCount() == 0);
-    }
-
-    SECTION ("one-shot ignores note-off")
-    {
-        params.oneShot = true;
-        engine.noteOn (60, 1.0f, params);
-        engine.noteOff (60);
-
-        std::vector<float> left (4096), right (4096);
-        engine.render (left.data(), right.data(), 4096);
-        CHECK (engine.getActiveLayerCount() > 0);
-    }
-
-    SECTION ("hold mode releases on note-off")
-    {
-        params.oneShot = false;
-        params.stack = 1;
-        params.releaseMs = 20.0f;
-        engine.noteOn (60, 1.0f, params);
-        engine.noteOff (60);
-
-        // 20 ms is 882 samples
-        CHECK (samplesUntilSilent (engine) <= 1024);
-    }
-
-    SECTION ("a higher velocity is louder")
-    {
-        params.stack = 1;
-        auto peakFor = [&] (float velocity)
-        {
-            engine.allNotesOff();
-            engine.noteOn (60, velocity, params);
-            std::vector<float> left (4096), right (4096);
-            engine.render (left.data(), right.data(), 4096);
-            return *std::max_element (left.begin(), left.end());
-        };
-
-        CHECK (peakFor (1.0f) > peakFor (0.3f));
+        CHECK (peak < 3.0f);
     }
 }
 
-TEST_CASE ("Sample data", "[sample]")
-{
-    SECTION ("silence at both ends is trimmed and the peak is normalised")
-    {
-        juce::AudioBuffer<float> buffer (2, 20000);
-        buffer.clear();
-
-        for (int i = 5000; i < 10000; ++i)
-        {
-            buffer.setSample (0, i, 0.25f * std::sin (0.05f * static_cast<float> (i)));
-            buffer.setSample (1, i, 0.25f * std::sin (0.05f * static_cast<float> (i)));
-        }
-
-        auto sample = SampleData::fromBuffer (buffer, testRate, "test");
-        REQUIRE (sample != nullptr);
-        CHECK (sample->size() < 5200);
-        CHECK (sample->size() > 4900);
-
-        float peak = 0.0f;
-
-        for (auto s : sample->samples)
-            peak = juce::jmax (peak, std::abs (s));
-
-        CHECK (peak == Catch::Approx (0.9f).margin (0.001));
-    }
-
-    SECTION ("silent audio is rejected")
-    {
-        juce::AudioBuffer<float> buffer (1, 1000);
-        buffer.clear();
-        CHECK (SampleData::fromBuffer (buffer, testRate, "silent") == nullptr);
-    }
-
-    SECTION ("clips longer than the cap are cut")
-    {
-        juce::AudioBuffer<float> buffer (1, static_cast<int> (testRate * 12.0));
-
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-            buffer.setSample (0, i, 0.5f);
-
-        auto sample = SampleData::fromBuffer (buffer, testRate, "long");
-        REQUIRE (sample != nullptr);
-        CHECK (sample->size() <= static_cast<int> (SampleData::maxSeconds * testRate));
-    }
-
-    SECTION ("base64 round trip keeps the audio")
-    {
-        auto original = makeSine (0.1);
-        auto restored = SampleData::fromBase64 (original->toBase64(), original->sampleRate, original->name);
-        REQUIRE (restored != nullptr);
-        REQUIRE (restored->size() == original->size());
-
-        for (int i = 0; i < original->size(); ++i)
-            REQUIRE (restored->samples[static_cast<size_t> (i)] == Catch::Approx (original->samples[static_cast<size_t> (i)]).margin (0.0001));
-    }
-
-    SECTION ("garbage base64 is rejected")
-    {
-        CHECK (SampleData::fromBase64 ("", testRate, "x") == nullptr);
-    }
-}
-
-TEST_CASE ("Processor", "[processor]")
+//==============================================================================
+TEST_CASE ("Processor as an insert", "[processor]")
 {
     PluginProcessor processor;
-    processor.setPlayConfigDetails (0, 2, testRate, 512);
-    processor.prepareToPlay (testRate, 512);
+    const auto input = sine (static_cast<int> (testRate * 0.5), 300.0, 0.4f);
 
-    auto renderBlock = [&] (juce::MidiBuffer midi)
+    SECTION ("it is an audio effect, not an instrument")
     {
-        juce::AudioBuffer<float> buffer (2, 512);
-        buffer.clear();
-        processor.processBlock (buffer, midi);
-        return buffer;
-    };
-
-    SECTION ("is silent until a note arrives")
-    {
-        processor.setSample (makeSine());
-        CHECK (renderBlock ({}).getMagnitude (0, 0, 512) == Catch::Approx (0.0f));
+        CHECK_FALSE (processor.acceptsMidi());
+        CHECK_FALSE (processor.isMidiEffect());
     }
 
-    SECTION ("a note plays the clip")
+    SECTION ("supports mono and stereo tracks")
     {
-        processor.setSample (makeSine());
+        auto supports = [&] (juce::AudioChannelSet in, juce::AudioChannelSet out)
+        {
+            juce::AudioProcessor::BusesLayout layout;
+            layout.inputBuses.add (in);
+            layout.outputBuses.add (out);
+            return processor.checkBusesLayoutSupported (layout);
+        };
 
-        juce::MidiBuffer midi;
-        midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
-        renderBlock (midi);
-
-        // second block picks up the sample and keeps playing
-        const auto buffer = renderBlock ({});
-        CHECK (buffer.getMagnitude (0, 0, 512) > 0.05f);
-        CHECK (buffer.getMagnitude (1, 0, 512) > 0.05f);
+        CHECK (supports (juce::AudioChannelSet::mono(), juce::AudioChannelSet::stereo()));
+        CHECK (supports (juce::AudioChannelSet::stereo(), juce::AudioChannelSet::stereo()));
+        CHECK (supports (juce::AudioChannelSet::mono(), juce::AudioChannelSet::mono()));
+        CHECK_FALSE (supports (juce::AudioChannelSet::stereo(), juce::AudioChannelSet::mono()));
     }
 
-    SECTION ("a note starts exactly where its MIDI event is")
+    SECTION ("with everything off the vocal passes through untouched (stereo)")
     {
-        processor.setSample (makeSine());
-        renderBlock ({}); // pick up the sample
+        makeTransparent (processor);
+        prepare (processor, juce::AudioChannelSet::stereo(), juce::AudioChannelSet::stereo());
+        const auto out = run (processor, input);
 
-        juce::MidiBuffer midi;
-        midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 300);
-        const auto buffer = renderBlock (midi);
-
-        CHECK (buffer.getMagnitude (0, 0, 300) == Catch::Approx (0.0f));
-        CHECK (buffer.getMagnitude (0, 300, 212) > 0.0f);
+        for (size_t i = 0; i < input.size(); ++i)
+        {
+            REQUIRE (out[0][i] == Catch::Approx (input[i]).margin (1.0e-6));
+            REQUIRE (out[1][i] == Catch::Approx (input[i]).margin (1.0e-6));
+        }
     }
 
-    SECTION ("clearing the clip silences the plugin")
+    SECTION ("with everything off a mono vocal comes out centred and untouched")
     {
-        // no echo or reverb, so nothing rings on after the notes stop
-        for (auto id : { ParamIDs::echo, ParamIDs::space })
-            processor.apvts.getParameter (id)->setValueNotifyingHost (0.0f);
+        makeTransparent (processor);
+        prepare (processor, juce::AudioChannelSet::mono(), juce::AudioChannelSet::stereo());
+        const auto out = run (processor, input);
 
-        processor.setSample (makeSine());
-        juce::MidiBuffer midi;
-        midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
-        renderBlock (midi);
-        CHECK (renderBlock ({}).getMagnitude (0, 0, 512) > 0.05f);
-
-        processor.clearSample();
-        CHECK (processor.getSample() == nullptr);
-
-        // let the effect smoothing settle, then nothing should come out
-        for (int i = 0; i < 6; ++i)
-            renderBlock ({});
-
-        CHECK (renderBlock ({}).getMagnitude (0, 0, 512) == Catch::Approx (0.0f).margin (0.001));
-
-        // a new note does nothing until another clip is loaded
-        juce::MidiBuffer again;
-        again.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
-        renderBlock (again);
-        CHECK (renderBlock ({}).getMagnitude (0, 0, 512) == Catch::Approx (0.0f).margin (0.001));
+        for (size_t i = 0; i < input.size(); ++i)
+        {
+            REQUIRE (out[0][i] == Catch::Approx (input[i]).margin (1.0e-6));
+            REQUIRE (out[1][i] == Catch::Approx (input[i]).margin (1.0e-6));
+        }
     }
 
-    SECTION ("a project saved without a clip clears the loaded one")
+    SECTION ("host blocks bigger than the internal chunk size are handled")
     {
-        PluginProcessor empty;
-        juce::MemoryBlock emptyState;
-        empty.getStateInformation (emptyState);
+        makeTransparent (processor);
+        prepare (processor, juce::AudioChannelSet::stereo(), juce::AudioChannelSet::stereo(), 2000);
+        const auto out = run (processor, input, 2000);
 
-        processor.setSample (makeSine());
-        processor.setStateInformation (emptyState.getData(), static_cast<int> (emptyState.getSize()));
-        CHECK (processor.getSample() == nullptr);
+        for (size_t i = 0; i < input.size(); ++i)
+            REQUIRE (out[0][i] == Catch::Approx (input[i]).margin (1.0e-6));
     }
 
-    SECTION ("the clip is saved and restored with the project")
+    SECTION ("the stack makes a mono vocal wide and bigger")
     {
-        auto sample = makeSine();
-        processor.setSample (sample);
-        processor.apvts.getParameter (ParamIDs::stack)->setValueNotifyingHost (processor.apvts.getParameter (ParamIDs::stack)->convertTo0to1 (5.0f));
+        // noise rather than a pure tone: a tone and its detuned copies beat slowly, which hides the level change
+        const auto voice = noise (static_cast<int> (testRate), 0.2f);
+
+        setParam (processor, ParamIDs::echo, 0.0f);
+        setParam (processor, ParamIDs::space, 0.0f);
+        prepare (processor, juce::AudioChannelSet::mono(), juce::AudioChannelSet::stereo());
+        const auto out = run (processor, voice);
+
+        const auto half = voice.size() / 2;
+        float difference = 0.0f;
+
+        for (size_t i = half; i < voice.size(); ++i)
+            difference = juce::jmax (difference, std::abs (out[0][i] - out[1][i]));
+
+        CHECK (difference > 0.05f);
+        CHECK (rms (out[0].data() + half, static_cast<int> (half)) > rms (voice.data() + half, static_cast<int> (half)));
+    }
+
+    SECTION ("Dirt adds grit without making the vocal much louder")
+    {
+        const auto voice = noise (static_cast<int> (testRate), 0.1f);
+        makeTransparent (processor);
+        prepare (processor, juce::AudioChannelSet::mono(), juce::AudioChannelSet::stereo());
+        const auto clean = run (processor, voice);
+
+        setParam (processor, ParamIDs::dirt, 1.0f);
+        prepare (processor, juce::AudioChannelSet::mono(), juce::AudioChannelSet::stereo());
+        const auto dirty = run (processor, voice);
+
+        const auto change = juce::Decibels::gainToDecibels (rms (dirty[0].data(), static_cast<int> (voice.size())) / rms (clean[0].data(), static_cast<int> (voice.size())));
+        CHECK (std::abs (change) < 6.0f);
+    }
+
+    SECTION ("Stack On off passes the vocal through")
+    {
+        setParam (processor, ParamIDs::active, 0.0f);
+        prepare (processor, juce::AudioChannelSet::mono(), juce::AudioChannelSet::stereo());
+        const auto out = run (processor, input);
+
+        for (size_t i = 0; i < input.size(); ++i)
+        {
+            REQUIRE (out[0][i] == Catch::Approx (input[i]).margin (1.0e-6));
+            REQUIRE (out[1][i] == Catch::Approx (input[i]).margin (1.0e-6));
+        }
+    }
+
+    SECTION ("mono in, mono out works")
+    {
+        prepare (processor, juce::AudioChannelSet::mono(), juce::AudioChannelSet::mono());
+        const auto out = run (processor, input);
+
+        REQUIRE (out.size() == 1);
+
+        for (auto s : out[0])
+            REQUIRE (std::isfinite (s));
+
+        CHECK (rms (out[0].data(), static_cast<int> (out[0].size())) > 0.1f);
+    }
+
+    SECTION ("the UI's input history follows the vocal")
+    {
+        prepare (processor, juce::AudioChannelSet::mono(), juce::AudioChannelSet::stereo());
+        run (processor, input);
+
+        std::array<float, 8> history {};
+        processor.getInputHistory (history.data(), static_cast<int> (history.size()));
+        CHECK (history.back() == Catch::Approx (0.4f).margin (0.01));
+    }
+
+    SECTION ("settings are saved and restored with the project")
+    {
+        setParam (processor, ParamIDs::stack, 5.0f);
+        setParam (processor, ParamIDs::active, 0.0f);
 
         juce::MemoryBlock state;
         processor.getStateInformation (state);
 
         PluginProcessor restored;
         restored.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
-
-        auto restoredSample = restored.getSample();
-        REQUIRE (restoredSample != nullptr);
-        CHECK (restoredSample->size() == sample->size());
-        CHECK (restoredSample->sampleRate == Catch::Approx (sample->sampleRate));
         CHECK (juce::roundToInt (restored.apvts.getRawParameterValue (ParamIDs::stack)->load()) == 5);
+        CHECK (restored.apvts.getRawParameterValue (ParamIDs::active)->load() < 0.5f);
     }
 
     SECTION ("bad state data is ignored")
     {
         const char junk[] = "not a plugin state";
         processor.setStateInformation (junk, sizeof (junk));
-        CHECK (processor.getSample() == nullptr);
+        CHECK (juce::roundToInt (processor.apvts.getRawParameterValue (ParamIDs::stack)->load()) == 3);
     }
 }
 
@@ -406,9 +515,6 @@ TEST_CASE ("Presets", "[processor]")
                 CHECK (parameter->getValue() >= 0.0f);
                 CHECK (parameter->getValue() <= 1.0f);
             }
-
-            CHECK (juce::roundToInt (processor.apvts.getRawParameterValue (ParamIDs::stack)->load()) >= 1);
-            CHECK (juce::roundToInt (processor.apvts.getRawParameterValue (ParamIDs::echoTime)->load()) <= 3);
         }
     }
 

@@ -6,6 +6,7 @@ namespace
     constexpr float echoBeats[] = { 0.25f, 0.5f, 0.75f, 1.0f };
     constexpr float toneOpenHz = 20000.0f;
     constexpr float toneDarkHz = 1200.0f;
+    constexpr int chunkSize = 512;
 
     struct Preset
     {
@@ -27,16 +28,19 @@ namespace
 
 //==============================================================================
 PluginProcessor::PluginProcessor()
-    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+    : AudioProcessor (BusesProperties()
+                          .withInput ("Input", juce::AudioChannelSet::stereo(), true)
+                          .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "Parameters", createLayout())
 {
-    formatManager.registerBasicFormats();
-
     // look the parameters up once, so the audio thread never searches by name
     const auto find = [this] (const char* id) { return apvts.getRawParameterValue (id); };
     raw = { find (ParamIDs::stack), find (ParamIDs::spread), find (ParamIDs::octave), find (ParamIDs::tone),
             find (ParamIDs::dirt), find (ParamIDs::echo), find (ParamIDs::echoTime), find (ParamIDs::space),
-            find (ParamIDs::gain), find (ParamIDs::oneShot) };
+            find (ParamIDs::gain), find (ParamIDs::active) };
+
+    for (auto& peak : scopePeaks)
+        peak.store (0.0f);
 }
 
 PluginProcessor::~PluginProcessor() = default;
@@ -54,16 +58,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout PluginProcessor::createLayou
 
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-    layout.add (std::make_unique<AudioParameterInt> (ParameterID { ParamIDs::stack, 1 }, "Stack", 1, StackEngine::maxStack, 3));
+    layout.add (std::make_unique<AudioParameterInt> (ParameterID { ParamIDs::stack, 1 }, "Voices", 1, StackEngine::maxStack, 3));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::spread, 1 }, "Spread", NormalisableRange<float> (0.0f, 1.0f), 0.5f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::octave, 1 }, "Octave", NormalisableRange<float> (0.0f, 1.0f), 0.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::octave, 1 }, "High Hype", NormalisableRange<float> (0.0f, 1.0f), 0.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::tone, 1 }, "Tone", NormalisableRange<float> (0.0f, 1.0f), 1.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::dirt, 1 }, "Dirt", NormalisableRange<float> (0.0f, 1.0f), 0.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::echo, 1 }, "Echo", NormalisableRange<float> (0.0f, 1.0f), 0.2f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamIDs::echoTime, 1 }, "Echo Time", juce::StringArray { "1/16", "1/8", "1/8 dotted", "1/4" }, 1));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::space, 1 }, "Space", NormalisableRange<float> (0.0f, 1.0f), 0.2f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::gain, 1 }, "Gain", NormalisableRange<float> (-24.0f, 6.0f), 0.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float value, int) { return juce::String (value, 1) + " dB"; })));
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::oneShot, 1 }, "One-Shot", true));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::space, 1 }, "Reverb", NormalisableRange<float> (0.0f, 1.0f), 0.2f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::gain, 1 }, "Output", NormalisableRange<float> (-24.0f, 6.0f), 0.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float value, int) { return juce::String (value, 1) + " dB"; })));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::active, 1 }, "Stack On", true));
 
     return layout;
 }
@@ -76,34 +80,22 @@ const juce::String PluginProcessor::getName() const
 
 bool PluginProcessor::acceptsMidi() const
 {
-   #if JucePlugin_WantsMidiInput
-    return true;
-   #else
     return false;
-   #endif
 }
 
 bool PluginProcessor::producesMidi() const
 {
-   #if JucePlugin_ProducesMidiOutput
-    return true;
-   #else
     return false;
-   #endif
 }
 
 bool PluginProcessor::isMidiEffect() const
 {
-   #if JucePlugin_IsMidiEffect
-    return true;
-   #else
     return false;
-   #endif
 }
 
 double PluginProcessor::getTailLengthSeconds() const
 {
-    // the echo repeats and the reverb ring on after the last note
+    // the echo repeats and the reverb ring on after the vocal stops
     return 6.0;
 }
 
@@ -162,11 +154,21 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     currentSampleRate = sampleRate;
 
     engine.prepare (sampleRate);
+    engine.setParams (readStackParams());
     echo.prepare (sampleRate);
-    reverb.setSampleRate (sampleRate);
-    reverb.reset();
     toneL.reset();
     toneR.reset();
+
+    // parameters first, so the reverb's internal gains start where they should rather than ramping up
+    juce::Reverb::Parameters reverbParams;
+    reverbParams.wetLevel = raw.space->load() * 0.4f;
+    reverbParams.dryLevel = 0.0f;
+    reverb.setParameters (reverbParams);
+    reverb.setSampleRate (sampleRate);
+    reverb.reset();
+
+    for (auto* scratch : { &reverbL, &reverbR, &wetL, &wetR, &mono })
+        scratch->assign (static_cast<size_t> (chunkSize), 0.0f);
 
     const auto smooth = [sampleRate] (juce::SmoothedValue<float>& value, float start)
     {
@@ -178,14 +180,11 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     smooth (spaceMix, raw.space->load());
     smooth (dirtAmount, raw.dirt->load());
     smooth (outputGain, juce::Decibels::decibelsToGain (raw.gain->load()));
+    smooth (activeMix, raw.active->load() >= 0.5f ? 1.0f : 0.0f);
 
-    // the engine only points at the sample, so hand it over again after a re-prepare
-    {
-        const juce::ScopedLock lock (sampleLock);
-
-        if (displaySample != nullptr)
-            engine.setSample (displaySample.get());
-    }
+    scopeStride = juce::jmax (1, static_cast<int> (sampleRate * 0.035));
+    scopePeak = 0.0f;
+    scopeCount = 0;
 }
 
 void PluginProcessor::releaseResources()
@@ -194,7 +193,13 @@ void PluginProcessor::releaseResources()
 
 bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+    const auto in = layouts.getMainInputChannelSet();
+    const auto out = layouts.getMainOutputChannelSet();
+    const auto monoSet = juce::AudioChannelSet::mono();
+    const auto stereoSet = juce::AudioChannelSet::stereo();
+
+    // mono vocal in, stereo stack out is the main use; mono/mono and stereo/stereo work too
+    return (in == monoSet && out == stereoSet) || (in == monoSet && out == monoSet) || (in == stereoSet && out == stereoSet);
 }
 
 StackParams PluginProcessor::readStackParams() const
@@ -203,13 +208,13 @@ StackParams PluginProcessor::readStackParams() const
     params.stack = juce::roundToInt (raw.stack->load());
     params.spread = raw.spread->load();
     params.octave = raw.octave->load();
-    params.oneShot = raw.oneShot->load() >= 0.5f;
     return params;
 }
 
 void PluginProcessor::renderEffects (float* left, float* right, int numSamples)
 {
     const auto toneAmount = raw.tone->load();
+    const auto toneOpen = toneAmount >= 0.999f;
     const auto cutoff = toneDarkHz * std::pow (toneOpenHz / toneDarkHz, toneAmount);
     toneL.setCutoff (cutoff, currentSampleRate);
     toneR.setCutoff (cutoff, currentSampleRate);
@@ -231,17 +236,19 @@ void PluginProcessor::renderEffects (float* left, float* right, int numSamples)
 
     for (int i = 0; i < numSamples; ++i)
     {
-        auto l = toneL.process (left[i]);
-        auto r = toneR.process (right[i]);
+        // fully open, Tone is out of the way entirely so the vocal stays untouched
+        auto l = toneOpen ? toneL.track (left[i]) : toneL.process (left[i]);
+        auto r = toneOpen ? toneR.track (right[i]) : toneR.process (right[i]);
 
         const auto dirt = dirtAmount.getNextValue();
 
         if (dirt > 0.001f)
         {
+            // dividing by the drive keeps quiet parts at the same level, so Dirt adds grit rather than volume
             const auto drive = 1.0f + dirt * 7.0f;
-            const auto norm = 1.0f / std::tanh (drive);
-            l = std::tanh (l * drive) * norm;
-            r = std::tanh (r * drive) * norm;
+            const auto makeup = (1.0f + 0.6f * dirt) / drive;
+            l = std::tanh (l * drive) * makeup;
+            r = std::tanh (r * drive) * makeup;
         }
 
         echo.process (l, r, echoMix.getNextValue());
@@ -250,73 +257,129 @@ void PluginProcessor::renderEffects (float* left, float* right, int numSamples)
         right[i] = r;
     }
 
+    // the reverb runs wet-only into the scratch buffers, then gets added back
     juce::Reverb::Parameters reverbParams;
     reverbParams.roomSize = 0.7f;
     reverbParams.damping = 0.5f;
     reverbParams.width = 1.0f;
-    reverbParams.dryLevel = 1.0f;
+    reverbParams.dryLevel = 0.0f;
     reverbParams.wetLevel = spaceMix.getTargetValue() * 0.4f;
     reverbParams.freezeMode = 0.0f;
     reverb.setParameters (reverbParams);
-    reverb.processStereo (left, right, numSamples);
+
+    std::copy (left, left + numSamples, reverbL.begin());
+    std::copy (right, right + numSamples, reverbR.begin());
+    reverb.processStereo (reverbL.data(), reverbR.data(), numSamples);
 
     for (int i = 0; i < numSamples; ++i)
     {
         const auto g = outputGain.getNextValue();
-        left[i] = softClip (left[i] * g);
-        right[i] = softClip (right[i] * g);
+        left[i] = softClip ((left[i] + reverbL[static_cast<size_t> (i)]) * g);
+        right[i] = softClip ((right[i] + reverbR[static_cast<size_t> (i)]) * g);
+    }
+}
+
+void PluginProcessor::pushScope (const float* input, int numSamples) noexcept
+{
+    for (int i = 0; i < numSamples; ++i)
+    {
+        scopePeak = juce::jmax (scopePeak, std::abs (input[i]));
+
+        if (++scopeCount >= scopeStride)
+        {
+            const auto index = scopeWrite.load (std::memory_order_relaxed);
+            scopePeaks[static_cast<size_t> (index)].store (scopePeak, std::memory_order_relaxed);
+            scopeWrite.store ((index + 1) % scopeSize, std::memory_order_release);
+            scopePeak = 0.0f;
+            scopeCount = 0;
+        }
+    }
+}
+
+void PluginProcessor::getInputHistory (float* dest, int count) const
+{
+    count = juce::jmin (count, scopeSize);
+    const auto newest = scopeWrite.load (std::memory_order_acquire);
+
+    for (int i = 0; i < count; ++i)
+    {
+        const auto index = (newest - count + i + scopeSize) % scopeSize;
+        dest[i] = scopePeaks[static_cast<size_t> (index)].load (std::memory_order_relaxed);
+    }
+}
+
+void PluginProcessor::processChunk (const float* inL, const float* inR, float* outL, float* outR, int numSamples)
+{
+    activeMix.setTargetValue (raw.active->load() >= 0.5f ? 1.0f : 0.0f);
+    engine.setParams (readStackParams());
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const auto idx = static_cast<size_t> (i);
+        mono[idx] = 0.5f * (inL[i] + inR[i]);
+        wetL[idx] = inL[i];
+        wetR[idx] = inR[i];
+    }
+
+    pushScope (mono.data(), numSamples);
+
+    // the original vocal is already in wetL/wetR; the engine adds the copies
+    engine.process (mono.data(), wetL.data(), wetR.data(), numSamples);
+    renderEffects (wetL.data(), wetR.data(), numSamples);
+
+    // Stack On crossfades between the processed sound and the untouched input
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const auto idx = static_cast<size_t> (i);
+        const auto amount = activeMix.getNextValue();
+        outL[i] = inL[i] + amount * (wetL[idx] - inL[i]);
+        outR[i] = inR[i] + amount * (wetR[idx] - inR[i]);
     }
 }
 
 void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
+    juce::ignoreUnused (midiMessages);
     juce::ScopedNoDenormals noDenormals;
 
-    buffer.clear();
+    const auto numIn = getTotalNumInputChannels();
+    const auto numOut = getTotalNumOutputChannels();
+    const auto numSamples = buffer.getNumSamples();
 
-    if (buffer.getNumChannels() < 2)
+    if (numIn == 0 || numOut == 0 || buffer.getNumChannels() < juce::jmax (numIn, numOut) || mono.empty())
         return;
 
-    const auto numSamples = buffer.getNumSamples();
-    keyboardState.processNextMidiBuffer (midiMessages, 0, numSamples, true);
-
-    if (clearRequested.exchange (false))
-        engine.setSample (nullptr);
-
-    if (auto* incoming = pendingSample.exchange (nullptr))
-        engine.setSample (incoming);
-
-    const auto params = readStackParams();
     auto* left = buffer.getWritePointer (0);
-    auto* right = buffer.getWritePointer (1);
+    auto* right = numOut > 1 ? buffer.getWritePointer (1) : nullptr;
 
-    // render up to each MIDI event so notes start on the exact sample
-    int position = 0;
+    // inputs and outputs share the buffer, so work through it in chunks via the scratch buffers
+    std::array<float, chunkSize> inL {}, inR {}, outL {}, outR {};
 
-    for (const auto metadata : midiMessages)
+    for (int start = 0; start < numSamples; start += chunkSize)
     {
-        const auto eventPosition = juce::jlimit (position, numSamples, metadata.samplePosition);
+        const auto count = juce::jmin (chunkSize, numSamples - start);
+        const auto* srcL = buffer.getReadPointer (0, start);
+        const auto* srcR = numIn > 1 ? buffer.getReadPointer (1, start) : srcL;
 
-        if (eventPosition > position)
+        std::copy (srcL, srcL + count, inL.begin());
+        std::copy (srcR, srcR + count, inR.begin());
+
+        processChunk (inL.data(), inR.data(), outL.data(), outR.data(), count);
+
+        if (right != nullptr)
         {
-            engine.render (left + position, right + position, eventPosition - position);
-            position = eventPosition;
+            std::copy (outL.begin(), outL.begin() + count, left + start);
+            std::copy (outR.begin(), outR.begin() + count, right + start);
         }
-
-        const auto message = metadata.getMessage();
-
-        if (message.isNoteOn())
-            engine.noteOn (message.getNoteNumber(), message.getFloatVelocity(), params);
-        else if (message.isNoteOff())
-            engine.noteOff (message.getNoteNumber());
-        else if (message.isAllNotesOff() || message.isAllSoundOff())
-            engine.allNotesOff();
+        else
+        {
+            for (int i = 0; i < count; ++i)
+                left[start + i] = 0.5f * (outL[static_cast<size_t> (i)] + outR[static_cast<size_t> (i)]);
+        }
     }
 
-    if (position < numSamples)
-        engine.render (left + position, right + position, numSamples - position);
-
-    renderEffects (left, right, numSamples);
+    for (auto channel = numOut; channel < buffer.getNumChannels(); ++channel)
+        buffer.clear (channel, 0, numSamples);
 }
 
 //==============================================================================
@@ -331,64 +394,9 @@ juce::AudioProcessorEditor* PluginProcessor::createEditor()
 }
 
 //==============================================================================
-bool PluginProcessor::loadSampleFromFile (const juce::File& file, juce::String& errorMessage)
-{
-    auto loaded = SampleData::fromFile (file, formatManager, errorMessage);
-
-    if (loaded == nullptr)
-        return false;
-
-    setSample (std::move (loaded));
-    return true;
-}
-
-void PluginProcessor::setSample (std::shared_ptr<const SampleData> newSample)
-{
-    if (newSample == nullptr)
-        return;
-
-    {
-        const juce::ScopedLock lock (sampleLock);
-        displaySample = newSample;
-        recentSamples[recentIndex] = newSample;
-        recentIndex = (recentIndex + 1) % recentSamples.size();
-    }
-
-    pendingSample.store (newSample.get());
-}
-
-void PluginProcessor::clearSample()
-{
-    {
-        const juce::ScopedLock lock (sampleLock);
-        displaySample.reset();
-    }
-
-    pendingSample.store (nullptr);
-    clearRequested.store (true);
-}
-
-std::shared_ptr<const SampleData> PluginProcessor::getSample() const
-{
-    const juce::ScopedLock lock (sampleLock);
-    return displaySample;
-}
-
-//==============================================================================
 void PluginProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    auto state = apvts.copyState();
-
-    if (auto sample = getSample())
-    {
-        juce::ValueTree sampleTree ("Sample");
-        sampleTree.setProperty ("name", sample->name, nullptr);
-        sampleTree.setProperty ("sampleRate", sample->sampleRate, nullptr);
-        sampleTree.setProperty ("data", sample->toBase64(), nullptr);
-        state.appendChild (sampleTree, nullptr);
-    }
-
-    if (auto xml = state.createXml())
+    if (auto xml = apvts.copyState().createXml())
         copyXmlToBinary (*xml, destData);
 }
 
@@ -401,22 +409,8 @@ void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     auto state = juce::ValueTree::fromXml (*xml);
 
-    if (! state.hasType (apvts.state.getType()))
-        return;
-
-    auto sampleTree = state.getChildWithName ("Sample");
-
-    if (! sampleTree.isValid())
-        clearSample();
-    else
-    {
-        state.removeChild (sampleTree, nullptr);
-
-        if (auto restored = SampleData::fromBase64 (sampleTree["data"].toString(), sampleTree["sampleRate"], sampleTree["name"].toString()))
-            setSample (std::move (restored));
-    }
-
-    apvts.replaceState (state);
+    if (state.hasType (apvts.state.getType()))
+        apvts.replaceState (state);
 }
 
 //==============================================================================

@@ -9,16 +9,23 @@ TEST_CASE ("Editor snapshot", "[.][snapshot]")
     const auto folder = juce::SystemStats::getEnvironmentVariable ("STACKBUDDY_SNAPSHOT_DIR", {});
     REQUIRE (folder.isNotEmpty());
 
-    juce::ScopedJuceInitialiser_GUI gui;
+    constexpr double rate = 44100.0;
+    constexpr int blockSize = 512;
 
     PluginProcessor processor;
+    juce::AudioProcessor::BusesLayout layout;
+    layout.inputBuses.add (juce::AudioChannelSet::mono());
+    layout.outputBuses.add (juce::AudioChannelSet::stereo());
+    REQUIRE (processor.setBusesLayout (layout));
+    processor.setRateAndBufferSizeDetails (rate, blockSize);
+    processor.prepareToPlay (rate, blockSize);
 
     auto save = [&] (const juce::String& name, int width)
     {
         std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
-        editor->setSize (width, juce::roundToInt (width * 700.0 / 1180.0));
+        editor->setSize (width, juce::roundToInt (width * 570.0 / 1180.0));
 
-        // let the timers and layout settle
+        // let the timers pick up the input history
         juce::MessageManager::getInstance()->runDispatchLoopUntil (150);
 
         const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
@@ -29,25 +36,27 @@ TEST_CASE ("Editor snapshot", "[.][snapshot]")
         REQUIRE (juce::PNGImageFormat().writeImageToStream (image, out));
     };
 
-    save ("empty.png", 1180);
+    save ("waiting.png", 1180);
 
-    // something shaped like a spoken "yeah": a few syllable-sized bursts
-    constexpr double rate = 44100.0;
-    juce::AudioBuffer<float> clip (1, static_cast<int> (rate * 0.84));
+    // about four seconds of ad-lib-shaped bursts with gaps between them
     juce::Random random (7);
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    const auto totalBlocks = static_cast<int> (rate * 4.0 / blockSize);
 
-    for (int i = 0; i < clip.getNumSamples(); ++i)
+    for (int block = 0; block < totalBlocks; ++block)
     {
-        const auto t = static_cast<double> (i) / clip.getNumSamples();
-        const auto envelope = std::pow (std::sin (juce::MathConstants<double>::pi * t), 0.6)
-                              * (0.55 + 0.45 * std::sin (t * 41.0) * std::sin (t * 17.0));
-        clip.setSample (0, i, static_cast<float> (envelope * (0.6 * std::sin (i * 0.05) + 0.4 * (random.nextFloat() - 0.5))));
+        for (int i = 0; i < blockSize; ++i)
+        {
+            const auto t = static_cast<double> (block * blockSize + i) / rate;
+            const auto phrase = std::fmod (t, 1.1);
+            const auto envelope = phrase < 0.8 ? std::pow (std::sin (juce::MathConstants<double>::pi * phrase / 0.8), 0.7) * (0.55 + 0.45 * std::sin (t * 23.0)) : 0.0;
+            buffer.setSample (0, i, static_cast<float> (envelope * (0.5 * std::sin (t * 1400.0) + 0.3 * (random.nextFloat() - 0.5))));
+        }
+
+        processor.processBlock (buffer, midi);
     }
 
-    processor.setSample (SampleData::fromBuffer (clip, rate, "yeah_02"));
-    processor.keyboardState.noteOn (1, 62, 1.0f);
-    processor.keyboardState.noteOn (1, 64, 1.0f);
-
-    save ("loaded.png", 1180);
+    save ("listening.png", 1180);
     save ("small.png", 800);
 }

@@ -1,15 +1,13 @@
 #pragma once
 
-#include "SampleData.h"
+#include <juce_audio_basics/juce_audio_basics.h>
 #include <array>
 
 struct StackParams
 {
-    int stack = 3;          // copies per note, 1 to StackEngine::maxStack
+    int stack = 3;          // voices including the original, 1 to StackEngine::maxStack
     float spread = 0.5f;    // 0 to 1: how far the copies drift apart in pitch, pan and time
     float octave = 0.0f;    // 0 to 1: level of an extra copy an octave up
-    bool oneShot = true;    // true: the whole clip plays and note-off is ignored
-    float releaseMs = 60.0f;
 };
 
 // How one copy in the stack differs from the original.
@@ -21,56 +19,60 @@ struct LayerShape
     float gain = 1.0f;
 };
 
-// Plays a SampleData from MIDI. Each note starts a "stack" of copies of the clip.
-// Everything is preallocated, so noteOn/noteOff/render are safe on the audio thread.
+// Turns a live vocal into a stack of copies, as an insert effect.
+// Each copy is the input re-pitched by a few cents (or an octave), delayed a little and panned.
+// The original isn't touched here: process() adds the copies on top of whatever is already in left/right.
+// Everything is preallocated in prepare(), so process() is safe on the audio thread.
 class StackEngine
 {
 public:
     static constexpr int maxStack = 6;
-    static constexpr int maxLayers = 256;
-    static constexpr int rootNote = 60; // this key plays the clip at its original pitch
+    static constexpr int maxCopies = maxStack - 1;
 
     void prepare (double sampleRate);
+    void reset();
 
-    // The sample must outlive its use by the engine. Silences everything that was playing.
-    void setSample (const SampleData* newSample);
+    // Call once per block before process().
+    void setParams (const StackParams& params);
 
-    void noteOn (int note, float velocity, const StackParams& params);
-    void noteOff (int note);
-    void allNotesOff();
+    void process (const float* monoInput, float* left, float* right, int numSamples);
 
-    // Adds into left/right.
-    void render (float* left, float* right, int numSamples);
-
-    int getActiveLayerCount() const noexcept;
-
-    // Copy `index` of `count`. Copy 0 is always the untouched original.
+    // Copy `index` of `count` voices. Voice 0 is always the untouched original.
     static LayerShape shapeFor (int index, int count, float spread);
 
+    // How loud each copy is, so a bigger stack sounds bigger without jumping in level.
+    static float copyGain (int count);
+
 private:
-    struct Layer
+    // Re-pitches by reading the delay line faster or slower than it's written. When the read head runs out of
+    // room it crossfades to a new position, chosen where the audio lines up best with what's playing, so the
+    // join doesn't cancel or warble.
+    struct Voice
     {
-        bool active = false;
-        bool releasing = false;
-        bool oneShot = true;
-        int note = -1;
-        int delaySamples = 0;
-        uint64_t age = 0;
-        double position = 0.0;
         double ratio = 1.0;
-        float gainL = 0.0f;
-        float gainR = 0.0f;
-        float attack = 0.0f;
-        float release = 1.0f;
-        float releaseStep = 0.0f;
+        double delayA = 0.0, delayB = 0.0;   // playing tap, and the tap being faded in
+        float minDelay = 0.0f, maxDelay = 0.0f, fadeLength = 1.0f, searchRange = 0.0f;
+        float fade = 0.0f;
+        bool fading = false;
+        bool started = false;
+        float offset = 0.0f;                 // extra delay in samples, smoothed
+        float targetOffset = 0.0f;
+        float gainL = 0.0f, gainR = 0.0f;
+        float targetGainL = 0.0f, targetGainR = 0.0f;
     };
 
-    Layer* claimLayer();
-    void startLayer (int note, double semitoneOffset, const LayerShape& shape, float level, const StackParams& params);
-    static float readInterpolated (const std::vector<float>& data, double position) noexcept;
+    float readDelayed (double delaySamples) const noexcept;
+    double findJump (const Voice& voice) const noexcept;
+    float processVoice (Voice& voice) noexcept;
+    void setVoice (Voice& voice, double ratio, float windowMs, float delayMs, float pan, float gain);
 
-    std::array<Layer, maxLayers> layers;
-    const SampleData* sample = nullptr;
+    std::vector<float> buffer;
+    int mask = 0;
+    int writeIndex = 0;
     double sampleRate = 44100.0;
-    uint64_t ageCounter = 0;
+    float smoothing = 0.001f;
+
+    std::array<Voice, maxCopies> copies;
+    Voice octaveVoice;
+    std::array<float, 1025> fadeCurve {};
 };

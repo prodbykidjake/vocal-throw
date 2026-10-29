@@ -17,6 +17,13 @@ public:
         return state;
     }
 
+    // passes x through unfiltered but keeps the state in step, so switching back on doesn't click
+    float track (float x) noexcept
+    {
+        state = x;
+        return x;
+    }
+
     void reset() noexcept { state = 0.0f; }
 
 private:

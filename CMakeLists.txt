@@ -89,9 +89,9 @@ juce_add_plugin("${PROJECT_NAME}"
     PLUGIN_CODE Stkb
     FORMATS "${FORMATS}"
 
-    # Stack Buddy is an instrument: it plays vocal ad-libs from MIDI
-    IS_SYNTH TRUE
-    NEEDS_MIDI_INPUT TRUE
+    # Stack Buddy is an audio effect: it goes in an insert slot on the ad-lib track
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT FALSE
 
     # The name of your final executable
     # This is how it's listed in the DAW
@@ -105,7 +105,7 @@ add_library(SharedCode INTERFACE)
 
 clap_juce_extensions_plugin(TARGET "${PROJECT_NAME}"
     CLAP_ID "${BUNDLE_ID}"
-    CLAP_FEATURES instrument)
+    CLAP_FEATURES audio-effect)
 
 # Enable fast math, C++23 and a few other target defaults
 pamplejuce_shared_code_defaults()
