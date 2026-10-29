@@ -57,13 +57,16 @@ TEST_CASE ("Render performance")
     setParam (ParamIDs::dirt, 0.5f);
     setParam (ParamIDs::echo, 0.5f);
     setParam (ParamIDs::space, 0.5f);
+    setParam (ParamIDs::duck, 0.5f);
+    setParam (ParamIDs::harmony, 1.0f);
+    setParam (ParamIDs::interval, 2.0f);
 
     juce::AudioBuffer<float> buffer (2, blockSize);
     juce::MidiBuffer midi;
     float phase = 0.0f;
 
     // one block is blockSize / sampleRate = 10.7 ms of audio, which is the time budget
-    BENCHMARK ("512-sample block, 6 voices + octave, all effects")
+    BENCHMARK ("512-sample block, 6 voices + octave + 2 harmonies, all effects")
     {
         for (int i = 0; i < blockSize; ++i)
         {

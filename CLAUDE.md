@@ -4,25 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## About This Project
 
-**Stack Buddy** by Playtime Audio: an audio effect (AU, VST3, Standalone) that goes in an insert slot on an ad-lib track. The vocal passes through untouched and Stack Buddy adds a stack of copies on top: each copy is re-pitched by a few cents (or an octave with High Hype), delayed a little and panned, then everything runs through Tone, Dirt, a tempo-synced ping-pong Echo and Reverb. Mono in / stereo out is the main layout (mono/mono and stereo/stereo also work). With one voice and the effects at zero it is bit-for-bit transparent (tested). It started as an instrument (MIDI-played sampler) and was converted to an effect at the user's request.
+**Stack Buddy** by Playtime Audio: an audio effect (AU, VST3, Standalone) that goes in an insert slot on an ad-lib track. The vocal passes through untouched and Stack Buddy adds a stack of copies on top: each copy is re-pitched by a few cents (or an octave with High Hype), delayed a little and panned, then everything runs through Tone, Dirt, a tempo-synced ping-pong Echo and Reverb. Harmony mode adds one or two pitch-tracked copies a 3rd/5th away, snapped to a chosen key and scale. Duck dips the echo and reverb returns while the dry vocal is loud; Throw opens the echo/reverb sends wide (with longer feedback, ignoring Duck) so single words can be thrown by automation. Mono in / stereo out is the main layout (mono/mono and stereo/stereo also work). With one voice and the effects at zero it is bit-for-bit transparent (tested). It started as an instrument (MIDI-played sampler) and was converted to an effect at the user's request.
 
 Derived from the [Pamplejuce](https://github.com/sudara/pamplejuce) template (CMake, C++23, CI/CD). The user works in Logic Pro, so macOS AU is the primary target. Builds default to **Debug**; build **Release** for real-time use (dropouts, high CPU). Code signing, Windows and Linux CI are intentionally off for now (see `.github/workflows/build_and_test.yml`).
 
 ### Source layout (`source/`)
 - `StackEngine` - the real-time stacker. Each copy reads a shared delay line faster or slower than it's written (re-pitching); when a read head runs out of room it crossfades to a new position chosen by a correlation search (WSOLA), so joins don't cancel on tonal vocals. No JUCE processor dependency, so it is unit tested directly (pitch accuracy, clean octave, silence, bounds)
-- `Effects.h` - one-pole lowpass (with `track()` bypass), ping-pong echo, soft clipper
+- `Effects.h` - one-pole lowpass (with `track()` bypass), ping-pong echo (send/return with adjustable feedback, so a Throw's tail outlives the send), soft clipper
+- `PitchTracker.h` - YIN pitch detector on the input, decimated to ~11 kHz, every 64 decimated samples. Holds the last pitch through gaps
+- `Harmony.h` - scale maths: semitones from the sung note to the note N scale steps away in a key (off-key notes snap to the nearest scale note). The harmony copies follow the singer's exact pitch, shifted by whole semitones, so vibrato is kept and nothing is hard-tuned
 - `PluginProcessor` - parameters (APVTS), buses, chunked processing through preallocated scratch buffers, effects chain, presets, state. Reverb runs wet-only (JUCE's Reverb doubles the dry signal at dryLevel 1). Dirt is level-compensated. The audio thread publishes input peaks into an atomic ring (`getInputHistory`) for the UI
-- `PluginEditor` - the UI from the Figma design (Figma Make file "Stack Buddy Audio Plugin"), adapted for an effect: live INPUT scope instead of a sample, no keyboard, header switch is Stack On (bypass with a smoothed crossfade). Everything is laid out at 1180 x 570 design pixels (`Design::width/height`) inside a `Content` component that is scaled to the window
+- `PluginEditor` - the UI from the Figma design (Figma Make file "Stack Buddy Audio Plugin"), adapted for an effect: live INPUT scope instead of a sample (with the stack drawn as ghost layers behind it), no keyboard, header switch is Stack On (bypass with a smoothed crossfade), output meter, animated voice bubbles. The Harmony strip (04), Duck knob and Throw button were added after the Figma design, in its style (Harmony's colour is `Design::cyan`). Everything is laid out at 1180 x 690 design pixels (`Design::width/height`) inside a `Content` component that is scaled to the window
 - `DesignTokens` - colours (sampled from the design), Space Grotesk Medium/Bold embedded from `assets/fonts` (OFL licence kept next to them), layout constants
 - `DesignLookAndFeel` - knob, switch, pill button and preset box drawing
 
 ### Developer tools (hidden Catch2 tests)
 - UI preview without a DAW: `STACKBUDDY_SNAPSHOT_DIR=<folder> ./Builds/Tests "[snapshot]"` (run under Xvfb on Linux) writes waiting/listening/small PNGs of the editor
 - Offline render: `STACKBUDDY_RENDER_IN=in.wav STACKBUDDY_RENDER_OUT=out.wav STACKBUDDY_PRESET="Wide Stack" ./Builds/Tests "[render]"` (preset name, or "Bypass")
-- Benchmark (Release): worst case, 6 voices + octave + all effects, is about 0.24 ms per 512-sample block at 48 kHz
+- Benchmark (Release): worst case, 6 voices + octave + 2 harmonies + all effects, is about 0.2 ms per 512-sample block at 48 kHz on an Apple Silicon Mac
 
 ### Ideas not built yet
-Formant preservation for the octave copy, scale snap, echo ducking.
+Formant preservation for the octave and harmony copies, a Low Hype octave-down copy, auto key detection.
 
 ### Linux build notes
 Building on Linux (cloud sessions) needs JUCE's system packages: `libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libxi-dev libxrender-dev libxcomposite-dev libasound2-dev libfreetype-dev libfontconfig1-dev mesa-common-dev libgl1-mesa-dev libcurl4-openssl-dev`. AU only builds on macOS.

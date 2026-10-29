@@ -23,4 +23,10 @@ public:
     juce::Font getPopupMenuFont() override;
 
     void drawCornerResizer (juce::Graphics&, int width, int height, bool isMouseOver, bool isMouseDragging) override;
+
+    // A pill's colour when selected, from its "accent" property (purple if it has none).
+    static juce::Colour accentOf (const juce::Button&);
+
+private:
+    void drawThrowButton (juce::Graphics&, juce::Button&, bool isHighlighted);
 };

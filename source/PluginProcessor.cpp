@@ -8,20 +8,35 @@ namespace
     constexpr float toneDarkHz = 1200.0f;
     constexpr int chunkSize = 512;
 
+    // Throw opens the echo and reverb sends this far and lets the echo ring this long
+    constexpr float throwEchoSend = 0.85f;
+    constexpr float throwSpaceSend = 0.7f;
+    constexpr float throwFeedback = 0.68f;
+    constexpr float reverbLevel = 0.4f;
+
+    // ducking: the dry vocal's level between these maps to no ducking ... full Duck depth
+    constexpr float duckFloorDb = -50.0f;
+    constexpr float duckRangeDb = 26.0f;
+
     struct Preset
     {
         const char* name;
-        float stack, spread, octave, tone, dirt, echo, echoTime, space;
+        float stack, spread, octave, tone, dirt, echo, echoTime, space, duck, harmony, interval;
     };
 
     // echoTime is an index: 0 = 1/16, 1 = 1/8, 2 = 1/8 dotted, 3 = 1/4
+    // interval is an index: 0 = 3rd up, 1 = 5th up, 2 = 3rd + 5th, 3 = 3rd down
+    // presets leave Key and Scale alone, since those belong to the song
     constexpr Preset presets[] = {
-        { "Default",        3.0f, 0.50f, 0.00f, 1.00f, 0.00f, 0.20f, 1.0f, 0.20f },
-        { "Double",         2.0f, 0.30f, 0.00f, 1.00f, 0.00f, 0.10f, 1.0f, 0.15f },
-        { "Wide Stack",     6.0f, 1.00f, 0.00f, 1.00f, 0.10f, 0.25f, 1.0f, 0.30f },
-        { "Octave Whisper", 3.0f, 0.60f, 0.70f, 0.55f, 0.00f, 0.30f, 2.0f, 0.45f },
-        { "Echo Out",       3.0f, 0.50f, 0.00f, 0.80f, 0.00f, 0.65f, 2.0f, 0.25f },
-        { "Dirty Hype",     4.0f, 0.70f, 0.30f, 1.00f, 0.60f, 0.20f, 0.0f, 0.15f },
+        { "Default",        3.0f, 0.50f, 0.00f, 1.00f, 0.00f, 0.20f, 1.0f, 0.20f, 0.00f, 0.00f, 0.0f },
+        { "Double",         2.0f, 0.30f, 0.00f, 1.00f, 0.00f, 0.10f, 1.0f, 0.15f, 0.00f, 0.00f, 0.0f },
+        { "Wide Stack",     6.0f, 1.00f, 0.00f, 1.00f, 0.10f, 0.25f, 1.0f, 0.30f, 0.20f, 0.00f, 0.0f },
+        { "Octave Whisper", 3.0f, 0.60f, 0.70f, 0.55f, 0.00f, 0.30f, 2.0f, 0.45f, 0.30f, 0.00f, 0.0f },
+        { "Echo Out",       3.0f, 0.50f, 0.00f, 0.80f, 0.00f, 0.65f, 2.0f, 0.25f, 0.60f, 0.00f, 0.0f },
+        { "Dirty Hype",     4.0f, 0.70f, 0.30f, 1.00f, 0.60f, 0.20f, 0.0f, 0.15f, 0.00f, 0.00f, 0.0f },
+        { "Harmony 3rds",   2.0f, 0.40f, 0.00f, 1.00f, 0.00f, 0.15f, 1.0f, 0.25f, 0.30f, 0.70f, 0.0f },
+        { "Choir Hype",     4.0f, 0.70f, 0.20f, 0.90f, 0.00f, 0.20f, 2.0f, 0.35f, 0.40f, 0.60f, 2.0f },
+        { "Throw Ready",    3.0f, 0.50f, 0.00f, 1.00f, 0.00f, 0.15f, 2.0f, 0.20f, 0.70f, 0.00f, 0.0f },
     };
     constexpr int numPresets = static_cast<int> (sizeof (presets) / sizeof (presets[0]));
 }
@@ -37,7 +52,8 @@ PluginProcessor::PluginProcessor()
     const auto find = [this] (const char* id) { return apvts.getRawParameterValue (id); };
     raw = { find (ParamIDs::stack), find (ParamIDs::spread), find (ParamIDs::octave), find (ParamIDs::tone),
             find (ParamIDs::dirt), find (ParamIDs::echo), find (ParamIDs::echoTime), find (ParamIDs::space),
-            find (ParamIDs::gain), find (ParamIDs::active) };
+            find (ParamIDs::gain), find (ParamIDs::active), find (ParamIDs::duck), find (ParamIDs::throwOn),
+            find (ParamIDs::harmony), find (ParamIDs::interval), find (ParamIDs::key), find (ParamIDs::scale) };
 
     for (auto& peak : scopePeaks)
         peak.store (0.0f);
@@ -68,6 +84,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout PluginProcessor::createLayou
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::space, 1 }, "Reverb", NormalisableRange<float> (0.0f, 1.0f), 0.2f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::gain, 1 }, "Output", NormalisableRange<float> (-24.0f, 6.0f), 0.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float value, int) { return juce::String (value, 1) + " dB"; })));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::active, 1 }, "Stack On", true));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::duck, 1 }, "Duck", NormalisableRange<float> (0.0f, 1.0f), 0.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::throwOn, 1 }, "Throw", false));
+    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::harmony, 1 }, "Harmony", NormalisableRange<float> (0.0f, 1.0f), 0.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamIDs::interval, 1 }, "Interval", juce::StringArray { "3rd Up", "5th Up", "3rd + 5th", "3rd Down" }, 0));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamIDs::key, 1 }, "Key", juce::StringArray { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" }, 0));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamIDs::scale, 1 }, "Scale", juce::StringArray { "Major", "Minor" }, 0));
 
     return layout;
 }
@@ -95,8 +117,8 @@ bool PluginProcessor::isMidiEffect() const
 
 double PluginProcessor::getTailLengthSeconds() const
 {
-    // the echo repeats and the reverb ring on after the vocal stops
-    return 6.0;
+    // the echo repeats and the reverb ring on after the vocal stops (longest after a Throw)
+    return 8.0;
 }
 
 int PluginProcessor::getNumPrograms()
@@ -131,6 +153,9 @@ void PluginProcessor::setCurrentProgram (int index)
     set (ParamIDs::echo, preset.echo);
     set (ParamIDs::echoTime, preset.echoTime);
     set (ParamIDs::space, preset.space);
+    set (ParamIDs::duck, preset.duck);
+    set (ParamIDs::harmony, preset.harmony);
+    set (ParamIDs::interval, preset.interval);
 }
 
 const juce::String PluginProcessor::getProgramName (int index)
@@ -156,18 +181,20 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     engine.prepare (sampleRate);
     engine.setParams (readStackParams());
     echo.prepare (sampleRate);
+    pitchTracker.prepare (sampleRate);
+    harmonyPrimed = false;
     toneL.reset();
     toneR.reset();
 
     // parameters first, so the reverb's internal gains start where they should rather than ramping up
     juce::Reverb::Parameters reverbParams;
-    reverbParams.wetLevel = raw.space->load() * 0.4f;
+    reverbParams.wetLevel = reverbLevel;
     reverbParams.dryLevel = 0.0f;
     reverb.setParameters (reverbParams);
     reverb.setSampleRate (sampleRate);
     reverb.reset();
 
-    for (auto* scratch : { &reverbL, &reverbR, &wetL, &wetR, &mono })
+    for (auto* scratch : { &reverbL, &reverbR, &wetL, &wetR, &mono, &duckGains })
         scratch->assign (static_cast<size_t> (chunkSize), 0.0f);
 
     const auto smooth = [sampleRate] (juce::SmoothedValue<float>& value, float start)
@@ -181,6 +208,21 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     smooth (dirtAmount, raw.dirt->load());
     smooth (outputGain, juce::Decibels::decibelsToGain (raw.gain->load()));
     smooth (activeMix, raw.active->load() >= 0.5f ? 1.0f : 0.0f);
+    smooth (duckDepth, raw.duck->load());
+
+    const auto throwing = raw.throwOn->load() >= 0.5f ? 1.0f : 0.0f;
+    throwSend.reset (sampleRate, 0.01);
+    throwSend.setCurrentAndTargetValue (throwing);
+    throwTail = throwing;
+
+    const auto coefficient = [sampleRate] (double seconds) { return static_cast<float> (1.0 - std::exp (-1.0 / (seconds * sampleRate))); };
+    throwTailAttack = coefficient (0.01);
+    throwTailRelease = coefficient (1.5);
+    duckAttack = coefficient (0.003);
+    duckRelease = coefficient (0.045);
+    duckEnvelope = 0.0f;
+    duckHoldSamples = static_cast<int> (0.12 * sampleRate);
+    duckHold = 0;
 
     scopeStride = juce::jmax (1, static_cast<int> (sampleRate * 0.035));
     scopePeak = 0.0f;
@@ -211,7 +253,57 @@ StackParams PluginProcessor::readStackParams() const
     return params;
 }
 
-void PluginProcessor::renderEffects (float* left, float* right, int numSamples)
+void PluginProcessor::updateHarmony (int numSamples, StackParams& params)
+{
+    pitchTracker.process (mono.data(), numSamples);
+
+    const auto key = juce::jlimit (0, 11, juce::roundToInt (raw.key->load()));
+    const auto minor = raw.scale->load() >= 0.5f;
+    const auto steps = Harmony::stepsFor (static_cast<Harmony::Interval> (juce::jlimit (0, 3, juce::roundToInt (raw.interval->load()))));
+
+    // the tracker holds the last pitched note through breaths and consonants; before anything is heard, use the key's root
+    const auto heard = pitchTracker.getFrequency();
+    const auto sung = heard > 0.0f ? Harmony::midiFromHz (heard) : static_cast<float> (60 + key);
+
+    for (size_t k = 0; k < Harmony::maxVoices; ++k)
+        harmonyTarget[k] = static_cast<float> (Harmony::semitonesFor (sung, key, minor, steps.steps[k]));
+
+    // glide to a new harmony note over about 20 ms rather than jumping
+    const auto glide = harmonyPrimed ? 1.0f - std::exp (-static_cast<float> (numSamples) / static_cast<float> (0.02 * currentSampleRate)) : 1.0f;
+    harmonyPrimed = true;
+
+    for (size_t k = 0; k < Harmony::maxVoices; ++k)
+        harmonySemitones[k] += glide * (harmonyTarget[k] - harmonySemitones[k]);
+
+    params.harmony = raw.harmony->load();
+    params.harmonyCount = steps.count;
+    params.harmonySemitones = harmonySemitones;
+
+    sungNoteForUi.store (pitchTracker.isVoiced() ? sung : -1.0f, std::memory_order_relaxed);
+    harmonyCountForUi.store (steps.count, std::memory_order_relaxed);
+
+    for (size_t k = 0; k < Harmony::maxVoices; ++k)
+        harmonySemitonesForUi[k].store (juce::roundToInt (harmonyTarget[k]), std::memory_order_relaxed);
+}
+
+PluginProcessor::HarmonyState PluginProcessor::getHarmonyState() const
+{
+    HarmonyState state;
+    state.sungNote = sungNoteForUi.load (std::memory_order_relaxed);
+    state.count = harmonyCountForUi.load (std::memory_order_relaxed);
+
+    for (size_t k = 0; k < Harmony::maxVoices; ++k)
+        state.semitones[k] = harmonySemitonesForUi[k].load (std::memory_order_relaxed);
+
+    return state;
+}
+
+std::pair<float, float> PluginProcessor::takeOutputPeaks()
+{
+    return { outputPeakL.exchange (0.0f), outputPeakR.exchange (0.0f) };
+}
+
+void PluginProcessor::renderEffects (const float* dry, float* left, float* right, int numSamples)
 {
     const auto toneAmount = raw.tone->load();
     const auto toneOpen = toneAmount >= 0.999f;
@@ -223,6 +315,10 @@ void PluginProcessor::renderEffects (float* left, float* right, int numSamples)
     spaceMix.setTargetValue (raw.space->load());
     dirtAmount.setTargetValue (raw.dirt->load());
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (raw.gain->load()));
+    duckDepth.setTargetValue (raw.duck->load());
+
+    const auto throwing = raw.throwOn->load() >= 0.5f ? 1.0f : 0.0f;
+    throwSend.setTargetValue (throwing);
 
     double bpm = 120.0;
 
@@ -234,8 +330,12 @@ void PluginProcessor::renderEffects (float* left, float* right, int numSamples)
     const auto timeIndex = juce::jlimit (0, 3, juce::roundToInt (raw.echoTime->load()));
     echo.setDelaySeconds (echoBeats[timeIndex] * static_cast<float> (60.0 / bpm));
 
+    auto lowestDuck = 1.0f;
+
     for (int i = 0; i < numSamples; ++i)
     {
+        const auto idx = static_cast<size_t> (i);
+
         // fully open, Tone is out of the way entirely so the vocal stays untouched
         auto l = toneOpen ? toneL.track (left[i]) : toneL.process (left[i]);
         auto r = toneOpen ? toneR.track (right[i]) : toneR.process (right[i]);
@@ -251,11 +351,46 @@ void PluginProcessor::renderEffects (float* left, float* right, int numSamples)
             r = std::tanh (r * drive) * makeup;
         }
 
-        echo.process (l, r, echoMix.getNextValue());
+        // Duck: the echo and reverb dip while the dry vocal is loud and bloom back in the gaps
+        const auto level = std::abs (dry[i]);
+        if (level > duckEnvelope)
+        {
+            duckEnvelope += duckAttack * (level - duckEnvelope);
+            duckHold = duckHoldSamples;
+        }
+        else if (duckHold > 0)
+        {
+            --duckHold;
+        }
+        else
+        {
+            duckEnvelope += duckRelease * (level - duckEnvelope);
+        }
+        const auto loudness = juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (duckEnvelope, -100.0f) - duckFloorDb) / duckRangeDb);
+
+        // Throw: open the sends wide, ring longer, and don't duck, so the throw is heard over the vocal
+        throwTail += (throwing > throwTail ? throwTailAttack : throwTailRelease) * (throwing - throwTail);
+        const auto send = throwSend.getNextValue();
+        const auto duckGain = 1.0f - duckDepth.getNextValue() * loudness * (1.0f - throwTail);
+        duckGains[idx] = duckGain;
+        lowestDuck = juce::jmin (lowestDuck, duckGain);
+
+        const auto echoAmount = echoMix.getNextValue();
+        const auto echoSend = echoAmount + send * juce::jmax (0.0f, throwEchoSend - echoAmount);
+        const auto feedback = PingPongEcho::defaultFeedback + throwTail * (throwFeedback - PingPongEcho::defaultFeedback);
+        echo.process (l, r, echoSend, duckGain, feedback);
+
+        // the reverb is fed through a send too, so a Throw's tail keeps ringing after the send closes
+        const auto spaceAmount = spaceMix.getNextValue();
+        const auto spaceSend = spaceAmount + send * juce::jmax (0.0f, throwSpaceSend - spaceAmount);
+        reverbL[idx] = l * spaceSend;
+        reverbR[idx] = r * spaceSend;
 
         left[i] = l;
         right[i] = r;
     }
+
+    duckGainForUi.store (lowestDuck, std::memory_order_relaxed);
 
     // the reverb runs wet-only into the scratch buffers, then gets added back
     juce::Reverb::Parameters reverbParams;
@@ -263,19 +398,17 @@ void PluginProcessor::renderEffects (float* left, float* right, int numSamples)
     reverbParams.damping = 0.5f;
     reverbParams.width = 1.0f;
     reverbParams.dryLevel = 0.0f;
-    reverbParams.wetLevel = spaceMix.getTargetValue() * 0.4f;
+    reverbParams.wetLevel = reverbLevel;
     reverbParams.freezeMode = 0.0f;
     reverb.setParameters (reverbParams);
-
-    std::copy (left, left + numSamples, reverbL.begin());
-    std::copy (right, right + numSamples, reverbR.begin());
     reverb.processStereo (reverbL.data(), reverbR.data(), numSamples);
 
     for (int i = 0; i < numSamples; ++i)
     {
+        const auto idx = static_cast<size_t> (i);
         const auto g = outputGain.getNextValue();
-        left[i] = softClip ((left[i] + reverbL[static_cast<size_t> (i)]) * g);
-        right[i] = softClip ((right[i] + reverbR[static_cast<size_t> (i)]) * g);
+        left[i] = softClip ((left[i] + reverbL[idx] * duckGains[idx]) * g);
+        right[i] = softClip ((right[i] + reverbR[idx] * duckGains[idx]) * g);
     }
 }
 
@@ -311,7 +444,6 @@ void PluginProcessor::getInputHistory (float* dest, int count) const
 void PluginProcessor::processChunk (const float* inL, const float* inR, float* outL, float* outR, int numSamples)
 {
     activeMix.setTargetValue (raw.active->load() >= 0.5f ? 1.0f : 0.0f);
-    engine.setParams (readStackParams());
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -323,18 +455,33 @@ void PluginProcessor::processChunk (const float* inL, const float* inR, float* o
 
     pushScope (mono.data(), numSamples);
 
+    auto params = readStackParams();
+    updateHarmony (numSamples, params);
+    engine.setParams (params);
+
     // the original vocal is already in wetL/wetR; the engine adds the copies
     engine.process (mono.data(), wetL.data(), wetR.data(), numSamples);
-    renderEffects (wetL.data(), wetR.data(), numSamples);
+    renderEffects (mono.data(), wetL.data(), wetR.data(), numSamples);
 
     // Stack On crossfades between the processed sound and the untouched input
+    float peakL = 0.0f, peakR = 0.0f;
+
     for (int i = 0; i < numSamples; ++i)
     {
         const auto idx = static_cast<size_t> (i);
         const auto amount = activeMix.getNextValue();
         outL[i] = inL[i] + amount * (wetL[idx] - inL[i]);
         outR[i] = inR[i] + amount * (wetR[idx] - inR[i]);
+        peakL = juce::jmax (peakL, std::abs (outL[i]));
+        peakR = juce::jmax (peakR, std::abs (outR[i]));
     }
+
+    // the UI takes (and clears) these, so keep the loudest since it last looked
+    if (peakL > outputPeakL.load (std::memory_order_relaxed))
+        outputPeakL.store (peakL, std::memory_order_relaxed);
+
+    if (peakR > outputPeakR.load (std::memory_order_relaxed))
+        outputPeakR.store (peakR, std::memory_order_relaxed);
 }
 
 void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)

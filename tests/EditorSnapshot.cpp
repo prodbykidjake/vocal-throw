@@ -1,3 +1,4 @@
+#include <DesignTokens.h>
 #include <PluginEditor.h>
 #include <PluginProcessor.h>
 #include <catch2/catch_test_macros.hpp>
@@ -23,7 +24,7 @@ TEST_CASE ("Editor snapshot", "[.][snapshot]")
     auto save = [&] (const juce::String& name, int width)
     {
         std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
-        editor->setSize (width, juce::roundToInt (width * 570.0 / 1180.0));
+        editor->setSize (width, juce::roundToInt (width * static_cast<double> (Design::height) / Design::width));
 
         // let the timers pick up the input history
         juce::MessageManager::getInstance()->runDispatchLoopUntil (150);
@@ -59,4 +60,30 @@ TEST_CASE ("Editor snapshot", "[.][snapshot]")
 
     save ("listening.png", 1180);
     save ("small.png", 800);
+
+    // the new features switched on, with Throw held
+    auto set = [&] (const char* id, float value)
+    {
+        auto* parameter = processor.apvts.getParameter (id);
+        parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+    };
+
+    set (ParamIDs::stack, 5.0f);
+    set (ParamIDs::octave, 0.5f);
+    set (ParamIDs::harmony, 0.7f);
+    set (ParamIDs::interval, 2.0f);
+    set (ParamIDs::key, 9.0f);
+    set (ParamIDs::scale, 1.0f);
+    set (ParamIDs::duck, 0.6f);
+    set (ParamIDs::throwOn, 1.0f);
+
+    for (int block = 0; block < 40; ++block)
+    {
+        for (int i = 0; i < blockSize; ++i)
+            buffer.setSample (0, i, 0.4f * static_cast<float> (std::sin (juce::MathConstants<double>::twoPi * 220.0 * (block * blockSize + i) / rate)));
+
+        processor.processBlock (buffer, midi);
+    }
+
+    save ("features.png", 1180);
 }

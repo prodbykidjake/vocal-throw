@@ -32,6 +32,14 @@ void DesignLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w
     {
         juce::Path value;
         value.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f, startAngle, angle, true);
+
+        // a soft glow under the value arc, brighter the further the knob is turned
+        if (slider.isEnabled())
+        {
+            g.setColour (accent.withAlpha (0.08f + 0.14f * sliderPos));
+            g.strokePath (value, juce::PathStrokeType (stroke + 3.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+
         g.setColour (accent.withAlpha (slider.isEnabled() ? 1.0f : 0.4f));
         g.strokePath (value, juce::PathStrokeType (stroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
@@ -83,6 +91,12 @@ void DesignLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton&
 void DesignLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button, const juce::Colour&,
                                               bool isHighlighted, bool isDown)
 {
+    if (button.getProperties().contains ("throw"))
+    {
+        drawThrowButton (g, button, isHighlighted || isDown);
+        return;
+    }
+
     const auto area = button.getLocalBounds().toFloat().reduced (0.5f);
     const auto isPill = button.getProperties().contains ("pill");
     const auto selected = isPill && button.getToggleState();
@@ -93,8 +107,8 @@ void DesignLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b
 
     if (selected)
     {
-        fill = juce::Colour (0xff2d2848);
-        border = Design::purple;
+        border = accentOf (button);
+        fill = border == Design::purple ? juce::Colour (0xff2d2848) : Design::control.interpolatedWith (border, 0.2f);
     }
     else if (isHighlighted || isDown)
     {
@@ -110,8 +124,51 @@ void DesignLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b
     g.drawRoundedRectangle (area, radius, 1.0f);
 }
 
+juce::Colour DesignLookAndFeel::accentOf (const juce::Button& button)
+{
+    if (const auto* accent = button.getProperties().getVarPointer ("accent"))
+        return juce::Colour (static_cast<juce::uint32> (static_cast<juce::int64> (*accent)));
+
+    return Design::purple;
+}
+
+void DesignLookAndFeel::drawThrowButton (juce::Graphics& g, juce::Button& button, bool isHighlighted)
+{
+    // the bounds leave room around the pill for the glow
+    const auto area = button.getLocalBounds().toFloat().reduced (6.0f);
+    const auto radius = area.getHeight() * 0.5f;
+
+    if (button.getToggleState())
+    {
+        for (int ring = 3; ring >= 1; --ring)
+        {
+            const auto grow = static_cast<float> (ring) * 2.0f;
+            g.setColour (Design::purple.withAlpha (0.12f));
+            g.fillRoundedRectangle (area.expanded (grow), radius + grow);
+        }
+
+        g.setColour (Design::purple);
+        g.fillRoundedRectangle (area, radius);
+    }
+    else
+    {
+        g.setColour (isHighlighted ? Design::control.brighter (0.08f) : Design::control);
+        g.fillRoundedRectangle (area, radius);
+        g.setColour (Design::purple.withAlpha (isHighlighted ? 1.0f : 0.7f));
+        g.drawRoundedRectangle (area, radius, 1.4f);
+    }
+}
+
 void DesignLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button, bool, bool)
 {
+    if (button.getProperties().contains ("throw"))
+    {
+        g.setFont (Design::bold (15.0f).withExtraKerningFactor (0.12f));
+        g.setColour (button.getToggleState() ? Design::outerBackground : Design::purple);
+        g.drawText (button.getButtonText(), button.getLocalBounds(), juce::Justification::centred);
+        return;
+    }
+
     const auto isPill = button.getProperties().contains ("pill");
     const auto selected = isPill && button.getToggleState();
 

@@ -3,11 +3,11 @@
 #include <juce_graphics/juce_graphics.h>
 
 // Colours, fonts and layout numbers from the Stack Buddy Figma design.
-// All layout numbers are in design pixels: the editor draws at 1180 x 570 and scales to fit.
+// All layout numbers are in design pixels: the editor draws at 1180 x 690 and scales to fit.
 namespace Design
 {
     constexpr int width = 1180;
-    constexpr int height = 570;
+    constexpr int height = 690;
 
     inline const juce::Colour outerBackground { 0xff11120f };
     inline const juce::Colour shellBackground { 0xff1b1d19 };
@@ -23,10 +23,13 @@ namespace Design
     inline const juce::Colour colorPanelBorder { 0xff353833 };
     inline const juce::Colour spacePanel { 0xff252623 };
     inline const juce::Colour spacePanelBorder { 0xff3a3a3d };
+    inline const juce::Colour harmonyPanel { 0xff1f2425 };
+    inline const juce::Colour harmonyPanelBorder { 0xff34494b };
 
     inline const juce::Colour lime { 0xffc6f93f };
     inline const juce::Colour red { 0xfffe755a };
     inline const juce::Colour purple { 0xff9c75f6 };
+    inline const juce::Colour cyan { 0xff5fe3e8 };     // Harmony (not in the original Figma design)
 
     inline const juce::Colour text { 0xfff4f1e9 };
     inline const juce::Colour textDim { 0xff9a9c90 };

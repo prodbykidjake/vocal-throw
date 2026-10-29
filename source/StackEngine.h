@@ -8,6 +8,9 @@ struct StackParams
     int stack = 3;          // voices including the original, 1 to StackEngine::maxStack
     float spread = 0.5f;    // 0 to 1: how far the copies drift apart in pitch, pan and time
     float octave = 0.0f;    // 0 to 1: level of an extra copy an octave up
+    float harmony = 0.0f;   // 0 to 1: level of the harmony copies
+    std::array<float, 2> harmonySemitones {}; // pitch of each harmony copy relative to the voice
+    int harmonyCount = 0;   // how many harmony copies, 0 to StackEngine::maxHarmonies
 };
 
 // How one copy in the stack differs from the original.
@@ -28,6 +31,7 @@ class StackEngine
 public:
     static constexpr int maxStack = 6;
     static constexpr int maxCopies = maxStack - 1;
+    static constexpr int maxHarmonies = 2;
 
     void prepare (double sampleRate);
     void reset();
@@ -74,5 +78,6 @@ private:
 
     std::array<Voice, maxCopies> copies;
     Voice octaveVoice;
+    std::array<Voice, maxHarmonies> harmonyVoices;
     std::array<float, 1025> fadeCurve {};
 };

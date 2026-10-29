@@ -9,7 +9,9 @@ namespace
     constexpr float octaveWindowMs = 30.0f; // shorter keeps the octave copy tight
     constexpr float minTapMs = 2.0f;
     constexpr float searchMs = 15.0f;       // covers one cycle of a voice down to about 67 Hz
+    constexpr float harmonyWindowMs = 30.0f;
     constexpr float octaveLevel = 0.7f;
+    constexpr float harmonyLevel = 0.65f;
     constexpr float maxBufferSeconds = 0.12f;
 }
 
@@ -47,6 +49,9 @@ void StackEngine::reset()
         voice = {};
 
     octaveVoice = {};
+
+    for (auto& voice : harmonyVoices)
+        voice = {};
 }
 
 LayerShape StackEngine::shapeFor (int index, int count, float spread)
@@ -84,8 +89,9 @@ void StackEngine::setVoice (Voice& voice, double ratio, float windowMs, float de
     voice.minDelay = toSamples (minTapMs);
     voice.maxDelay = toSamples (minTapMs + windowMs);
     voice.searchRange = toSamples (searchMs);
-    // the octave copy needs quick joins; small detunes can take long, smooth ones
-    voice.fadeLength = toSamples (ratio > 1.5 ? 8.0f : 15.0f);
+    // the octave copy needs quick joins, harmonies fairly quick ones; small detunes can take long, smooth ones
+    const auto shift = std::abs (ratio - 1.0);
+    voice.fadeLength = toSamples (shift > 0.5 ? 8.0f : (shift > 0.06 ? 10.0f : 15.0f));
     voice.targetOffset = toSamples (delayMs);
     voice.targetGainL = std::cos (angle) * gain;
     voice.targetGainR = std::sin (angle) * gain;
@@ -120,6 +126,18 @@ void StackEngine::setParams (const StackParams& params)
     }
 
     setVoice (octaveVoice, 2.0, octaveWindowMs, 0.0f, 0.0f, octaveLevel * juce::jlimit (0.0f, 1.0f, params.octave));
+
+    // one harmony sits in the middle; two go either side
+    const auto harmonies = juce::jlimit (0, maxHarmonies, params.harmonyCount);
+    const auto harmonyGain = harmonyLevel * juce::jlimit (0.0f, 1.0f, params.harmony);
+
+    for (int i = 0; i < maxHarmonies; ++i)
+    {
+        auto& voice = harmonyVoices[static_cast<size_t> (i)];
+        const auto semitones = static_cast<double> (params.harmonySemitones[static_cast<size_t> (i)]);
+        const auto pan = harmonies > 1 ? (i == 0 ? -0.45f : 0.45f) : 0.0f;
+        setVoice (voice, std::pow (2.0, semitones / 12.0), harmonyWindowMs, 4.0f, pan, i < harmonies ? harmonyGain : 0.0f);
+    }
 }
 
 float StackEngine::readDelayed (double delaySamples) const noexcept
@@ -251,6 +269,13 @@ void StackEngine::process (const float* monoInput, float* left, float* right, in
         const auto octave = processVoice (octaveVoice);
         left[i] += octave * octaveVoice.gainL;
         right[i] += octave * octaveVoice.gainR;
+
+        for (auto& voice : harmonyVoices)
+        {
+            const auto value = processVoice (voice);
+            left[i] += value * voice.gainL;
+            right[i] += value * voice.gainR;
+        }
 
         writeIndex = (writeIndex + 1) & mask;
     }

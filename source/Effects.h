@@ -35,7 +35,7 @@ private:
 class PingPongEcho
 {
 public:
-    static constexpr float feedback = 0.45f;
+    static constexpr float defaultFeedback = 0.45f;
     static constexpr float maxDelaySeconds = 2.0f;
 
     void prepare (double newSampleRate)
@@ -58,8 +58,9 @@ public:
         delay.setTargetValue (juce::jlimit (0.001f, maxDelaySeconds, seconds) * static_cast<float> (sampleRate));
     }
 
-    // Adds the echo into l/r. mix is how loud the repeats are.
-    void process (float& l, float& r, float mix) noexcept
+    // Adds the echo into l/r. send is how much of l/r goes into the echo, returnLevel how loud the repeats come back
+    // and feedback how long they ring. Turning send down leaves the repeats already ringing alone, like a real send.
+    void process (float& l, float& r, float send, float returnLevel, float feedback = defaultFeedback) noexcept
     {
         const auto size = static_cast<int> (bufferL.size());
         const auto d = delay.getNextValue();
@@ -77,12 +78,12 @@ public:
         const auto echoR = bufferR[static_cast<size_t> (i0)] + frac * (bufferR[static_cast<size_t> (i1)] - bufferR[static_cast<size_t> (i0)]);
 
         // the input enters on the left only, so repeats alternate L, R, L, R...
-        bufferL[static_cast<size_t> (writeIndex)] = (l + r) * 0.5f + feedback * dampR.process (echoR);
+        bufferL[static_cast<size_t> (writeIndex)] = (l + r) * 0.5f * send + feedback * dampR.process (echoR);
         bufferR[static_cast<size_t> (writeIndex)] = feedback * dampL.process (echoL);
         writeIndex = (writeIndex + 1) % size;
 
-        l += echoL * mix;
-        r += echoR * mix;
+        l += echoL * returnLevel;
+        r += echoR * returnLevel;
     }
 
 private:
