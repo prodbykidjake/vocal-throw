@@ -22,6 +22,30 @@ records with the WTI, natural gas or gold coaches, and they keep running as they
 
 It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
+## v1.7: PULL OUT warns while your side is still worth selling
+
+What Jake's board recorded from 12 to 23 Oct (all three modes run on the same windows, priced at Kalshi's ask with
+fees):
+
+| | calls | won | bought at the ask |
+|---|---|---|---|
+| Standard | 964 | 93.0% | +3.5¢ a call |
+| Strict | 879 | 95.9% | +2.8¢ a call |
+| Very strict | 782 | 97.3% | +1.7¢ a call |
+| **EDGE** (BUY signals) | 442 | 83.0% at an average ask of 74¢ | **+7.3¢ a signal** (about +$32 a contract in all) |
+
+EDGE was the best money on the board. It is the box under each card's meter: **EDGE · BUY UP at N¢ or less** means
+Kalshi is selling that side too cheap for what the model sees; buy it and hold to the end. Kalshi also added Brent
+oil in that time; the board picked it up by itself (27 of 28 calls won).
+
+**PULL OUT now fires at 30%, not 3%.** The old alarm was right 54 times out of 56 on the two boards, but it only went
+off when the losing side was worth 1-2¢, too late to save anything. Now it flashes when the engine and Kalshi
+together give the called side **30% or less**, still with at least 1:00 left. On Jake's live boards that was right
+(the call really lost) about 4 times in 5, warned about 6 losing calls in 10 on this board, and the side still sold
+for about 25¢. Selling there cost about nothing on average against holding: it gets part of the stake back on the
+calls that lose, and costs about the same on the 1 in 5 that come back. Details and the history checks are in
+`cm15m/pullout.py`. The PULL OUT record starts again from v1.7 (the old 3% alarms stay in `data/pullouts.db`).
+
 ## v1.6: EARLY calls and BIG-GAP EDGE signals
 
 Two marks on the cards. Neither changes when a call or a signal happens.
@@ -131,25 +155,16 @@ two months of Kalshi history and checked on the last 40% by replaying the board'
 - `[tuning] enabled = false` in `config.toml` brings back v1.3's rules. `[tuning.gold] call_prob = 0.90` changes one
   market.
 
-**PULL OUT.** Under each call there is a PULL OUT box. It flashes red (**⚠ PULL OUT · SELL YOUR UP NOW**), a red
-banner appears at the top of the page, and the Mac notifies (even for a muted card) when the locked call has flipped
-and is now almost certainly wrong:
-- the engine's chance for the called side and Kalshi's price for it **average 3% or less**, with at least 1:00 left;
+**PULL OUT** (changed in v1.7, see above). Under each call there is a PULL OUT box. It flashes red
+(**⚠ PULL OUT · SELL YOUR UP NOW**), a red banner appears at the top of the page, and the Mac notifies (even for a muted
+card) when the locked call has turned against you:
+- the engine's chance for the called side and Kalshi's price for it **average 30% or less** (3% before v1.7), with at
+  least 1:00 left;
 - if Kalshi has no usable price: the engine alone at 1% or less for 10 seconds.
 
-On two months of history it was right (the call really lost) **98 times in 100**:
-- On v1.3's calls: 97.8% on the held-out days and 97-100% in every market, flashing on about 7 calls in 100.
-- On v1.4's surer calls: right 162 times out of 166 (97.6%; 67 of 68 on the held-out days). It now flashes **rarely,
-  on about 1 call in 100**, usually in the last two minutes. The new calls lose less often, and when they do it is
-  more often a last-minute turn, which no alarm can catch in time.
-
-It deliberately stays quiet when a call merely slides: a strong call that drops to 35% with 5 minutes left still wins
-about 1 time in 4. Nothing under 1:00 left: by then the losing side often has no bid to sell into.
-
-It is a safety net, not a money maker. Selling at the alarm gets the few cents the losing side still bids (about 2-3¢
-a contract on history; maybe more if you sell within seconds) instead of riding it to zero, and about 2 alarms in 100
-will be on a call that comes back. After the close, the box shows how the last alarm ended ("last window: right ✓")
-once Kalshi settles it, and keeps its own record ("PULL OUT right N of M"). Alarms are kept in `data/pullouts.db`.
+Nothing under 1:00 left: by then the losing side often has no bid to sell into. After the close, the box shows how
+the last alarm ended ("last window: right ✓") once Kalshi settles it, and keeps its own record ("PULL OUT right N of
+M"). Alarms are kept in `data/pullouts.db`.
 
 ## EDGE: the buy signal (v1.2, tightened in v1.3)
 
@@ -240,7 +255,7 @@ phone out and get a new link.
 ## Setup (macOS, next to the other coaches)
 
 ```bash
-unzip -o ~/Downloads/kalshi-commodities-v1.6.zip -d ~
+unzip -o ~/Downloads/kalshi-commodities-v1.7.zip -d ~
 cd ~/kalshi-commodities
 source ~/.venv/bin/activate
 python -m cm15m probe     # first time: lists the 15-minute series and each live target (paste it to Claude)

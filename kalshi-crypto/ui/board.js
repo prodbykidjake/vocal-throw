@@ -124,7 +124,7 @@
       `<span class="c ${x.correct ? "w" : "l"}" title="${esc(x.ticker)} · ${esc(x.side)} · ${pct(x.p)}">${x.correct ? "✓" : "✗"}</span>`).join("");
   }
 
-  // PULL OUT: flashes when the engine and Kalshi together put the locked call at 3% or less with 1:00+ left (see cx15m/pullout.py)
+  // PULL OUT: flashes when the engine and Kalshi together put the locked call at 30% or less with 1:00+ left (see cx15m/pullout.py)
   function renderPullout(card, m) {
     const p = m.pullout || {}, w = p.watch || {}, r = p.record || {}, box = f(card, "po-box"), note = f(card, "po-note");
     const a = w.alarm, live = !!a && a.result == null && m.market && a.ticker === m.market.ticker;
@@ -134,8 +134,8 @@
       if (a.result == null) {
         box.textContent = `⚠ PULL OUT · SELL YOUR ${side} NOW`;
         box.className = "po-box fire";
-        note.textContent = `the ${side} call has flipped: engine ${pct(a.p_model)}` + (a.p_kalshi != null ? ` · Kalshi ${pct(a.p_kalshi)}` : " (Kalshi had no usable quote)") +
-          ` for ${side} with ${mmss(a.seconds_left)} left${bid} · right about 98 times in 100 on the commodities' history`;
+        note.textContent = `the ${side} call has turned: engine ${pct(a.p_model)}` + (a.p_kalshi != null ? ` · Kalshi ${pct(a.p_kalshi)}` : " (Kalshi had no usable quote)") +
+          ` for ${side} with ${mmss(a.seconds_left)} left${bid} · calls at this point lost about 4 times in 5: selling now gets some of your stake back instead of riding it to 0`;
       } else {
         box.textContent = a.correct ? `PULL OUT was right ✓ · the ${side} call lost` : `PULL OUT was wrong ✗ · the ${side} call won`;
         box.className = "po-box " + (a.correct ? "right" : "wrong");

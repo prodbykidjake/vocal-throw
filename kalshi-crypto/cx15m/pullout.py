@@ -1,28 +1,34 @@
-"""PULL OUT: the alarm that the locked settlement call has flipped and is now almost certainly wrong.
+"""PULL OUT: the warning that the locked settlement call has turned against you while its side is still worth
+selling (v1.7 on the commodities board, v1.1 on the crypto board; the same rule on both).
 
-Carried over unchanged from the commodities board (cm15m), where these rules were chosen and checked; crypto keeps
-its own live record of the alarm.
+Why it moved from 3% to 30%: Jake's live data (12-23 Oct) showed the old alarm (engine + Kalshi average for the called
+side at 3% or less) firing only when the side was worth 1-2 cents. It was right 54 times out of 56, but by then there
+was nothing left to save. Most losing calls are visible much earlier: on his boards, Kalshi's own price had the called
+side under 50% with 3:00+ left in about half of the lost calls.
 
-Why these rules (commodities): replaying the board's calls on two months of Kalshi history (16,988 calls over the seven markets,
-3,699 of them lost; rules chosen on each market's first 60% of days, checked on the last 40%) asked when a call that
-has gone the other way can be given up with almost no chance of it coming back. The model alone is over-confident in
-the far tail (at a 1% reading it still came back about 1.3% of the time) and a single reading can blip; Kalshi's own
-price is honest down there. So the alarm needs both:
+The rule now: after the call, with at least 1:00 left, fire the first second the average of the engine's chance for
+the called side and Kalshi's mid for that side is 30% or less. Selling at that moment against holding to the end,
+fees included:
 
-  Rule A (Kalshi's quotes are usable): after the call, with at least 1:00 left, fire the first second the average of
-    the model's chance for the called side and Kalshi's mid for that side is 3% or less. On v1.3's calls it was right
-    (the call really lost) 98.1% of the time: 97.8% on the held-out days, at least 97% in every market. On v1.4's
-    later, surer calls it fires much less often (about 1 call in 100 instead of 7: they lose less, and more of their
-    losses turn in the last minute) and was right 162 times out of 166 (97.6%; 67 of 68 on the held-out days),
-    replayed second by second through this code. A call that only slides to 35% still wins about 1 time in 4, which
-    is why it must not flash there.
-  Rule B (no usable Kalshi quote: no fresh book, no bid or ask on one side, or a spread over 30c): the model alone
-    gives the called side 1% or less for 10 seconds in a row, with at least 1:00 left. 98.8% right on history.
+  where                                 alarms   right (call lost)   losers warned   sold at   vs holding
+  commodities, Jake's live boards        235 on 2,106 calls   77%    61% of 297       ~25c     +0.6c an alarm
+  crypto, Jake's live board               98 on 1,187 calls   81%    73% of 108       ~22c     +1.7c an alarm
+  commodities, 2 months of history       615 on 14,423 calls  78%    42% of 1,142     ~25c     +1.9c an alarm
+  crypto, 60 days of history           4,265 on 47,489 calls  80%    74% of 4,598     ~18c     -2.9c an alarm
 
-Under 1:00 left there is no alarm: by then the losing side often has no bid to sell into. Once it fires the alarm
-stays for the rest of the window (one per window) and is scored at settlement: right = the call lost. Selling at the
-alarm gets the few cents the losing side still bids (about 2c at the minute's close on history, possibly more if sold
-within seconds); it is a safety net against riding a dead call to zero, not a money maker.
+(live: the next model snapshot's Kalshi mid minus 1c, about 10 s after the signal; history: the minute's candle bid.)
+So it is a fair-priced way out, not a money maker: it gets back about a fifth to a quarter of the stake on most losing
+calls, and costs about the same on the 1 alarm in 5 whose call comes back. Higher levels (40-50%) warned more losers
+but cost 2-3c an alarm; lower ones (10-20%) sold for too little to matter. Under 1:00 left there is no alarm: by then
+the losing side often has no bid to sell into.
+
+  Rule B (no usable Kalshi quote: no fresh book, no bid or ask on one side, or a spread over 30c): unchanged, the
+    engine alone gives the called side 1% or less for 10 seconds in a row. Without Kalshi's price to check against,
+    the engine alone is not trusted any higher up.
+
+Once it fires the alarm stays for the rest of the window (one per window) and is scored at settlement: right = the
+call lost. Alarms from the old 3% rule stay in the database (level 0.03 or empty) but are left out of the record.
+The crypto board keeps its own live record of the alarm.
 """
 from __future__ import annotations
 
@@ -32,8 +38,10 @@ import sqlite3
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pullouts (market TEXT, ticker TEXT, ts REAL, seconds_left REAL, side TEXT, rule TEXT,
   p_model REAL, p_kalshi REAL, score REAL, bid REAL, call_p REAL, result TEXT, correct INTEGER, settled_ts REAL,
-  PRIMARY KEY (market, ticker));
+  level REAL, PRIMARY KEY (market, ticker));
 """
+LEVEL = 0.30  # fire at engine + Kalshi average <= 30% for the called side (was 3% before v1.7)
+RECORD_FROM_LEVEL = 0.20  # the record counts alarms of the current rule only (the old 3% alarms have level 0.03 or NULL)
 BAD_CONFIDENCE = ("warming_up", "stale", "no_target")
 
 
@@ -44,12 +52,16 @@ class PulloutStore:
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(pullouts)")}
+        if "level" not in cols:  # databases from before v1.7: their alarms were all at the old 3% level
+            self.conn.execute("ALTER TABLE pullouts ADD COLUMN level REAL")
+            self.conn.commit()
 
     def add(self, market: str, ticker: str, ts: float, seconds_left: float, side: str, rule: str, p_model: float,
-            p_kalshi: float | None, score: float, bid: float | None, call_p: float | None):
+            p_kalshi: float | None, score: float, bid: float | None, call_p: float | None, level: float = LEVEL):
         self.conn.execute("INSERT OR IGNORE INTO pullouts (market, ticker, ts, seconds_left, side, rule, p_model, p_kalshi, "
-                          "score, bid, call_p) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                          (market, ticker, ts, seconds_left, side, rule, p_model, p_kalshi, score, bid, call_p))
+                          "score, bid, call_p, level) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                          (market, ticker, ts, seconds_left, side, rule, p_model, p_kalshi, score, bid, call_p, level))
         self.conn.commit()
 
     def get(self, market: str, ticker: str) -> dict | None:
@@ -73,10 +85,13 @@ class PulloutStore:
         self.conn.commit()
 
     def record(self, market: str | None = None, recent: int = 12) -> dict:
-        q = "SELECT * FROM pullouts WHERE result IS NOT NULL" + (" AND market=?" if market else "") + " ORDER BY ts DESC"
-        rows = [dict(r) for r in self.conn.execute(q, (market,) if market else ())]
+        q = ("SELECT * FROM pullouts WHERE result IS NOT NULL AND level >= ?" + (" AND market=?" if market else "")
+             + " ORDER BY ts DESC")
+        rows = [dict(r) for r in self.conn.execute(q, (RECORD_FROM_LEVEL, market) if market else (RECORD_FROM_LEVEL,))]
         right = sum(r["correct"] for r in rows)
+        bids = [r["bid"] for r in rows if r["bid"] is not None]
         return {"right": right, "wrong": len(rows) - right, "n": len(rows),
+                "avg_bid": round(sum(bids) / len(bids), 4) if bids else None,
                 "recent": [{"ticker": r["ticker"], "side": r["side"], "correct": bool(r["correct"]), "rule": r["rule"],
                             "seconds_left": r["seconds_left"], "bid": r["bid"]} for r in rows[:recent]]}
 
@@ -84,7 +99,7 @@ class PulloutStore:
 class PulloutTracker:
     """One market's PULL OUT alarm, fed the market's live state once a second (after its desk has stepped)."""
 
-    def __init__(self, market: str, store: PulloutStore, level: float = 0.03, model_level: float = 0.01,
+    def __init__(self, market: str, store: PulloutStore, level: float = LEVEL, model_level: float = 0.01,
                  hold_s: float = 10.0, min_left_s: float = 60.0, max_spread: float = 0.30):
         self.market, self.store = market, store
         self.level, self.model_level, self.hold_s = level, model_level, hold_s
@@ -151,14 +166,14 @@ class PulloutTracker:
         if left < self.min_left_s:
             return None
         rule = None
-        if p_kalshi is not None and score <= self.level + 1e-9:  # an exact 3% counts as 3%
+        if p_kalshi is not None and score <= self.level + 1e-9:  # an exact 30% counts as 30%
             rule = "A"
         elif p_kalshi is None and self._low_since is not None and now - self._low_since >= self.hold_s:
             rule = "B"
         if rule is None:
             return None
         self.store.add(self.market, ticker, now, left, side, rule, p_model, p_kalshi, score,
-                       None if bid is None or bid <= 0 else bid, call.get("p_side"))
+                       None if bid is None or bid <= 0 else bid, call.get("p_side"), self.level)
         self._alarm = self._last = self.store.get(self.market, ticker)
         self.watch = {"state": "fired", "alarm": self._alarm}
         return self._alarm

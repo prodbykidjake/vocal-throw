@@ -184,6 +184,8 @@ v1.5 keeps v1.4's engines (per-market recipes did not beat them in fair walk-for
 switch (Standard / Strict / Very strict, per-market bars in `cm15m/tuning.py`), with all three modes run on the same
 windows in the background (`cm15m/shadow.py`) so their live records can be compared. v1.6 marks EARLY calls (made
 with 6:30+ left, `tuning.EARLY_LEFT_S`) and BIG-GAP EDGE signals (12+ points, `edge.tier`) with their own live record.
+v1.7 moves the PULL OUT alarm from 3% to 30% (`cm15m/pullout.py` LEVEL; the 3% alarm fired only when the side was worth
+1-2 cents), chosen on Jake's live data and history; old alarms stay in the database but leave the record.
 See `kalshi-commodities/README.md`; tests: `cd kalshi-commodities && pytest`.
 
 `kalshi-crypto/` (package `cx15m`, port 8792) is the commodities board rebuilt for Kalshi's nine 15-minute crypto
@@ -196,5 +198,5 @@ crypto event IS the settlement average (point at close-1 = settlement), so the d
 to it (`cx15m/feeds/calibrated.py`) and volatility is measured on it (`model.AvgVolEstimator`). No call during
 Kalshi's Thursday 3-5 AM ET maintenance. Per-coin bars (`cx15m/tuning.py`) were chosen walk-forward on 60 days of
 history: about 90.5% / 94.7% / 97.9% won on held-out days for Standard / Strict / Very strict. EDGE is only watched
-(`[board] edge = "watch"`) because it lost money on crypto history. See `kalshi-crypto/README.md`; tests:
+(`[board] edge = "watch"`) because it lost money on crypto history. v1.1 moves PULL OUT to 30% as on the commodities board (v1.7). See `kalshi-crypto/README.md`; tests:
 `cd kalshi-crypto && pytest`.

@@ -118,7 +118,7 @@
       `<span class="c ${x.correct ? "w" : "l"}" title="${esc(x.ticker)} · ${esc(x.side)} · ${pct(x.p)}">${x.correct ? "✓" : "✗"}</span>`).join("");
   }
 
-  // PULL OUT: flashes when the engine and Kalshi together put the locked call at 3% or less with 1:00+ left (see cm15m/pullout.py)
+  // PULL OUT: flashes when the engine and Kalshi together put the locked call at 30% or less with 1:00+ left (see cm15m/pullout.py)
   function renderPullout(card, m) {
     const p = m.pullout || {}, w = p.watch || {}, r = p.record || {}, box = f(card, "po-box"), note = f(card, "po-note");
     const a = w.alarm, live = !!a && a.result == null && m.market && a.ticker === m.market.ticker;
@@ -128,8 +128,8 @@
       if (a.result == null) {
         box.textContent = `⚠ PULL OUT · SELL YOUR ${side} NOW`;
         box.className = "po-box fire";
-        note.textContent = `the ${side} call has flipped: engine ${pct(a.p_model)}` + (a.p_kalshi != null ? ` · Kalshi ${pct(a.p_kalshi)}` : " (Kalshi had no usable quote)") +
-          ` for ${side} with ${mmss(a.seconds_left)} left${bid} · right about 98 times in 100 on two months of history`;
+        note.textContent = `the ${side} call has turned: engine ${pct(a.p_model)}` + (a.p_kalshi != null ? ` · Kalshi ${pct(a.p_kalshi)}` : " (Kalshi had no usable quote)") +
+          ` for ${side} with ${mmss(a.seconds_left)} left${bid} · calls at this point lost about 4 times in 5: selling now gets some of your stake back instead of riding it to 0`;
       } else {
         box.textContent = a.correct ? `PULL OUT was right ✓ · the ${side} call lost` : `PULL OUT was wrong ✗ · the ${side} call won`;
         box.className = "po-box " + (a.correct ? "right" : "wrong");
@@ -183,7 +183,7 @@
       box.textContent = w.window_over ? "EDGE · none this window" : `EDGE · watching · ${w.side} ${pct(w.p)} vs ask ${cents(w.ask)} (${gp})`;
       box.className = "edge-box";
       note.textContent = w.window_over ? "no edge at any minute check this window: skipping is the right trade" :
-        `buys only at ${Math.round(((e.rules || {}).min_p || 0.75) * 100)}%+ and +${Math.round((w.need || 0.08) * 100)} pts over the ask, at a minute check` + (w.next_check_in_s != null ? ` · next check in ${mmss(w.next_check_in_s)}` : "") +
+        `EDGE = Kalshi selling a side too cheap: says BUY when the model gives it ${Math.round(((e.rules || {}).min_p || 0.75) * 100)}%+ and ${Math.round((w.need || 0.08) * 100)}+ pts over its ask, at a minute check` + (w.next_check_in_s != null ? ` · next check in ${mmss(w.next_check_in_s)}` : "") +
         (w.usable ? "" : " · waiting for fresh quotes");
     } else {
       box.textContent = "EDGE · waiting for a window"; box.className = "edge-box"; note.textContent = "";

@@ -13,6 +13,28 @@ commodities board's **settlement caller** with crypto's own settlement rule:
 It is a separate app (package `cx15m`, folder `kalshi-crypto`, port **8792**). It shares no code, data or records with
 the commodities board or the coaches, and runs next to them. It is a coach, not a bot: **it never places orders.**
 
+## v1.1: live results, and PULL OUT warns while your side is still worth selling
+
+What Jake's board recorded from 17 to 23 Oct (all three modes on the same windows, priced at Kalshi's ask with fees),
+next to what the 60-day history test said:
+
+| | calls | won | history test | bought at the ask |
+|---|---|---|---|---|
+| Standard | 1,187 | 90.9% | 90.5% | +1.4¢ a call |
+| Strict | 1,101 | 95.1% | 94.7% | +1.4¢ a call |
+| Very strict | 991 | 97.4% | 97.9% | +0.1¢ a call |
+
+EDGE (test only here) went 215-65 at an average ask of 75¢, +0.3¢ a signal: break-even, as the history said, so it
+stays a test.
+
+**PULL OUT now fires at 30%, not 3%.** The old alarm was right 54 times out of 56 on the two boards, but only went off
+when the losing side was worth 1-2¢. Now it flashes when the engine and Kalshi together give the called side **30% or
+less**, with at least 1:00 left. On this board's live calls that was right (the call really lost) 79 times in 98,
+warned 79 of the 108 losing calls, and the side still sold for about 22¢; on 60 days of history it was right 80% of
+the time and warned 74% of losers. Selling there costs about nothing on average against holding (between +1.7¢ and
+-2.9¢ an alarm across the checks): it gets part of the stake back on calls that lose, and costs about the same on the
+1 in 5 that come back. Details in `cx15m/pullout.py`. The PULL OUT record starts again from v1.1.
+
 ## How these markets settle (and why that needed new maths)
 
 Kalshi settles each window on the **simple average of the 60 once-a-second prints** of a CF Benchmarks index in the
@@ -95,7 +117,9 @@ them:
 - **When calls come:** with about 7:00 left (Standard), 5:30 (Strict) and 3:50 (Very strict). Kalshi's ask by then
   is about 91¢, 96¢ and 98–99¢, so bought at the ask the calls break even (−1.6¢ to +1.6¢ a call by coin), as on the
   commodities board. The calls are forecasts you can trust; they are not by themselves an edge on Kalshi's price.
-- **PULL OUT** was right on 752 of its 763 alarms on those days.
+- **PULL OUT** (v1.1: at 30%, with 1:00+ left) was right on 80% of its alarms on those days and warned 74% of the
+  losing calls, at about 18¢ a contract still to sell for. Before v1.1 it fired at 3%: right 752 of 763 times, but
+  worth only about 1¢ by then.
 - **EDGE** (the commodities buy rule: model ≥ 75% and ≥ 8 points over the ask at a minute mark) lost 1.5¢ a signal
   over the same days (2,155 won, 702 lost; Bitcoin −4¢, NEAR −10¢). Crypto prices on Kalshi already know what the
   model knows. So here it is a **test only**: the box shows what it would buy and keeps a record, with no alerts.
@@ -123,7 +147,7 @@ It makes one `data/history-KX...15M.zip` per coin. Send those files to Claude.
 ## Setup (macOS, next to the other boards)
 
 ```bash
-cd ~ && unzip -o ~/Downloads/kalshi-crypto-v1.zip
+cd ~ && unzip -o ~/Downloads/kalshi-crypto-v1.1.zip
 cd ~/kalshi-crypto
 source ~/.venv/bin/activate
 pip install -r requirements.txt   # once: adds the WebSocket and key-signing libraries

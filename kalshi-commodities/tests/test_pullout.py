@@ -1,5 +1,6 @@
-"""PULL OUT: flashes only when the engine and Kalshi together put the called side at 3% or less (or, with no usable
+"""PULL OUT: flashes when the engine and Kalshi together put the called side at 30% or less (or, with no usable
 Kalshi quote, the engine alone at 1% or less for 10 s), with at least 1:00 left; latched per window; scored at settlement."""
+import sqlite3
 import types
 
 from cm15m.board import Board
@@ -19,20 +20,21 @@ def tracker(**kw):
     return PulloutTracker("gold", PulloutStore(":memory:"), **kw)
 
 
-def test_rule_a_fires_at_three_percent_and_not_a_hair_above():
+def test_rule_a_fires_at_thirty_percent_and_not_a_hair_above():
     tr = tracker()
-    # Up called; engine 2.0% Up, Kalshi mid 4.1% -> average 3.05%: not yet
-    assert tr.step(1000, state(0.020, 0.03, 0.052)) is None
-    assert tr.watch["state"] == "watching" and tr.watch["rule"] == "A"
-    # engine 2% and Kalshi 4% -> exactly 3%: PULL OUT
-    a = tr.step(1001, state(0.020, 0.03, 0.05))
-    assert a and a["side"] == "UP" and a["rule"] == "A" and abs(a["score"] - 0.03) < 1e-9
-    assert abs(a["bid"] - 0.03) < 1e-9 and abs(a["p_kalshi"] - 0.04) < 1e-9 and a["seconds_left"] == 200.0
+    # Up called; engine 30.0% Up, Kalshi mid 30.5% -> average 30.25%: not yet
+    assert tr.step(1000, state(0.300, 0.30, 0.31)) is None
+    assert tr.watch["state"] == "watching" and tr.watch["rule"] == "A" and tr.watch["level"] == 0.30
+    # engine 30% and Kalshi 30% -> exactly 30%: PULL OUT, while the UP side still bids 29c
+    a = tr.step(1001, state(0.300, 0.29, 0.31))
+    assert a and a["side"] == "UP" and a["rule"] == "A" and abs(a["score"] - 0.30) < 1e-9
+    assert abs(a["bid"] - 0.29) < 1e-9 and abs(a["p_kalshi"] - 0.30) < 1e-9 and a["seconds_left"] == 200.0
+    assert abs(a["level"] - 0.30) < 1e-9
 
 
-def test_a_strong_call_sliding_to_35_percent_does_not_flash():
+def test_a_call_sliding_to_35_percent_does_not_flash_yet():
     tr = tracker()
-    # Jake's gold example: called UP 87%, now UP 35% / DOWN 65% with 6:13 left. It still wins about 1 time in 4.
+    # Jake's gold example: called UP 87%, now UP 35% / DOWN 65% with 6:13 left. It still wins about 1 time in 3.
     for i in range(30):
         assert tr.step(1000 + i, state(0.35, 0.33, 0.36, left=373 - i)) is None
     assert tr.watch["state"] == "watching" and tr.store.record()["n"] == 0
@@ -126,3 +128,21 @@ def test_the_card_shows_how_the_last_alarm_ended_after_the_window_rolls_over():
     tr.step(1000 + 1800 + 1, state(0.5, 0.45, 0.55, ticker="C", called=False))
     assert tr.state()["last"] is None  # shown for half an hour
     assert PulloutTracker("gold", tr.store)._last["ticker"] == "A"  # a restart reloads it from the store
+
+
+def test_old_three_percent_alarms_stay_but_leave_the_record(tmp_path):
+    path = str(tmp_path / "pullouts.db")
+    old = sqlite3.connect(path)  # a database from before v1.7 (no level column)
+    old.executescript("""CREATE TABLE pullouts (market TEXT, ticker TEXT, ts REAL, seconds_left REAL, side TEXT, rule TEXT,
+      p_model REAL, p_kalshi REAL, score REAL, bid REAL, call_p REAL, result TEXT, correct INTEGER, settled_ts REAL,
+      PRIMARY KEY (market, ticker));
+      INSERT INTO pullouts VALUES ('gold', 'OLD', 500, 70, 'UP', 'A', 0.02, 0.03, 0.025, 0.02, 0.9, 'DOWN', 1, 600);""")
+    old.commit()
+    old.close()
+    store = PulloutStore(path)
+    assert store.get("gold", "OLD")["level"] is None and store.record()["n"] == 0
+    tr = PulloutTracker("gold", store)
+    assert tr.step(1000, state(0.25, 0.24, 0.27, ticker="NEW"))
+    tr.settle_from(lambda t: {"result": "no"}, 1100)
+    r = store.record("gold")
+    assert r["n"] == 1 and r["right"] == 1 and abs(r["avg_bid"] - 0.24) < 1e-9 and r["recent"][0]["ticker"] == "NEW"

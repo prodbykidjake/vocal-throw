@@ -246,9 +246,9 @@ class Board:
             left = alarm["seconds_left"]
             bid = "" if alarm["bid"] is None else f" (bid ~{round(alarm['bid'] * 100)}¢)"
             kalshi = "" if alarm["p_kalshi"] is None else f" · Kalshi {_pct(alarm['p_kalshi'])}"
-            # urgent and rare (about 7 calls in 100): it notifies even when the card's call notifications are muted
+            # urgent (about 1 call in 10): it notifies even when the card's call notifications are muted
             self.notifier.notify(f"{d.spec.name.upper()}: PULL OUT of {alarm['side']}",
-                                 f"the {alarm['side']} call has flipped: engine {_pct(alarm['p_model'])}{kalshi} with "
+                                 f"the {alarm['side']} call has turned: engine {_pct(alarm['p_model'])}{kalshi} with "
                                  f"{int(left // 60)}:{int(left % 60):02d} left · sell your {alarm['side']} now{bid}", "Basso")
         d.state["pullout"] = tr.state()
 

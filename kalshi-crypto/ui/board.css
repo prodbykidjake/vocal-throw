@@ -153,7 +153,7 @@ main { position: relative; z-index: 1; padding: 18px 28px 40px; max-width: 1500p
 .rules { color: var(--faint); font-size: 10.5px; margin-top: 6px; }
 .rules-stat .stat-v { color: var(--info); }
 
-/* PULL OUT: the call has flipped and is now almost certainly wrong (cx15m/pullout.py) */
+/* PULL OUT: the call has turned against you while its side is still worth selling (cx15m/pullout.py) */
 .po { margin-top: 10px; }
 .po-box { border-radius: 12px; padding: 8px 12px; font: 800 12.5px/1.25 var(--sans); letter-spacing: .03em; color: var(--faint);
   background: rgba(255, 255, 255, .02); border: 1px dashed var(--line); text-align: center; }
