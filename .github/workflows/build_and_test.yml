@@ -125,6 +125,33 @@ jobs:
           7z x pluginval_${{ runner.os }}.zip
           ${{ matrix.pluginval-binary }} --strictness-level 10 --verbose --validate "${{ env.VST3_PATH }}"
 
+      # Until there's a Developer ID, ship ad-hoc signed plugins for testing on our own Macs
+      - name: Package plugins (macOS, ad-hoc signed)
+        if: ${{ runner.os == 'macOS' }}
+        run: |
+          codesign --force --deep -s - "${{ env.AU_PATH }}"
+          codesign --force --deep -s - "${{ env.VST3_PATH }}"
+          mkdir -p dist
+          cp -R "${{ env.AU_PATH }}" "${{ env.VST3_PATH }}" dist/
+          cat > dist/INSTALL.txt <<'EOF'
+          Stack Buddy (test build, not notarized)
+
+          1. Copy "Stack Buddy.component" to ~/Library/Audio/Plug-Ins/Components/
+             (and "Stack Buddy.vst3" to ~/Library/Audio/Plug-Ins/VST3/ if you want the VST3)
+          2. In Terminal, let macOS open them (they were downloaded, so they're quarantined):
+             xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Stack Buddy.component"
+             xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Stack Buddy.vst3"
+          3. Restart Logic. Stack Buddy is under Audio FX > Audio Units > Playtime Audio.
+          EOF
+          ditto -c -k --sequesterRsrc dist "${{ env.ARTIFACT_NAME }}-plugins.zip"
+
+      - name: Upload plugins (macOS)
+        if: ${{ runner.os == 'macOS' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-plugins
+          path: ${{ env.ARTIFACT_NAME }}-plugins.zip
+
 #       - name: Import Certificates (macOS)
 #         uses: sudara/basic-macos-keychain-action@v1
 #         id: keychain
