@@ -70,10 +70,11 @@
 
   const f = (card, name) => card.querySelector(`[data-f="${name}"]`);
 
-  function setCall(box, k, v, side, cls, extra) {
+  // v1.8.1: the right column carries the time left (big) and the state's detail under it
+  function setCall(box, k, v, side, cls, extra, time) {
     f(box, "cb-k").textContent = k;
     f(box, "cb-v").textContent = v;
-    f(box, "cb-side").innerHTML = (extra || "") + esc(side || "");
+    f(box, "cb-side").innerHTML = (extra || "") + (time ? `<span class="cb-time">${esc(time)}</span>` : "") + `<span class="cb-det">${esc(side || "")}</span>`;
     box.className = "callbox" + (cls ? " " + cls : "");
   }
 
@@ -95,26 +96,29 @@
     if (mute.dataset.on !== String(!!m.muted)) { mute.innerHTML = m.muted ? BELL_OFF : BELL; mute.dataset.on = String(!!m.muted); }
     mute.classList.toggle("muted", !!m.muted);
     const call = c.call, w = c.watch || {}, rules = c.rules || {}, box = f(card, "box");
+    const left = m.seconds_left == null ? "" : `${m.countdown} left`;
+    card.classList.toggle("called-up", !!call && call.result == null && call.side === "UP");
+    card.classList.toggle("called-down", !!call && call.result == null && call.side === "DOWN");
     if (call) {
       // v1.6: EARLY = made with 6:30+ left: as accurate as the later calls and cheaper to buy (see cm15m/tuning.py)
       const early = call.seconds_left != null && call.seconds_left >= ((state && state.early_left_s) || 390);
       const tag = early ? `<span class="early-tag" title="called with ${esc(mmss(call.seconds_left))} left: early calls won as often as later ones, at a lower price">EARLY</span><br>` : "";
       if (call.result == null) {
-        setCall(box, "the call", `${call.side} · ${pct(call.p_side)}`, `🔒 locked at ${mmss(call.seconds_left)} left`, call.side === "UP" ? "up" : "down", tag);
+        setCall(box, "the call", `${call.side === "UP" ? "▲" : "▼"} ${call.side} · ${pct(call.p_side)}`, `🔒 locked at ${mmss(call.seconds_left)} left`, call.side === "UP" ? "up" : "down", tag, left);
       } else {
-        setCall(box, "settled", `${call.correct ? "WIN" : "LOSS"} · ${call.side}`, call.correct ? "the call was right" : "the call lost", call.correct ? "win" : "loss", tag);
+        setCall(box, "settled", `${call.correct ? "✓ WIN" : "✗ LOSS"} · ${call.side}`, call.correct ? "the call was right" : "the call lost", call.correct ? "win" : "loss", tag, "settled");
       }
     } else if (w.status === "studying") {
-      setCall(box, "the call", "Studying", `no call for ${mmss(w.study_left_s)}`, "wait");
+      setCall(box, "the call", "Studying", `no call for ${mmss(w.study_left_s)}`, "wait", "", left);
     } else if (w.status === "watching") {
       const need = rules.prob != null ? `needs ${Math.round(100 * ((c.meter && c.meter.line) || rules.prob))}%` + (rules.hold_s ? ` for ${rules.hold_s}s` : "") : "";
-      setCall(box, "the call", "Watching", w.confirming_s != null && rules.hold_s ? `confirming ${w.confirming_s}/${rules.hold_s}s` : need, "wait");
+      setCall(box, "the call", "Watching", w.confirming_s != null && rules.hold_s ? `confirming ${w.confirming_s}/${rules.hold_s}s` : need, "wait", "", left);
     } else if ((w.status || "").startsWith("no call")) {
       const why = /\((.*)\)/.exec(w.status);
-      setCall(box, "the call", "No call", why ? `this window: ${why[1]}` : "this window", "none");
+      setCall(box, "the call", "No call", why ? why[1] : "this window", "none", "", left);
     } else {
       const closed = m.status === "no_market" || m.status === "no_series";
-      setCall(box, "the call", closed ? "Next window soon" : "Waiting", closed ? "market closed" : (w.status || "waiting for the next window"), "wait");
+      setCall(box, "the call", closed ? "Next window soon" : "Waiting", closed ? "market closed" : (w.status || "waiting for the next window"), "wait", "", closed ? "" : left);
     }
     renderMeter(card, c, call, w, rules);
     renderPullout(card, m);
@@ -254,7 +258,7 @@
     else t = `needs ${Math.round(line * 100)}%` + (rules.hold_s ? ` for ${rules.hold_s}s` : "") + ` · last 30s ${range}` + (w.deadline_in_s != null ? ` · lean call in ${mmss(w.deadline_in_s)}` :
       w.closes_in_s != null ? ` · ${mmss(w.closes_in_s)} left to get there, else no call` : "");
     if (m.model_up != null) t += ` · engine ${pct(m.model_up)} blended with Kalshi ${pct(m.market_up)}`;
-    note.textContent = t;
+    note.textContent = t; note.title = t;
   }
 
   function renderBoard(s) {

@@ -272,3 +272,69 @@ main { padding: 0; }
   .mkt { padding: 18px 18px 14px; } .px-block, .rec { margin-left: -18px; margin-right: -18px; padding-left: 18px; padding-right: 18px; }
   .px-v { font-size: 32px; }
 }
+
+/* ---------------------------------------------------------------- v1.8.1: half-size cards, louder calls, time in every state */
+.cards { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.mkt { padding: 14px 16px 12px; border-radius: 16px; }
+.mkt-top { gap: 10px; }
+.coin { width: 30px; height: 30px; font-size: 8px; }
+.mkt-name { font-size: 14px; }
+.mkt-meta { font-size: 8.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
+.icon-btn { width: 26px; height: 26px; border-radius: 8px; }
+.icon-btn svg { width: 12px; height: 12px; }
+.px-block { margin: 10px -16px 0; padding: 0 16px; height: 56px; }
+.px-target { font-size: 8.5px; }
+.px-row { margin-top: 6px; gap: 8px; }
+.px-k { font-size: 8px; padding-bottom: 4px; }
+.px-v { font-size: 24px; }
+.chip { padding: 3px 7px; font-size: 9px; }
+.timebar { margin-top: 6px; }
+.cd { display: none; } /* the time left now sits in THE CALL box */
+.callbox { margin-top: 8px; padding: 10px 12px; border-radius: 12px; gap: 10px; }
+.cb-k { font-size: 9px; }
+.cb-v { margin-top: 6px; font-size: 18px; }
+.callbox.none .cb-v, .callbox.wait .cb-v { font-size: 15px; }
+.cb-side { max-width: 52%; font-size: 9px; line-height: 1.35; }
+.cb-time { display: block; font: 500 15px/1.15 var(--mono); color: var(--primary); letter-spacing: -.01em; }
+.cb-det { display: block; margin-top: 2px; }
+.early-tag { font-size: 8px; padding: 2px 6px; margin-bottom: 4px; }
+.meter { margin-top: 10px; }
+.meter-labels { font-size: 7.5px; }
+.meter-track { height: 16px; margin-top: 3px; }
+.meter-dot { width: 10px; height: 10px; margin: -5px 0 0 -5px; }
+.meter-mkt-k { font-size: 8px; }
+.note { margin-top: 12px; font-size: 10px; min-height: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.edge, .po { margin-top: 6px; }
+.edge-box, .po-box { font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.edge-box.sig, .po-box.fire { white-space: normal; padding: 9px 11px; border-radius: 11px; font-size: 11.5px; }
+.edge-box:not(.sig) + .edge-note, .po-box:not(.fire) + .po-note { display: none; }
+.edge-note, .po-note { font-size: 9.5px; }
+.rec { margin: 10px -16px 0; padding: 9px 16px 0; gap: 8px; }
+.rec-v { font-size: 10px; }
+.c { width: 10px; height: 10px; border-radius: 3px; font-size: 6px; }
+.det-btn { font-size: 8.5px; }
+.details > div { font-size: 9.5px; }
+
+/* a locked call stands out: the box filled in its side's color, the card lit around it */
+.callbox.up { background: linear-gradient(135deg, rgba(61, 220, 151, .24), rgba(61, 220, 151, .06)); border-color: rgba(61, 220, 151, .6);
+  box-shadow: 0 0 22px rgba(61, 220, 151, .16), inset 0 1px 0 rgba(255, 255, 255, .06); }
+.callbox.down { background: linear-gradient(135deg, rgba(255, 92, 108, .24), rgba(255, 92, 108, .06)); border-color: rgba(255, 92, 108, .6);
+  box-shadow: 0 0 22px rgba(255, 92, 108, .16), inset 0 1px 0 rgba(255, 255, 255, .06); }
+.callbox.up .cb-v, .callbox.down .cb-v { font-weight: 700; }
+.callbox.up .cb-k { color: var(--up); } .callbox.down .cb-k { color: var(--down); }
+.callbox.win { background: rgba(61, 220, 151, .10); border-color: rgba(61, 220, 151, .4); }
+.callbox.loss { background: rgba(255, 92, 108, .10); border-color: rgba(255, 92, 108, .4); }
+.callbox.win .cb-v, .callbox.loss .cb-v { font-weight: 600; }
+.mkt.called-up { border-color: rgba(61, 220, 151, .45); box-shadow: 0 0 0 1px rgba(61, 220, 151, .12), 0 0 36px rgba(61, 220, 151, .10), 0 24px 60px rgba(0, 0, 0, .4); }
+.mkt.called-down { border-color: rgba(255, 92, 108, .45); box-shadow: 0 0 0 1px rgba(255, 92, 108, .12), 0 0 36px rgba(255, 92, 108, .10), 0 24px 60px rgba(0, 0, 0, .4); }
+.mkt.called-up::before { background: linear-gradient(90deg, transparent, var(--up), transparent); opacity: .9; }
+.mkt.called-down::before { background: linear-gradient(90deg, transparent, var(--down), transparent); opacity: .9; }
+.mkt.pulled { border-color: rgba(255, 59, 78, .6); }
+
+@media (max-width: 720px) {
+  .cards { grid-template-columns: 1fr; }
+  .mkt { padding: 14px 16px 12px; }
+  .px-block, .rec { margin-left: -16px; margin-right: -16px; padding-left: 16px; padding-right: 16px; }
+  .px-v { font-size: 26px; }
+  .mkt-meta { max-width: 220px; }
+}

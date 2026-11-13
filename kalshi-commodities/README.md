@@ -22,6 +22,13 @@ records with the WTI, natural gas or gold coaches, and they keep running as they
 
 It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
+## v1.8.1: smaller cards, louder calls
+
+- **Cards** are about half the size (4 to a row on a laptop screen).
+- **A locked call** fills its box with green (UP) or red (DOWN) and lights the card's border, so the called markets jump
+  out; settled ones show ✓ WIN / ✗ LOSS in a softer fill.
+- **The time left** sits big in every card's call box (watching, studying, locked).
+
 ## v1.8: the new look
 
 The board now follows Jake's "Commodities Trading Terminal" design (Figma Make). The calls, EDGE, PULL OUT, the
@@ -281,7 +288,7 @@ phone out and get a new link.
 ## Setup (macOS, next to the other coaches)
 
 ```bash
-unzip -o ~/Downloads/kalshi-commodities-v1.8.zip -d ~
+unzip -o ~/Downloads/kalshi-commodities-v1.8.1.zip -d ~
 cd ~/kalshi-commodities
 source ~/.venv/bin/activate
 python -m cm15m probe     # first time: lists the 15-minute series and each live target (paste it to Claude)
