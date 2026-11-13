@@ -13,6 +13,30 @@ commodities board's **settlement caller** with crypto's own settlement rule:
 It is a separate app (package `cx15m`, folder `kalshi-crypto`, port **8792**). It shares no code, data or records with
 the commodities board or the coaches, and runs next to them. It is a coach, not a bot: **it never places orders.**
 
+## v1.2: a stricter bar from 3 to 6 PM ET, and a dip note
+
+Jake's board from 17 Oct to 13 Nov (3,672 Standard calls, 3,415 Strict, 3,052 Very strict; all three modes on the
+same windows):
+
+| | won | bought at the ask |
+|---|---|---|
+| Standard | 90.4% | +0.5¢ a call |
+| Strict | 94.2% | +0.5¢ a call |
+| Very strict | 97.4% | +0.3¢ a call |
+
+**The afternoon bar.** Calls made from **3:00 to 6:00 PM ET** lost about twice as often: Standard won 86.0% of 322 there
+against 90.8% the rest of the day. It showed in both halves of the period (86.4% and 85.3%) and on every coin. In the
+same hours Strict went 268-20 against Standard's 277-45: nearly every win kept, more than half the losses gone. So now,
+from 3 to 6 PM ET, each mode calls at the next stricter mode's bar (Standard at Strict's, Strict at Very strict's;
+Very strict is unchanged). The card's rules line shows it ("3–6 PM ET: 94%+"). `[tuning] afternoon = false` turns it
+off. The record "since v1.2" starts fresh.
+
+**Checked and not adopted:** requiring Kalshi's own price to agree before a call. It raised accuracy a little, but just
+using Strict did better (more calls and more wins).
+
+**The dip note.** When a locked call slides under 60%, the card says "now about a coin flip: don't add here". Buying
+the called side there won only about 6 times in 10 at a price of 50–60¢, so it broke even at best.
+
 ## v1.1: live results, and PULL OUT warns while your side is still worth selling
 
 What Jake's board recorded from 17 to 23 Oct (all three modes on the same windows, priced at Kalshi's ask with fees),
@@ -147,7 +171,7 @@ It makes one `data/history-KX...15M.zip` per coin. Send those files to Claude.
 ## Setup (macOS, next to the other boards)
 
 ```bash
-cd ~ && unzip -o ~/Downloads/kalshi-crypto-v1.1.zip
+cd ~ && unzip -o ~/Downloads/kalshi-crypto-v1.2.zip
 cd ~/kalshi-crypto
 source ~/.venv/bin/activate
 pip install -r requirements.txt   # once: adds the WebSocket and key-signing libraries

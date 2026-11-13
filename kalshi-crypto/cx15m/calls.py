@@ -20,8 +20,10 @@ only the calls made since those rules first ran.
 """
 from __future__ import annotations
 
+import datetime as dt
 import math
 import time
+import zoneinfo
 from collections import deque
 
 from .config import TradingCfg
@@ -43,6 +45,15 @@ def blend_up(p_model: float, p_market: float | None, w_market: float) -> float:
 
     x = (1.0 - w_market) * logit(p_model) + w_market * logit(p_market)
     return 1.0 / (1.0 + math.exp(-x))
+
+
+ET = zoneinfo.ZoneInfo("America/New_York")
+AFTERNOON_HOURS_ET = (15, 18)  # v1.2: 3:00-6:00 PM ET, when calls lost about twice as often (see tuning.py)
+
+
+def in_afternoon(now: float) -> bool:
+    h = dt.datetime.fromtimestamp(now, ET).hour
+    return AFTERNOON_HOURS_ET[0] <= h < AFTERNOON_HOURS_ET[1]
 
 
 def cfg_rules(cfg) -> str | None:
@@ -82,6 +93,7 @@ class CallTracker:
              seconds_elapsed: float | None, study_s: float, quotes: Quotes | None = None) -> dict | None:
         """Returns the call the second it is made, else None."""
         cfg = self.cfg
+        bar = self.bar(now)
         late_call = cfg.late_call
         self._quotes = quotes if quotes is not None else Quotes()
         if ticker != self._ticker:
@@ -110,7 +122,7 @@ class CallTracker:
             elif self._refused:
                 status = f"no call this window ({self._refused})"
             else:
-                status = f"no call this window (never {round(cfg.call_prob * 100)}% sure for {round(cfg.call_hold_s)}s)"
+                status = f"no call this window (never {round(bar * 100)}% sure for {round(cfg.call_hold_s)}s)"
             self.watch = {"status": status}
             return None
         p_up = self.p_for_call(pred)
@@ -124,10 +136,10 @@ class CallTracker:
         if seconds_elapsed is not None and seconds_elapsed < study_s:
             self._hold = None
             return None
-        if p_side >= cfg.call_prob and (pred.disagree or pred.p_market is None):
+        if p_side >= bar and (pred.disagree or pred.p_market is None):
             # sure enough, but no confident call while Kalshi's odds are far off or missing: remember why
             self._refused = "engine and Kalshi too far apart" if pred.disagree else "no fresh Kalshi odds"
-        if p_side >= cfg.call_prob and not pred.disagree and pred.p_market is not None:
+        if p_side >= bar and not pred.disagree and pred.p_market is not None:
             if self._hold is None or self._hold[0] != side:
                 self._hold = (side, now)
             self.watch["confirming_s"] = round(now - self._hold[1])
@@ -138,6 +150,12 @@ class CallTracker:
         if late_call and seconds_left <= cfg.call_deadline_s:
             return self._make(now, ticker, pred, side, p_side, seconds_left, "late")
         return None
+
+    def bar(self, now: float) -> float:
+        """The chance a call needs right now: the stricter afternoon bar from 3 to 6 PM ET, else call_prob."""
+        cfg = self.cfg
+        ap = getattr(cfg, "afternoon_prob", None)
+        return max(cfg.call_prob, ap) if ap is not None and in_afternoon(now) else cfg.call_prob
 
     def p_for_call(self, pred: Prediction) -> float:
         """The Up chance the call goes by: the model's, or its blend with Kalshi's mid (see blend_up)."""
@@ -155,7 +173,7 @@ class CallTracker:
             self._trail.popleft()
         ups = [p for _, p in self._trail]
         self.meter = {"p_up": round(p_up, 3), "lo": round(min(ups), 3), "hi": round(max(ups), 3),
-                      "line": self.cfg.call_prob, "market_up": None if pred.p_market is None else round(pred.p_market, 3),
+                      "line": self.bar(now), "market_up": None if pred.p_market is None else round(pred.p_market, 3),
                       "disagree": pred.disagree,
                       "model_up": round(pred.p_final, 3) if p_up != pred.p_final else None}
 
@@ -178,7 +196,8 @@ class CallTracker:
     def state(self) -> dict:
         cfg = self.cfg
         out = {"call": self.call, "watch": self.watch, "meter": self.meter, "record": self.store.call_record(),
-               "rules": {"prob": cfg.call_prob, "hold_s": cfg.call_hold_s, "deadline_s": cfg.call_deadline_s,
+               "rules": {"prob": cfg.call_prob, "afternoon_prob": getattr(cfg, "afternoon_prob", None),
+                         "hold_s": cfg.call_hold_s, "deadline_s": cfg.call_deadline_s,
                          "late_call": cfg.late_call, "study_s": cfg.study_s,
                          "min_left_s": cfg.call_min_left_s, "blend_market": cfg.call_blend_market,
                          "tag": cfg.rules_tag}}

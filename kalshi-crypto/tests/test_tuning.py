@@ -26,12 +26,12 @@ def test_each_coin_has_its_rules_and_config_can_override_them():
     btc, doge = tuning.for_market("btc"), tuning.for_market("doge")
     assert (btc.call_prob, btc.study_s) == (0.92, 180.0) and (doge.call_prob, doge.study_s) == (0.85, 300.0)
     assert set(tuning.TUNING) == set(tuning.MODE_BARS) == {"btc", "eth", "sol", "xrp", "doge", "hype", "near", "zec", "bnb"}
-    assert tuning.for_market("newcoin") == tuning.DEFAULT and tuning.DEFAULT.call_prob == 0.85 and not tuning.DEFAULT.late_call
+    assert tuning.for_market("newcoin", {"afternoon": False}) == tuning.DEFAULT and tuning.DEFAULT.call_prob == 0.85 and not tuning.DEFAULT.late_call
     assert tuning.DEFAULT.study_s == 300 and tuning.DEFAULT.hold_s == 10 and tuning.DEFAULT.blend_market == 0.0
     o = tuning.for_market("btc", {"btc": {"call_prob": 0.9, "bogus": 1}})
     assert o.call_prob == 0.9 and o.study_s == 180
     t = tuning.apply(TradingCfg(), tuning.for_market("eth"))
-    assert (t.call_prob, t.study_s, t.late_call, t.call_hold_s, t.rules_tag) == (0.87, 300.0, False, 10.0, "v1")
+    assert (t.call_prob, t.study_s, t.late_call, t.call_hold_s, t.rules_tag) == (0.87, 300.0, False, 10.0, "v1.2")
     assert tuning.apply(TradingCfg(), tuning.for_market("eth"), window_s=90).study_s == 30  # the demo's short windows
 
 
@@ -100,7 +100,7 @@ def test_the_rules_record_counts_only_calls_made_under_the_current_rules():
     made = None
     for i in range(12):  # a call made under the v1 rules carries its tag
         made = ct.step(1e9 + i, "NEW", pred(0.92, 0.9), 500 - i, 400 + i, 300) or made
-    assert made and made["rules"] == "v1"
+    assert made and made["rules"] == "v1.2"
     store.settle_call("NEW", "UP", 1e9 + 600)
     # tuning switched off for a while: its calls (the original rules, a lean call here) never count toward "since v1"
     ct_off = CallTracker(TradingCfg(), store)
@@ -185,7 +185,7 @@ def test_strict_modes_raise_the_bar():
     assert (xrp.call_prob, xrp.study_s) == (0.93, 240.0)
     assert tuning.for_market("newcoin", mode="very_strict").call_prob == tuning.MODE_DEFAULT_BARS["very_strict"] == 0.97
     assert tuning.mode_of("Very strict") == "very_strict" and tuning.mode_of("bogus") == "standard"
-    assert (tuning.tag("standard"), tuning.tag("strict")) == ("v1", "strict")
+    assert (tuning.tag("standard"), tuning.tag("strict")) == ("v1.2", "strict-1.2")
     # a value set in config.toml still wins over the mode's bar
     assert tuning.for_market("btc", {"btc": {"call_prob": 0.9}}, mode="strict").call_prob == 0.9
 
@@ -201,7 +201,7 @@ def test_the_switch_changes_every_card_and_is_remembered(tmp_path):
     assert board.mode == "standard" and board.desk("btc").calls.cfg.call_prob == 0.92
     board.set_mode("strict")
     btc, doge = board.desk("btc"), board.desk("doge")
-    assert btc.calls.cfg.call_prob == 0.97 and btc.calls.cfg.rules_tag == "strict" and btc.calls.cfg.study_s == 180
+    assert btc.calls.cfg.call_prob == 0.97 and btc.calls.cfg.rules_tag == "strict-1.2" and btc.calls.cfg.study_s == 180
     assert doge.calls.cfg.call_prob == 0.92 and doge.calls.rules_since is not None and doge.calls.cfg.study_s == 300
     assert Board(cfg).mode == "strict"  # remembered across restarts
     try:
@@ -231,7 +231,7 @@ def test_each_mode_records_its_own_calls_on_the_same_windows(tmp_path):
     for i in range(12):  # the model at 92% for 12 s: enough for Standard (85%), not for Very strict (97%)
         std.step(desk, 1000 + i)
         vs.step(desk, 1000 + i)
-    assert std.calls.call and std.calls.call["rules"] == "v1" and vs.calls.call is None
+    assert std.calls.call and std.calls.call["rules"] == "v1.2" and vs.calls.call is None
     std.settle_from(lambda t: {"result": "yes"})
     assert (std.state()["wins"], std.state()["losses"], vs.state()["wins"]) == (1, 0, 0)
     assert (tmp_path / "shadow" / "btc-standard.db").exists() and (tmp_path / "shadow" / "btc-very_strict.db").exists()
@@ -296,11 +296,11 @@ def test_early_calls_are_counted_under_the_current_rules_only(tmp_path):
     cfg.board.markets = ["btc", "doge"]
     board = Board(cfg, sim={"window_s": 900, "warmup_minutes": 10})
     asyncio.run(board.build())
-    rows = (("T1", 420.0, "UP", "UP", "v1"),     # 7:00 left, won: early
-            ("T2", 390.0, "UP", "DOWN", "v1"),   # exactly 6:30 left, lost: early
-            ("T3", 300.0, "UP", "UP", "v1"),     # 5:00 left: not early
-            ("T4", 500.0, "UP", "UP", "strict"),   # early, but made in another mode
-            ("T5", 600.0, "UP", None, "v1"),     # early, not settled yet
+    rows = (("T1", 420.0, "UP", "UP", "v1.2"),     # 7:00 left, won: early
+            ("T2", 390.0, "UP", "DOWN", "v1.2"),   # exactly 6:30 left, lost: early
+            ("T3", 300.0, "UP", "UP", "v1.2"),     # 5:00 left: not early
+            ("T4", 500.0, "UP", "UP", "strict-1.2"),   # early, but made in another mode
+            ("T5", 600.0, "UP", None, "v1.2"),     # early, not settled yet
             ("T6", 700.0, "DOWN", "DOWN", None))   # early, made with tuning off (no rules tag)
     for key in ("btc", "doge"):
         d = board.desk(key)
@@ -310,7 +310,7 @@ def test_early_calls_are_counted_under_the_current_rules_only(tmp_path):
             if result:
                 store.settle_call(tk, result, 2000.0)
         board._early_step(d)
-        assert d.state["early"] == {"wins": 1, "losses": 1, "tag": "v1"}
+        assert d.state["early"] == {"wins": 1, "losses": 1, "tag": "v1.2"}
     board.set_mode("strict")
     for key in ("btc", "doge"):
         board._early_step(board.desk(key))
@@ -328,3 +328,20 @@ def test_the_demo_scales_the_early_line_with_its_short_windows(tmp_path):
     cfg = Config()
     cfg.storage.data_dir = str(tmp_path)
     assert Board(cfg, sim={"window_s": 120}).early_left_s() == 52.0  # 6:30 of 15:00 = 52 s of a 2-minute window
+
+
+def test_afternoon_bar_is_the_next_stricter_mode_from_3_to_6_pm_et():
+    import datetime as dt
+    import zoneinfo
+    from cx15m.calls import CallTracker
+    et = zoneinfo.ZoneInfo("America/New_York")
+    assert tuning.for_market("btc").afternoon_prob == 0.97  # Standard at Strict's bar
+    assert tuning.for_market("btc", mode="strict").afternoon_prob == 0.99  # Strict at Very strict's
+    assert tuning.for_market("btc", mode="very_strict").afternoon_prob is None
+    assert tuning.for_market("btc", {"afternoon": False}).afternoon_prob is None
+    cfg = tuning.apply(TradingCfg(), tuning.for_market("eth"))
+    tr = CallTracker.__new__(CallTracker)
+    tr.cfg = cfg
+    at = lambda h, m=0: dt.datetime(2026, 11, 12, h, m, tzinfo=et).timestamp()  # noqa: E731
+    assert tr.bar(at(14, 59)) == 0.87 and tr.bar(at(15, 0)) == 0.94 and tr.bar(at(17, 59)) == 0.94
+    assert tr.bar(at(18, 0)) == 0.87 and tr.bar(at(3, 30)) == 0.87

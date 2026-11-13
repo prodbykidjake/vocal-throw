@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 
 MODES = ("standard", "strict", "very_strict")
 MODE_LABELS = {"standard": "Standard", "strict": "Strict", "very_strict": "Very strict"}
-MODE_TAGS = {"standard": "v1", "strict": "strict", "very_strict": "very-strict"}  # tags the calls each mode makes
+MODE_TAGS = {"standard": "v1.2", "strict": "strict-1.2", "very_strict": "very-strict"}  # tags the calls each mode makes
 # each coin's Strict / Very strict rules (bar, study seconds), the table above
 MODE_BARS: dict[str, dict[str, float | tuple[float, float]]] = {
     "btc": {"strict": (0.97, 180.0), "very_strict": (0.99, 180.0)},
@@ -58,6 +58,13 @@ MODE_DEFAULT_BARS = {"strict": 0.93, "very_strict": 0.97}  # a coin Kalshi adds 
 # a call made with this much left is EARLY (6:30). On commodities those calls won as often as the later ones at a
 # lower ask (94.7% vs 95.3% in Strict, +1.4c a call against +0.3c); the board keeps their own record on crypto too
 EARLY_LEFT_S = 390.0
+# v1.2, the afternoon bar. Jake's live board (17 Oct - 13 Nov, 3,672 Standard calls) lost about twice as often on calls
+# made from 3:00 to 6:00 PM ET: Standard won 86.0% of 322 there against 90.8% the rest of the day, in both halves of
+# the period (86.4% / 85.3%) and on every coin. Strict's calls in the same hours went 268-20 against Standard's 277-45:
+# nearly every win kept, more than half the losses gone. So from 3 to 6 PM ET each mode calls at the next stricter
+# mode's bar (Standard at Strict's, Strict at Very strict's; Very strict is unchanged). [tuning] afternoon = false
+# turns it off.
+NEXT_MODE = {"standard": "strict", "strict": "very_strict"}
 
 
 @dataclass(frozen=True)
@@ -67,6 +74,7 @@ class Tuning:
     late_call: bool = False  # no lean call at 2:00 left: a window that never gets sure enough gets no call
     blend_market: float = 0.0  # > 0 = the call reads a log-odds blend of the model and Kalshi's mid (Kalshi's weight)
     hold_s: float = 10.0  # seconds the chance must stay above the bar
+    afternoon_prob: float | None = None  # v1.2: the bar from 3 to 6 PM ET (the next stricter mode's), None = off
 
 
 TUNING: dict[str, Tuning] = {  # each coin's Standard rules (the table above)
@@ -146,6 +154,10 @@ def for_market(key: str, overrides: dict | None = None, mode: str = "standard") 
         rule = MODE_BARS.get(key, MODE_DEFAULT_BARS)[mode]
         bar, study = (rule if isinstance(rule, tuple) else (rule, base.study_s))
         base = dataclasses.replace(base, call_prob=float(bar), study_s=float(study))
+    nxt = NEXT_MODE.get(mode)
+    if nxt and _bool((overrides or {}).get("afternoon", True), "[tuning] afternoon", True):
+        rule = MODE_BARS.get(key, MODE_DEFAULT_BARS)[nxt]
+        base = dataclasses.replace(base, afternoon_prob=float(rule[0] if isinstance(rule, tuple) else rule))
     extra = _sections(overrides).get(key.lower())
     if not extra:
         return base
@@ -168,13 +180,14 @@ def for_market(key: str, overrides: dict | None = None, mode: str = "standard") 
     return dataclasses.replace(base, **vals)
 
 
-def apply(trading, tuning: Tuning, window_s: float | None = None, rules_tag: str = "v1"):
+def apply(trading, tuning: Tuning, window_s: float | None = None, rules_tag: str = "v1.2"):
     """Write a market's rules into its own copy of the trading settings. `window_s` (the demo's short simulated
     windows) scales the study period with the window, as the demo does for every other clock (and keeps the demo's
     shorter hold)."""
     trading.call_prob = float(tuning.call_prob)
     trading.late_call = bool(tuning.late_call)
     trading.call_blend_market = float(tuning.blend_market)
+    trading.afternoon_prob = None if tuning.afternoon_prob is None else float(tuning.afternoon_prob)
     trading.rules_tag = rules_tag
     if window_s is None:
         trading.study_s = float(tuning.study_s)

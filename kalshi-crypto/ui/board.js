@@ -119,7 +119,8 @@
     const held = rules.hold_s ? ` held ${rules.hold_s}s` : " (the first second it gets there)";
     f(card, "rules").textContent = rules.prob == null ? "" : `${tag ? tag + " rules" : "rules"}: calls at ${Math.round(rules.prob * 100)}%+${held} · studies ${mmss(rules.study_s)}` +
       (rules.late_call === false ? " · no lean calls" : ` · lean call at ${mmss(rules.deadline_s)} left`) +
-      (rules.blend_market ? ` · reads engine + Kalshi (Kalshi ${Math.round(rules.blend_market * 100)}%)` : "");
+      (rules.blend_market ? ` · reads engine + Kalshi (Kalshi ${Math.round(rules.blend_market * 100)}%)` : "") +
+      (rules.afternoon_prob ? ` · 3–6 PM ET: ${Math.round(rules.afternoon_prob * 100)}%+` : "");
     f(card, "recent").innerHTML = (r.recent || []).slice(0, 12).reverse().map((x) =>
       `<span class="c ${x.correct ? "w" : "l"}" title="${esc(x.ticker)} · ${esc(x.side)} · ${pct(x.p)}">${x.correct ? "✓" : "✗"}</span>`).join("");
   }
@@ -224,6 +225,9 @@
     const range = (m.lo < 0.5 && m.hi > 0.5) ? "crossing Up/Down" : `${Math.round(Math.min(loSide, hiSide) * 100)}–${Math.round(Math.max(loSide, hiSide) * 100)}% ${side}`;
     let t;
     if (call) t = `called ${call.side} at ${pct(call.p_side)} with ${mmss(call.seconds_left)} left · now ${side} ${Math.round(pSide * 100)}% · locked`;
+    // a locked call that has slid to under 60% is about a coin flip at Kalshi's price: buying more there broke even or
+    // lost on Jake's boards and on history (Nov 2026 check), so say so
+    if (call) { const pc = call.side === "UP" ? m.p_up : 1 - m.p_up; if (pc < 0.6) t += ` · now about a coin flip: don't add here`; }
     else if ((w.status || "").startsWith("no call")) t = `${w.status} · the meter only shows what the model sees`;
     else if (w.status === "studying") t = `studying · no call for ${mmss(w.study_left_s)} · last 30s ${range}`;
     else if (w.confirming_s != null && rules.hold_s) t = `over the ${Math.round(line * 100)}% line · confirming ${w.confirming_s}/${rules.hold_s}s`;

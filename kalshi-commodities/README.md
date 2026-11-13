@@ -22,6 +22,15 @@ records with the WTI, natural gas or gold coaches, and they keep running as they
 
 It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
+## v1.7.1: a dip note
+
+When a locked call slides under 60%, the card says "now about a coin flip: don't add here". On Jake's board, buying
+the called side at 50–60% with 4–7 minutes left won 54% of 225 times and lost about 4¢ a buy.
+
+The crypto board's 3–6 PM ET afternoon bar (crypto v1.2) was checked here too. Standard's calls in those hours won 83%
+of 112 (93-19) against 92% the rest of the day, but only in the second half of 15 Oct - 13 Nov; the first half showed no
+real gap. So it is not adopted on this board yet; Strict in those hours went 83-11.
+
 ## v1.7: PULL OUT warns while your side is still worth selling
 
 What Jake's board recorded from 12 to 23 Oct (all three modes run on the same windows, priced at Kalshi's ask with
@@ -255,7 +264,7 @@ phone out and get a new link.
 ## Setup (macOS, next to the other coaches)
 
 ```bash
-unzip -o ~/Downloads/kalshi-commodities-v1.7.zip -d ~
+unzip -o ~/Downloads/kalshi-commodities-v1.7.1.zip -d ~
 cd ~/kalshi-commodities
 source ~/.venv/bin/activate
 python -m cm15m probe     # first time: lists the 15-minute series and each live target (paste it to Claude)

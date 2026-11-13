@@ -54,6 +54,7 @@ class TradingCfg:
     call_min_left_s: float = 60.0  # and never a call with less than this left
     late_call: bool = True  # False = no lean call at the deadline: a window that never gets sure enough gets no call
     call_blend_market: float = 0.0  # > 0 = the call reads a log-odds blend with Kalshi's mid (Kalshi's weight)
+    afternoon_prob: float | None = None  # v1.2: the bar from 3 to 6 PM ET (the next stricter mode's), None = call_prob
     rules_tag: str = ""  # set = the card also keeps a record of the calls made since these rules first ran
     settle_lag_s: float = 0.0  # the settlement minute ends AT the close (the Stats check keeps watching)
     settle_avg_s: float = 60.0  # Kalshi settles on the average of the index's last 60 one-second prints before the close

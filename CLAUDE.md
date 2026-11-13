@@ -198,5 +198,6 @@ crypto event IS the settlement average (point at close-1 = settlement), so the d
 to it (`cx15m/feeds/calibrated.py`) and volatility is measured on it (`model.AvgVolEstimator`). No call during
 Kalshi's Thursday 3-5 AM ET maintenance. Per-coin bars (`cx15m/tuning.py`) were chosen walk-forward on 60 days of
 history: about 90.5% / 94.7% / 97.9% won on held-out days for Standard / Strict / Very strict. EDGE is only watched
-(`[board] edge = "watch"`) because it lost money on crypto history. v1.1 moves PULL OUT to 30% as on the commodities board (v1.7). See `kalshi-crypto/README.md`; tests:
+(`[board] edge = "watch"`) because it lost money on crypto history. v1.1 moves PULL OUT to 30% as on the commodities board (v1.7). v1.2 calls at the next stricter mode's bar
+from 3 to 6 PM ET (`cx15m/tuning.py` NEXT_MODE, `calls.CallTracker.bar`), where Jake's live calls lost about twice as often. See `kalshi-crypto/README.md`; tests:
 `cd kalshi-crypto && pytest`.
