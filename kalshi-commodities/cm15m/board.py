@@ -9,10 +9,12 @@ from __future__ import annotations
 import asyncio
 import copy
 import dataclasses
+import datetime as dt
 import json
 import logging
 import os
 import time
+import zoneinfo
 
 from . import tuning
 from .config import Config
@@ -52,6 +54,9 @@ class Board:
         self.pullout_store = PulloutStore(os.path.join(cfg.storage.data_dir, "pullouts.db"))
         self.pullouts: dict[str, PulloutTracker] = {}
         self.shadows: dict[str, dict[str, ShadowCalls]] = {}  # every mode on the same windows (cm15m/shadow.py)
+        self._spark: dict[str, tuple[str | None, list]] = {}  # v1.8: per card, (window ticker, [(ts, price)]) every SPARK_EVERY_S
+        self._today: dict = {"wins": 0, "losses": 0}
+        self._today_ts = 0.0
 
     # ------------------------------------------------------------------ mutes (per card, remembered)
     def _load_saved(self) -> dict:
@@ -210,7 +215,49 @@ class Board:
                 self._early_step(d)
             except Exception:
                 log.exception("desk %s early record failed", d.spec.key)
+            try:
+                self._spark_step(d, now)
+            except Exception:
+                log.exception("desk %s sparkline failed", d.spec.key)
+        if now - self._today_ts >= 10:
+            self._today_ts = now
+            try:
+                self._today = self._today_record(now)
+            except Exception:
+                log.exception("today's record failed")
         self.state = self._build_state()
+
+    SPARK_EVERY_S = 10.0  # v1.8: the card's sparkline, one point every 10 s over the window (at most ~90 points)
+    SPARK_MAX = 120
+
+    def _spark_step(self, d, now: float):
+        """The price over the current window for the card's sparkline (the board's own small buffer, any desk kind)."""
+        st = d.state
+        ticker = (st.get("market") or {}).get("ticker")
+        tick = st.get("tick")
+        key = d.spec.key
+        cur, pts = self._spark.get(key, (None, []))
+        if ticker != cur:
+            pts = []
+        if tick and tick.get("price") is not None and (not pts or now - pts[-1][0] >= self.SPARK_EVERY_S):
+            pts = (pts + [(now, float(tick["price"]))])[-self.SPARK_MAX:]
+        self._spark[key] = (ticker, pts)
+        st["spark"] = [p for _, p in pts]
+
+    def _today_record(self, now: float) -> dict:
+        """v1.8: the board's calls settled today (since midnight ET), all markets, for the TODAY tile."""
+        et = zoneinfo.ZoneInfo("America/New_York")
+        start = dt.datetime.fromtimestamp(now, et).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        wins = losses = 0
+        for d in self.desks:
+            store = self._window_store(d)
+            if store is None:
+                continue
+            n, w = store.conn.execute("SELECT COUNT(*), COALESCE(SUM(correct), 0) FROM calls "
+                                      "WHERE result IS NOT NULL AND ts >= ?", (start,)).fetchone()
+            wins += int(w or 0)
+            losses += int(n or 0) - int(w or 0)
+        return {"wins": wins, "losses": losses}
 
     def _edge_step(self, d, now: float, settle: bool):
         tr = self.edges.get(d.spec.key)
@@ -312,7 +359,7 @@ class Board:
                 "markets": markets, "record": total, "lines": lines, "edge": self.edge_store.record(recent=0),
                 "pullout": self.pullout_store.record(recent=0), "record_rules": rules_total, "modes": modes_total,
                 "mode": self.mode, "mode_labels": tuning.MODE_LABELS, "modes_on": tuning.enabled(self.cfg.tuning),
-                "early_left_s": self.early_left_s(),
+                "early_left_s": self.early_left_s(), "today": self._today,
                 "requests": None if self.sim is not None else (getattr(self.client, "requests", 0) or 0)
                 + sum(d.requests for d in self.desks if isinstance(d, EngineDesk)),
                 "throttled": self.limiter.throttled}

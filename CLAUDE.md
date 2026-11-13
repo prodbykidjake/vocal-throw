@@ -186,6 +186,7 @@ windows in the background (`cm15m/shadow.py`) so their live records can be compa
 with 6:30+ left, `tuning.EARLY_LEFT_S`) and BIG-GAP EDGE signals (12+ points, `edge.tier`) with their own live record.
 v1.7 moves the PULL OUT alarm from 3% to 30% (`cm15m/pullout.py` LEVEL; the 3% alarm fired only when the side was worth
 1-2 cents), chosen on Jake's live data and history; old alarms stay in the database but leave the record.
+v1.8 restyles the page to Jake's Figma design (`ui/`; the board adds each card's `spark` and a `today` record).
 See `kalshi-commodities/README.md`; tests: `cd kalshi-commodities && pytest`.
 
 `kalshi-crypto/` (package `cx15m`, port 8792) is the commodities board rebuilt for Kalshi's nine 15-minute crypto

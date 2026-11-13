@@ -22,6 +22,23 @@ records with the WTI, natural gas or gold coaches, and they keep running as they
 
 It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
+## v1.8: the new look
+
+The board now follows Jake's "Commodities Trading Terminal" design (Figma Make). The calls, EDGE, PULL OUT, the
+modes and every record work exactly as before; only the page changed:
+- **Header:** the next settlement countdown and a "LIVE · KALSHI" pill. A **live risk alert** appears in the middle when
+  any market has a PULL OUT; click it to jump to the card, or ✕ to hide it on this device (the card keeps flashing).
+- **Five tiles:** win rate, call record, **EDGE profit** (gold), PULL OUT record, and **today's** record (calls settled
+  since midnight ET).
+- **One bar** with the Standard / Strict / Very strict switch and every market's win rate.
+- **Each card:**
+  - the price with a faint chart of the window and the target as a dotted line;
+  - **THE CALL**, locked or settled;
+  - the model-confidence track (filled dot = the model, ring = Kalshi);
+  - EDGE and PULL OUT, which only stand out when they fire;
+  - the last 12 calls;
+  - **DETAILS**, which opens the records by mode, the rules, the EDGE record and the PULL OUT record.
+
 ## v1.7.1: a dip note
 
 When a locked call slides under 60%, the card says "now about a coin flip: don't add here". On Jake's board, buying
@@ -264,7 +281,7 @@ phone out and get a new link.
 ## Setup (macOS, next to the other coaches)
 
 ```bash
-unzip -o ~/Downloads/kalshi-commodities-v1.7.1.zip -d ~
+unzip -o ~/Downloads/kalshi-commodities-v1.8.zip -d ~
 cd ~/kalshi-commodities
 source ~/.venv/bin/activate
 python -m cm15m probe     # first time: lists the 15-minute series and each live target (paste it to Claude)

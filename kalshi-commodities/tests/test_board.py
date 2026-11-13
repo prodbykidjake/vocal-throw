@@ -99,6 +99,9 @@ async def test_seven_simulated_markets_each_get_a_card_with_its_own_scale(tmp_pa
     assert sorted(p.name for p in tmp_path.glob("*.db")) == sorted([f"{m.key}.db" for m in KNOWN] + ["edges.db", "pullouts.db"])
     assert all("edge" in m and "watch" in m["edge"] and "record" in m["edge"] for m in st["markets"])
     assert st["edge"]["wins"] + st["edge"]["losses"] >= 0
+    # v1.8: each card's sparkline of the window's price, and the board's TODAY record
+    assert all(isinstance(m.get("spark"), list) and 1 <= len(m["spark"]) <= board.SPARK_MAX for m in st["markets"])
+    assert st["today"] == {"wins": 0, "losses": 0}
     board.set_muted("gold", True)
     assert Board(cfg).muted == {"gold"}  # remembered across restarts
 
@@ -138,3 +141,21 @@ async def test_wti_gas_and_gold_run_their_own_coach_engines(tmp_path):
     n.notify("WTI 15m: BUY UP", "x"); n.notify("WTI 15m: settles UP", "y")
     CallsOnlyNotifier(Inner(), "wti", lambda k: True).notify("WTI 15m: settles DOWN", "z")
     assert sent == ["WTI 15m: settles UP"]
+
+
+def test_sparkline_samples_every_ten_seconds_and_restarts_with_each_window(tmp_path):
+    import types
+    cfg = Config()
+    cfg.storage.data_dir = str(tmp_path)
+    board = Board(cfg)
+    d = types.SimpleNamespace(spec=types.SimpleNamespace(key="gold"), state={"market": {"ticker": "A"}, "tick": {"price": 1.0}})
+    for i in range(200):
+        d.state["tick"] = {"price": 1.0 + i}
+        board._spark_step(d, 1000.0 + i)
+    assert len(d.state["spark"]) == 20 and d.state["spark"][:2] == [1.0, 11.0]
+    for i in range(3000):
+        board._spark_step(d, 2000.0 + i)
+    assert len(d.state["spark"]) == board.SPARK_MAX
+    d.state["market"] = {"ticker": "B"}
+    board._spark_step(d, 9000.0)
+    assert len(d.state["spark"]) == 1
