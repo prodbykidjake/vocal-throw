@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Natural gas 15-min coach</title>
+<link rel="stylesheet" href="/ui/vendor/uPlot.min.css">
+<link rel="stylesheet" href="/ui/style.css?v={{VERSION}}">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="logo">🔥</span>
+    <div>
+      <div class="title">Natural Gas 15 min <span id="ticker" class="muted mono"></span> <span class="muted mono version">v{{VERSION}}</span></div>
+      <div class="sub" id="series-line">connecting…</div>
+    </div>
+  </div>
+  <div class="countdown-wrap">
+    <div class="countdown" id="countdown">--:--</div>
+    <div class="sub" id="close-label"></div>
+  </div>
+  <div class="badges">
+    <span class="badge" id="feed-badge">feed</span>
+    <span class="badge" id="kalshi-badge">kalshi</span>
+    <span class="badge" id="warm-badge">warm-up</span>
+    <span class="badge hidden" id="event-badge"></span>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="live">Live</button>
+  <button class="tab" data-tab="history">History</button>
+  <button class="tab" data-tab="stats">Stats</button>
+  <button class="tab" data-tab="tradingview">TradingView</button>
+  <button class="tab" data-tab="rules">Rules &amp; setup</button>
+</nav>
+
+<main>
+<section id="tab-live" class="tab-pane active">
+  <div class="grid">
+    <div class="card prices">
+      <div class="price-block">
+        <div class="label">Target</div>
+        <div class="big mono" id="strike">--</div>
+        <div class="sub" id="strike-source"></div>
+      </div>
+      <div class="price-block">
+        <div class="label">Now</div>
+        <div class="big mono" id="price">--</div>
+        <div class="sub mono" id="delta"></div>
+      </div>
+      <div class="price-block">
+        <div class="label">Kalshi odds</div>
+        <div class="odds"><span class="up" id="odds-up">Up --</span><span class="down" id="odds-down">Down --</span></div>
+        <div class="sub mono" id="book"></div>
+      </div>
+      <div class="price-block">
+        <div class="label">Model</div>
+        <div class="odds"><span class="up" id="model-up">Up --</span><span class="down" id="model-down">Down --</span></div>
+        <div class="sub" id="model-sub"></div>
+      </div>
+    </div>
+
+    <div class="card" id="signal-card">
+      <div class="signal-head">
+        <span class="pill" id="signal-action">WAIT</span>
+        <span id="signal-headline" class="headline">waiting for data…</span>
+      </div>
+      <ul id="signal-details" class="details"></ul>
+      <div class="row hidden" id="plan-actions">
+        <button type="button" id="plan-buy">I bought this plan</button>
+        <span class="sub" id="plan-status"></span>
+      </div>
+      <div class="sub" id="signal-triggers"></div>
+    </div>
+
+    <div class="card chart-card">
+      <div class="card-title">Natural gas vs target <span class="muted" id="chart-note"></span></div>
+      <div id="chart"></div>
+    </div>
+
+    <div class="card" id="call-card">
+      <div class="card-title">Settlement call <span class="muted">(one Up/Down prediction per window, locked once made, scored when Kalshi settles it)</span></div>
+      <div class="call-box" id="call-box">waiting for the window…</div>
+      <div class="meter hidden" id="call-meter">
+        <div class="meter-labels"><span class="down">◀ DOWN</span><span id="meter-read" class="meter-read">--</span><span class="up">UP ▶</span></div>
+        <div class="meter-track">
+          <div class="meter-band" id="meter-band"></div>
+          <div class="meter-fill" id="meter-fill"></div>
+          <div class="meter-line" id="meter-line-down"></div>
+          <div class="meter-line" id="meter-line-up"></div>
+          <div class="meter-mid"></div>
+          <div class="meter-mkt" id="meter-mkt" title="Kalshi's odds"></div>
+        </div>
+        <div class="sub center" id="meter-note"></div>
+      </div>
+      <div class="sub center" id="call-sub"></div>
+      <div class="call-record" id="call-record">Wins: 0 | Losses: 0</div>
+      <div class="sub center" id="call-bench"></div>
+      <div class="call-recent" id="call-recent"></div>
+    </div>
+
+    <div class="card" id="position-card">
+      <div class="card-title">Your position <span class="muted">(tell the coach what you bought; it tracks it live)</span></div>
+      <div id="pos-entry">
+        <div class="row side-row" id="side-buttons">
+          <button type="button" class="side-btn up" data-side="UP">UP</button>
+          <button type="button" class="side-btn down" data-side="DOWN">DOWN</button>
+        </div>
+        <form id="pos-form" class="row hidden">
+          <span class="pill" id="pos-side-label">UP</span>
+          <label class="inline">at <input name="price_cents" type="number" step="0.1" min="0.1" max="99.9" class="short"> ¢</label>
+          <input name="amount" type="number" step="0.01" min="0.01" placeholder="Purchase Amount $" class="amount" required>
+          <button type="submit">Enter</button>
+          <button type="button" id="pos-back" class="ghost">back</button>
+        </form>
+      </div>
+      <div id="position-open" class="hidden">
+        <div class="scalp-box" id="scalp-box">HOLD</div>
+        <div class="sub center" id="scalp-sub"></div>
+        <div class="pos-grid">
+          <div><div class="label">Position</div><div class="big2 mono" id="pos-shares">--</div><div class="sub" id="pos-entry-text"></div></div>
+          <div><div class="label">Sell price now</div><div class="big2 mono" id="pos-bid">--</div><div class="sub" id="pos-bid-sub"></div></div>
+          <div><div class="label">Cash out</div><div class="big2 mono" id="pos-cash">--</div><div class="sub mono" id="pos-pnl"></div></div>
+        </div>
+        <div class="row">
+          <button type="button" id="sold-now">I sold at the bid</button>
+          <form id="close-form" class="row">
+            <input name="price_cents" type="number" step="0.1" min="0" max="100" placeholder="sold at ¢" class="short" required>
+            <button type="submit">I sold at this</button>
+          </form>
+          <button type="button" id="cancel-pos" class="ghost">remove</button>
+        </div>
+      </div>
+      <div class="sub" id="paper-line"></div>
+    </div>
+
+    <div class="card" id="log-card">
+      <div class="card-title">Log</div>
+      <ul id="events" class="events"></ul>
+    </div>
+  </div>
+</section>
+
+<section id="tab-history" class="tab-pane">
+  <div class="card">
+    <div class="card-title">Windows</div>
+    <table id="history-table" class="table">
+      <thead><tr><th>Close (ET)</th><th>Target</th><th>Result</th><th>Model Up @10m</th><th>@3m</th><th>Market Up @close</th><th>Settled at / feed err</th><th>Buys</th><th>Paper P&amp;L</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <div class="card-title">Plans (every committed call, and how it ended)</div>
+    <table id="plans-table" class="table">
+      <thead><tr><th>Window</th><th>Side</th><th>Limit</th><th>$</th><th>Target</th><th>Tier</th><th>Ended</th><th>Best bid</th><th>Hit?</th><th>If taken</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <div class="card-title">Paper trades (what the coach would have done)</div>
+    <table id="paper-table" class="table">
+      <thead><tr><th>Window</th><th>Side</th><th>Entry</th><th>Size</th><th>Exit</th><th>Reason</th><th>P&amp;L</th><th>Conf.</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <div class="card-title">Your reported trades</div>
+    <table id="pos-table" class="table">
+      <thead><tr><th>Window</th><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>P&amp;L</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="tab-stats" class="tab-pane">
+  <div class="grid two">
+    <div class="card"><div class="card-title">Is the model any good? (Brier score, lower is better, 0.25 = coin flip)</div><div id="brier"></div></div>
+    <div class="card"><div class="card-title">Calibration (when it says X%, how often Up?)</div><div id="calibration"></div></div>
+    <div class="card"><div class="card-title">Paper P&amp;L by confidence</div><div id="paper-stats"></div></div>
+    <div class="card"><div class="card-title">Plans: did the calls work?</div><div id="plan-stats"></div></div>
+    <div class="card"><div class="card-title">Learner</div><div id="learner"></div></div>
+    <div class="card"><div class="card-title">Volatility: forecast vs what really happened (learned by hour)</div><div id="volprofile"></div></div>
+  </div>
+</section>
+
+<section id="tab-tradingview" class="tab-pane">
+  <div class="card">
+    <div class="card-title">TradingView <span class="muted" id="tv-note">(to look at; it does not feed the model, which uses Kalshi's own settlement price)</span></div>
+    <div id="tv-chart"></div>
+  </div>
+</section>
+
+<section id="tab-rules" class="tab-pane">
+  <div class="grid two">
+    <div class="card"><div class="card-title">Series &amp; settlement (from Kalshi's API)</div><pre id="rules-series" class="pre"></pre></div>
+    <div class="card"><div class="card-title">Market rules text</div><pre id="rules-text" class="pre"></pre></div>
+    <div class="card"><div class="card-title">Running config</div><pre id="rules-config" class="pre"></pre></div>
+    <div class="card"><div class="card-title">How to read this</div>
+      <ul class="details">
+        <li><b>Target</b> is the natural gas price when the window opened. Up pays if the price at the close is at or above it.</li>
+        <li><b>Model</b> = chance the price ends above target given the gap, time left and recent volatility, nudged by what it has learned from past windows.</li>
+        <li><b>Edge</b> = model chance − contract price − Kalshi fee. The coach only says BUY when the edge clears your minimum.</li>
+        <li><b>WAIT</b> is the normal state. The line under it says exactly what would turn it into a trade.</li>
+        <li>Paper trades are what the coach would have done. Compare them with your own before trusting it.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+</main>
+
+<script src="/ui/vendor/uPlot.iife.min.js"></script>
+<script src="/ui/app.js?v={{VERSION}}"></script>
+</body>
+</html>

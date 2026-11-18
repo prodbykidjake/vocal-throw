@@ -1,0 +1,10 @@
+# local runtime state: never commit
+data/
+config.toml
+*.pem
+*.key
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+fixtures/probe-*/

@@ -1,0 +1,86 @@
+# Copy to config.toml (config.toml is git-ignored). Every key is optional; these are the defaults.
+
+[kalshi]
+base_url = "https://api.elections.kalshi.com/trade-api/v2"
+series_ticker = "KXGOLD15M"
+poll_interval_s = 1.0
+
+[feed]
+source = "kalshi_live"          # kalshi_live = Kalshi's own live Pyth series (what it settles on) | hyperliquid | sim
+fallback = ""                   # "hyperliquid" uses its xyz:GOLD perp when Kalshi's series is stale (off until its gap to Pyth is measured)
+hyperliquid_dex = "xyz"         # trade.xyz HIP-3 markets live on the "xyz" dex
+hyperliquid_symbol = ""         # leave blank to auto-detect the gold market (e.g. "xyz:GOLD")
+stale_after_s = 8.0             # feed older than this = "stale", no new entries (Hyperliquid updates every 1-3 s)
+tradingview_symbol = "TVC:GOLD"  # the TradingView tab (to look at only); e.g. "COMEX:GC1!" for the front-month future
+
+[trading]
+bankroll = 200.0                # dollars you are willing to put at risk in total
+edge_min = 0.05                 # required (model prob - ask - fee) before a BUY, in probability points
+kelly_fraction = 0.25           # fraction of full Kelly to size with
+max_contracts = 20
+max_stake_fraction = 0.10       # never suggest more than this share of bankroll on one window
+confident_margin = 0.20         # |p - 0.5| needed to call something "confident"
+min_warmup_minutes = 30         # feed history needed before any BUY signal
+no_entry_first_s = 60           # (legacy) study_s below wins when it is longer
+study_s = 180                   # v10: no calls in a window's first 3 minutes; the app studies the window instead
+vol_profile = true              # v10: correct the volatility forecast by what each ET hour has really done (learned)
+vol_profile_k = 8               # windows at an hour before its correction counts half
+event_prior = 1.5               # assumed extra movement in report windows until they are measured
+event_entries = "block"         # "block" = no new calls in a window holding jobless claims / an FOMC decision / an extra event | "allow"
+extra_events = []               # releases to treat as reports, ET: ["2026-11-13 08:30 CPI", "2026-11-06 08:30 Jobs report"]
+# v10: the settlement call card (one Up/Down prediction per window, locked once made, scored at settlement)
+call_prob = 0.72                # call as soon as the model gives one side at least this ... (the WTI coach's tuned value; retune on gold windows)
+call_hold_s = 10                # ... for this many seconds in a row, after the study period
+call_deadline_s = 120           # otherwise call its best lean when this many seconds are left
+call_join_min_s = 300           # no call for a window the app first saw with less than this left (no free wins)
+call_min_left_s = 60            # and never a call with less than this left
+late_entry_s = 60               # in the last N seconds only very lopsided entries are allowed
+late_entry_min_z = 2.0
+hold_to_settle_prob = 0.90      # with <= 2 min left and p >= this: hold, don't pay to exit
+stop_prob = 0.35                # a plan is cancelled when the model's chance for its side drops to this (or 60% of what it was)
+profit_target = 0.20            # (legacy) fallback sell distance when no price paths can be simulated
+max_spread = 0.10               # yes_ask - yes_bid wider than this = don't trade
+settle_lag_s = 0                # Kalshi settles on the price AT the close (as measured on WTI); the Stats tab checks it for gold too
+tie_adj = 0.005                 # half a cent: a tie pays Up with cent targets ($4,012.35); set from `probe`
+
+# committed trade plans and dollar sizing (scalping)
+unit_dollars = 10               # one unit; lean = half a unit, confident = 1, strong = 2, near-certain = 3
+learn_unit = false              # true: use the median of your last reported buys as the unit
+max_trade_dollars = 50          # never suggest more than this on one window
+min_scalp_cents = 8             # a plan needs at least this much room between the limit and the sell target
+confirm_s = 3                   # a setup must persist this long before it becomes a plan
+min_hold_s = 20                 # within this, only a hard invalidation cancels a plan
+miss_margin_cents = 4           # ask this far past the limit ...
+miss_seconds = 10               # ... for this long = missed
+cooldown_s = 30                 # after a missed/cancelled plan, before the next one
+settle_advice = "when_clearly_worse"   # or "never": always give a sell price
+
+# forward-looking exits: the position card says "HOLD · SELL BETWEEN low–high" with the chance of each,
+# from simulated price paths to the close. It only says SELL at a loss when the loss is nearly certain.
+zone_low_prob = 0.50            # low end of the sell zone = price reached with this probability before the close
+zone_high_prob = 0.20           # high end = price reached with this probability
+zone_refresh_s = 30             # re-plan the zone at most this often (up freely; down only when the old low is unlikely)
+zone_drop_prob = 0.25           # ... "unlikely" = under this chance of being reached
+zone_exclude_last_s = 30        # the zone ignores the last N s of trading (thin, binary)
+give_up_prob = 0.10             # sell at a loss only when the chance of getting back to breakeven is at or under this
+give_up_min_cash = 1.0          # ... and selling still returns at least this many dollars (else: lottery ticket)
+plan_min_chance = 0.30          # a plan's sell target must have at least this chance of being reached
+scalp_calls = true              # call cheap contracts on the chance of a sell level being reached (no settlement edge needed)
+scalp_max_ask = 0.55            # only contracts at or under this price get scalp calls
+scalp_min_chance = 0.40         # the sell level must have at least this simulated chance of being reached
+scalp_min_score = 0.50          # chance + tilt (model vs market, recent price action) must reach this
+mc_paths = 2000                 # simulated price paths per evaluation
+basis_min_windows = 6           # apply a signed feed correction only after this many measured windows ...
+basis_min_t = 1.5               # ... and only when the bias is this many standard errors from zero
+
+[server]
+host = "127.0.0.1"
+port = 8789                     # WTI 8787, natural gas 8788; all three can run at once
+open_browser = true
+
+[notify]
+desktop = true                  # macOS Notification Center via osascript
+sound = true                    # afplay system sound on BUY/SELL
+
+[storage]
+db_path = "data/gold15m.db"
