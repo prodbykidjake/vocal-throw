@@ -1,49 +1,31 @@
-"""Per-market settlement-call rules: v1.4's engines, and (v1.5) a strictness switch with three modes.
+"""Per-pair settlement-call rules and the strictness switch (Standard / Strict / Very strict).
 
-v1.5, what testing found. Seven per-market recipes were tested on the same two months, walk-forward (choices made only
-on earlier days, scored on 3 later blocks of days at the same share of windows called as v1.4): a per-market mix of
-the engine and Kalshi's price, momentum, volatility-so-far, time-left terms, holds of 0-20 s. Once calls were held to
-the same timing and the same last-minute cut-off, none of them beat v1.4 (changes of -0.9 to +0.7 points); what looked
-like gains came from calling later, from one-second spikes, or from the very last eligible second. So v1.4's engines
-stay. What reliably buys accuracy is calling fewer windows: the same rule with a higher bar per market.
+How they were chosen. Kalshi history for each pair (23 Sep - 18 Nov 2026 for EUR/USD, GBP/USD and USD/JPY, 3,716
+windows each; 7 Oct - 18 Nov for AUD/USD and USD/CAD, 2,777 each; USD/MXN has had no windows) was replayed second by
+second through this board's own model (fx15m/model.py with its learned volatility and learner, the report-window block
+included), with Kalshi's 1-minute quotes for its odds. For each pair and mode the lowest bar (and a study time of
+3:00, 4:00 or 5:00) whose calls won the mode's target on the first 60% of days was kept: Standard 90%, Strict 94%,
+Very strict 97%. They were then scored on the last 40% of days, never used to choose them:
 
-  mode         windows called   wins (held-out blocks)   called with      typical ask   bar
-  Standard     ~85%             89-91%                   ~6:20 left       ~90c          v1.4's (85-88%)
-  Strict       ~75%             93.5-95%                 ~5:00 left       ~93c          per market, 89-94%
-  Very strict  ~65%             96.5-98%                 ~3:50 left       ~96c          per market, 94-97.5%
+  pair      Standard                    Strict                      Very strict
+  EUR/USD   86%, 5:00: 90.4%, 88% called  91%, 5:00: 93.6%, 80%       96%, 3:00: 97.2%, 69%
+  GBP/USD   86%, 4:00: 90.3%, 87%         92%, 3:00: 93.7%, 78%       96%, 3:00: 96.5%, 68%
+  USD/JPY   86%, 5:00: 90.4%, 86%         93%, 3:00: 94.9%, 76%       98%, 3:00: 98.4%, 61%
+  AUD/USD   87%, 3:00: 90.3%, 86%         92%, 3:00: 94.3%, 79%       97%, 3:00: 97.5%, 67%
+  USD/CAD   83%, 3:00: 87.0%, 91%         90%, 3:00: 91.7%, 82%       96%, 3:00: 96.5%, 70%
+  all five  89.8% won, 88% called         93.7%, 79%                  97.2%, 67%
 
-Profit buying the call at the ask stays about even at every level (Kalshi's price rises with the certainty): the
-switch buys trust in the call, not an edge. EDGE (fx15m/edge.py) is still the buy signal. The board runs all three
-modes on the same windows in the background (fx15m/shadow.py) and shows their records side by side, so the choice can
-be made on live results.
+USD/CAD fell short of its targets on the later days (its choosing days were calmer): Strict or Very strict suits it.
+Kalshi prices these markets tightly: bought at the ask the calls lost 1.3c (Standard), 1.0c (Strict) and 0.1c (Very
+strict) a call on those days. The calls are forecasts you can trust, not an edge on Kalshi's price.
 
-v1.4: fewer calls, surer calls.
+Checked and not adopted: the crypto board's stricter 3-6 PM ET bar (FX calls in those hours did about as well as the
+rest, better on some pairs, worse on others); EDGE as a buy signal (82% won but -1.5c a signal on the later days, so
+it runs as a test with no alerts, [board] edge = "watch"). PULL OUT (30%) was right on 347 of 436 alarms (80%).
 
-Why: on two months of Kalshi history (Aug-Oct 2026, 17,023 windows over the seven markets) every market's win rate
-rose with the call bar, in both halves of the data, while the late "lean" calls at 2:00 left won only 63-73%. The
-rules below were chosen on each market's first 60% of days. Replayed through the board's own code (these desks and
-engines, the report-window block included), the last 40% of days, never used to choose them, went:
-
-  market      bar   study  extra                                  win rate, held-out days   windows called
-  WTI         88%   5:00                                          90.5%  (v1.3: 76.4%)      83%
-  Gold        88%   4:00                                          91.4%  (78.0%)            84%
-  Silver      88%   5:00                                          89.3%  (77.6%)            87%
-  Copper      88%   5:00                                          90.7%  (77.0%)            84%
-  Natural gas 85%   4:00   reads a blend with Kalshi's mid         90.9%  (77.9%)            82%
-                           (log-odds, Kalshi's weight 0.65: Kalshi's price forecast gas better than the engine alone)
-  Palladium   85%   5:00                                          89.8%  (78.0%)            87%
-  Platinum    85%   5:00                                          88.8%  (80.8%)            90%
-  all seven                                                       90.4%  (77.8%)            85%
-  (new)       85%   5:00
-
-The price of that: calls come later (median 6:27 left instead of 10:17) when Kalshi's ask is higher (about 90c instead
-of 78c), so bought at the ask they stay about break-even (+0.1c a call on the held-out days; -0.8c before). EDGE
-(fx15m/edge.py) is still the buy signal.
-
-Every market: the 10-second hold, no call in the last minute, none for a window joined with under 5:00 left, and no
-call in a window that holds a scheduled report (the coach engines now skip those too: windows opening at a release
-won only 64%). Override any value per market in config.toml, e.g. [tuning.gold] call_prob = 0.90; [tuning]
-enabled = false goes back to v1.3's rules (72% bar, 3:00 study, a lean call at 2:00 left).
+Every pair: the 10-second hold, no lean call, no call in the last minute or for a window joined with under 5:00 left,
+and none in a window holding a scheduled U.S. release (fx15m/markets.py). Override any value per pair in config.toml,
+e.g. [tuning.usdcad] call_prob = 0.88; [tuning] enabled = false falls back to the defaults (85%, 5:00).
 """
 from __future__ import annotations
 
@@ -57,7 +39,13 @@ MODES = ("standard", "strict", "very_strict")
 MODE_LABELS = {"standard": "Standard", "strict": "Strict", "very_strict": "Very strict"}
 MODE_TAGS = {"standard": "v1", "strict": "strict", "very_strict": "very-strict"}  # tags the calls each mode makes
 # each pair's Strict / Very strict bars (filled in from the history replays; see the docstring)
-MODE_BARS: dict[str, dict[str, float | tuple[float, float]]] = {}
+MODE_BARS: dict[str, dict[str, float | tuple[float, float]]] = {
+    "eurusd": {"strict": (0.91, 300.0), "very_strict": (0.96, 180.0)},
+    "gbpusd": {"strict": (0.92, 180.0), "very_strict": (0.96, 180.0)},
+    "usdjpy": {"strict": (0.93, 180.0), "very_strict": (0.98, 180.0)},
+    "audusd": {"strict": (0.92, 180.0), "very_strict": (0.97, 180.0)},
+    "usdcad": {"strict": (0.90, 180.0), "very_strict": (0.96, 180.0)},
+}
 MODE_DEFAULT_BARS = {"strict": 0.93, "very_strict": 0.97}  # a market Kalshi adds later
 # v1.6: a call made with this much left is EARLY. In Strict about a third of the calls come that early (median ~8:25 left);
 # they won as often as the later ones (94.7% vs 95.3%) at a lower ask (~93c vs ~95c): +1.4c a call against +0.3c
@@ -73,7 +61,13 @@ class Tuning:
     hold_s: float = 10.0  # seconds the chance must stay above the bar
 
 
-TUNING: dict[str, Tuning] = {}
+TUNING: dict[str, Tuning] = {
+    "eurusd": Tuning(call_prob=0.86, study_s=300.0),
+    "gbpusd": Tuning(call_prob=0.86, study_s=240.0),
+    "usdjpy": Tuning(call_prob=0.86, study_s=300.0),
+    "audusd": Tuning(call_prob=0.87, study_s=180.0),
+    "usdcad": Tuning(call_prob=0.83, study_s=180.0),
+}
 DEFAULT = Tuning()
 
 

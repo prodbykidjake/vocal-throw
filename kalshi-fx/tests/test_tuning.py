@@ -62,7 +62,7 @@ def test_no_lean_call_at_the_deadline_but_a_sure_call_still_counts_until_the_las
     ct2 = tuned("usdcad")
     for i in range(900):
         assert ct2.step(t0 + i, "W2", pred(0.80, 0.78), 900 - i, i, 300) is None
-    assert ct2.watch["status"] == "no call this window (never 85% sure for 10s)"
+    assert ct2.watch["status"] == "no call this window (never 83% sure for 10s)"
 
 
 def test_a_coin_can_call_on_its_blend_with_kalshi():
@@ -245,3 +245,14 @@ def test_the_demo_scales_the_early_line_with_its_short_windows(tmp_path):
     cfg = Config()
     cfg.storage.data_dir = str(tmp_path)
     assert Board(cfg, sim={"window_s": 120}).early_left_s() == 52.0  # 6:30 of 15:00 = 52 s of a 2-minute window
+
+def test_each_pair_has_its_own_rules_from_history():
+    assert set(tuning.TUNING) == set(tuning.MODE_BARS) == {"eurusd", "gbpusd", "usdjpy", "audusd", "usdcad"}
+    eur, cad = tuning.for_market("eurusd"), tuning.for_market("usdcad")
+    assert (eur.call_prob, eur.study_s) == (0.86, 300.0) and (cad.call_prob, cad.study_s) == (0.83, 180.0)
+    jpy = tuning.for_market("usdjpy", mode="very_strict")
+    assert (jpy.call_prob, jpy.study_s) == (0.98, 180.0)
+    for key in ("eurusd", "gbpusd", "usdjpy", "audusd", "usdcad", "usdmxn"):
+        std, st, vs = (tuning.for_market(key, mode=m) for m in tuning.MODES)
+        assert std.call_prob < st.call_prob < vs.call_prob <= 0.99 and not std.late_call and std.hold_s == 10
+    assert tuning.for_market("usdmxn") == tuning.DEFAULT  # no history yet: the defaults

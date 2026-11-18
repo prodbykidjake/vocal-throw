@@ -202,3 +202,11 @@ history: about 90.5% / 94.7% / 97.9% won on held-out days for Standard / Strict 
 (`[board] edge = "watch"`) because it lost money on crypto history. v1.1 moves PULL OUT to 30% as on the commodities board (v1.7). v1.2 calls at the next stricter mode's bar
 from 3 to 6 PM ET (`cx15m/tuning.py` NEXT_MODE, `calls.CallTracker.bar`), where Jake's live calls lost about twice as often. See `kalshi-crypto/README.md`; tests:
 `cd kalshi-crypto && pytest`.
+
+`kalshi-fx/` (package `fx15m`, port 8794) is the commodities board rebuilt for Kalshi's 15-minute currency pairs (KXEURUSD15M,
+KXGBPUSD15M, KXUSDJPY15M, KXAUDUSD15M, KXUSDCAD15M, KXUSDMXN15M; Financials category, only `KX<6 letters>15M` pairs). They
+settle on Pyth's price at the close (target = Pyth at the open), read from Kalshi's keyless `live_data` like the
+commodities; moves are in pips (`markets.Scale.pip`). No call in a window holding U.S. jobless claims, the first-Friday
+jobs report, CPI or FOMC (`fx15m/markets.py`). Per-pair bars (`fx15m/tuning.py`) were chosen walk-forward on Kalshi
+history (Sep-Nov 2026): about 89.8% / 93.7% / 97.2% won on held-out days. EDGE is watch-only (`[board] edge = "watch"`)
+because it lost money on held-out days. See `kalshi-fx/README.md`; tests: `cd kalshi-fx && pytest`.

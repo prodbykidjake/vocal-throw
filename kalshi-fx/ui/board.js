@@ -306,8 +306,8 @@
   }
 
   // the strictness switch: Standard / Strict / Very strict, each with its record on the same windows
-  const MODE_HELP = { standard: "about 85% of windows called, ~90% right", strict: "about 75% called, ~94% right, calls ~1:20 later",
-    very_strict: "about 65% called, ~97% right, calls ~2:30 later" };
+  const MODE_HELP = { standard: "about 88% of windows called, ~90% right on held-out history", strict: "about 79% called, ~94% right, calls ~1:00 later",
+    very_strict: "about 67% called, ~97% right, calls ~2:30 later" };
   function renderModes(s) {
     const box = $("modes"), cur = s.mode || "standard", labels = s.mode_labels || {}, tot = s.modes || {};
     box.classList.toggle("hidden", s.modes_on === false);  // [tuning] enabled = false: v1.3's rules, no switch
@@ -318,7 +318,7 @@
       const rec = t && n ? ` <span class="mode-rec">${Math.round(100 * t.wins / n)}%</span>` : "";
       return `<button type="button" class="mode-btn${k === cur ? " on" : ""}" data-mode="${k}" title="${esc(MODE_HELP[k])}${t ? ` · ${t.wins || 0}–${t.losses || 0}` : ""}">${esc(labels[k] || k)}${rec}</button>`;
     }).join("");
-    $("mode-note").textContent = `${MODE_HELP[cur]} · records: all three modes on the same windows since v1.5`;
+    $("mode-note").textContent = `${MODE_HELP[cur]} · records: all three modes on the same windows`;
   }
 
   // a PULL OUT anywhere on the board: the live risk alert in the header (the card may be scrolled away, on a phone).
