@@ -22,6 +22,11 @@ records with the WTI, natural gas or gold coaches, and they keep running as they
 
 It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
+## v1.8.2: back to the original look
+
+The v1.8 restyle is retired: the board is back to the page from v1.7.1 (the calls, EDGE, PULL OUT and records were
+never changed by it).
+
 ## v1.8.1: smaller cards, louder calls
 
 - **Cards** are about half the size (4 to a row on a laptop screen).
@@ -288,7 +293,7 @@ phone out and get a new link.
 ## Setup (macOS, next to the other coaches)
 
 ```bash
-unzip -o ~/Downloads/kalshi-commodities-v1.8.1.zip -d ~
+unzip -o ~/Downloads/kalshi-commodities-v1.8.2.zip -d ~
 cd ~/kalshi-commodities
 source ~/.venv/bin/activate
 python -m cm15m probe     # first time: lists the 15-minute series and each live target (paste it to Claude)
