@@ -20,6 +20,11 @@ against 136-22 (86%), +9.5c for the normal ones (Oct 12-15, all seven markets). 
 once a minute, so a big gap there was often just a quote that had not caught up yet; live, with the book read every
 second, a big gap usually means Kalshi's price knows something the model does not. So the card marks a signal 12+
 points over the ask as a BIG GAP with that tier's own live record, and no size advice; the signal itself is unchanged.
+
+v1.9: EDGE is only watched by default ([board] edge = "watch": the box and its record stay, no buy alerts). Live it went
++7.3c a signal from 12 to 23 Oct, then -6.3c from 29 Oct to 13 Nov and +5.9c from 13 to 25 Nov: +0.3c over the 233
+signals since 29 Oct. Replayed on the later days of 60 days of history (28 Sep - 27 Nov, all eight markets) it lost
+about 2c a signal. [board] edge = "on" brings the buy signal back.
 """
 from __future__ import annotations
 

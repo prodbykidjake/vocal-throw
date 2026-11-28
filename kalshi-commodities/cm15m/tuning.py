@@ -62,10 +62,21 @@ MODE_BARS = {
     "gold": {"strict": 0.939, "very_strict": 0.973},
     "silver": {"strict": 0.930, "very_strict": 0.971},
     "copper": {"strict": 0.936, "very_strict": 0.975},
-    "natgas": {"strict": 0.892, "very_strict": 0.939},
+    "natgas": {"strict": 0.91, "very_strict": 0.96},  # v1.9 (see below)
     "palladium": {"strict": 0.909, "very_strict": 0.953},
     "platinum": {"strict": 0.925, "very_strict": 0.962},
+    "brent": {"strict": 0.93, "very_strict": 0.98},  # v1.9 (see below)
 }
+# v1.9 check-up (28 Nov). 60 days of Kalshi history per market (28 Sep - 27 Nov; Brent from 21 Oct) replayed second by
+# second through each market's own model (the WTI, natural gas and gold engines' models, the board's desk for the
+# rest), rules chosen on the first 60% of days and scored on the last 40%. The rules above held up on gold, silver,
+# copper, palladium and platinum (no fresh choice beat them on the later days). Two changes did:
+#   natural gas (with its Kalshi blend): Strict 0.892 -> 0.91: 92.9% -> 93.8% won on the later days (74% -> 70% of
+#     windows called); Very strict 0.939 -> 0.96: 95.8% -> 97.6% (63% -> 57%), now meeting the modes' targets;
+#   Brent (defaults until now): Standard 85%/5:00 -> 87%/3:00: 88.2% -> 89.2% (89% -> 86%); Very strict 0.97 -> 0.98:
+#     95.4% -> 96.4% (68% -> 64%); Strict stays 0.93 (93.9%).
+# WTI ran under its targets on the later days (89.0% / 92.5% / 94.9%) and no bar or study time fixed it: Very strict
+# is the mode for it.
 MODE_DEFAULT_BARS = {"strict": 0.93, "very_strict": 0.97}  # a market Kalshi adds later
 # v1.6: a call made with this much left is EARLY. In Strict about a third of the calls come that early (median ~8:25 left);
 # they won as often as the later ones (94.7% vs 95.3%) at a lower ask (~93c vs ~95c): +1.4c a call against +0.3c
@@ -89,6 +100,7 @@ TUNING: dict[str, Tuning] = {
     "natgas": Tuning(call_prob=0.85, study_s=240.0, blend_market=0.65),
     "palladium": Tuning(call_prob=0.85, study_s=300.0),
     "platinum": Tuning(call_prob=0.85, study_s=300.0),
+    "brent": Tuning(call_prob=0.87, study_s=180.0),  # v1.9: its own rules (it had the defaults)
 }
 DEFAULT = Tuning()
 

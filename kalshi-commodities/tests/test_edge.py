@@ -101,3 +101,31 @@ def test_the_record_splits_by_gap_size_and_a_signal_carries_its_tier():
     assert (t["normal"]["n"], t["big"]["wins"], t["big"]["losses"], t["big"]["n"]) == (1, 2, 1, 3)
     want = sum((1.0 if up else 0.0) - a - taker_fee_per_contract(a) for a, up in ((0.65, True), (0.64, False), (0.55, True)))
     assert abs(t["big"]["pnl"] - round(want, 2)) < 1e-9
+
+
+def test_edge_is_watched_not_alerted_by_default_since_v19(tmp_path):
+    import asyncio
+
+    from cm15m.board import Board
+    from cm15m.config import Config
+
+    cfg = Config()
+    cfg.storage.data_dir = str(tmp_path)
+    cfg.notify.desktop = cfg.notify.sound = False
+    cfg.board.markets = ["silver"]
+    board = Board(cfg, sim={"window_s": 900, "warmup_minutes": 0})
+    asyncio.run(board.build())
+    sent = []
+    board.notifier.notify = lambda title, text, sound="Glass": sent.append(title)
+    d = board.desk("silver")
+    sig = {"side": "UP", "p": 0.9, "ask": 0.8, "gap": 0.1, "minute": 4, "tier": "normal"}
+    board.edges["silver"].step = lambda now, st: dict(sig)
+    assert board.edge_mode() == "watch"
+    board._edge_step(d, 1000.0, False)
+    assert sent == [] and "watch" in d.state["edge"]  # recorded on the card, no buy alert
+    cfg.board.edge = "on"  # [board] edge = "on" brings back the buy signal
+    board._edge_step(d, 1001.0, False)
+    assert sent == ["SILVER EDGE: BUY UP"]
+    cfg.board.edge = "off"
+    board._edge_step(d, 1002.0, False)
+    assert d.state["edge"] == {"off": True} and board._build_state()["edge_mode"] == "off"

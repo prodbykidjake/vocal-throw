@@ -187,7 +187,8 @@ with 6:30+ left, `tuning.EARLY_LEFT_S`) and BIG-GAP EDGE signals (12+ points, `e
 v1.7 moves the PULL OUT alarm from 3% to 30% (`cm15m/pullout.py` LEVEL; the 3% alarm fired only when the side was worth
 1-2 cents), chosen on Jake's live data and history; old alarms stay in the database but leave the record.
 v1.8 restyled the page to Jake's Figma design; v1.8.2 restores the v1.7.1 page at his request (the board still adds
-each card's `spark` and a `today` record to its state).
+each card's `spark` and a `today` record to its state). v1.9 re-tunes natural gas's Strict/Very strict bars and gives Brent
+its own rules (walk-forward on Sep-Nov history) and makes EDGE watch-only by default (`[board] edge`), as it stopped paying.
 See `kalshi-commodities/README.md`; tests: `cd kalshi-commodities && pytest`.
 
 `kalshi-crypto/` (package `cx15m`, port 8792) is the commodities board rebuilt for Kalshi's nine 15-minute crypto

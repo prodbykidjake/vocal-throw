@@ -55,6 +55,10 @@ class BoardCfg:
     muted: list = field(default_factory=list)  # markets whose calls do not notify (also switchable on each card)
     edge_gap: float = 0.08  # EDGE: buy only when the model's chance for its side beats that side's ask by this much ...
     edge_min_p: float = 0.75  # ... and is at least this (checked at each whole minute 3:00-13:00; see cm15m/edge.py)
+    # v1.9: watch = the EDGE box keeps a live record but sends no buy alerts and says it is only being tested (the
+    # default: since late October it about broke even live and lost on the later days of history, see cm15m/edge.py)
+    # | on = the buy signal it was until v1.8 | off = hidden
+    edge: str = "watch"
     call_mode: str = "standard"  # settlement-call strictness: standard | strict | very_strict (the page's switch wins)
 
 

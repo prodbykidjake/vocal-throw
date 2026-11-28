@@ -263,8 +263,11 @@ class Board:
         tr = self.edges.get(d.spec.key)
         if tr is None:
             tr = self.edges[d.spec.key] = EdgeTracker(d.spec.key, self.edge_store, self.cfg.board.edge_gap, self.cfg.board.edge_min_p)
+        if self.edge_mode() == "off":
+            d.state["edge"] = {"off": True}
+            return
         sig = tr.step(now, d.state)
-        if sig and not self.is_muted(d.spec.key):
+        if sig and self.edge_mode() == "on" and not self.is_muted(d.spec.key):
             ask_c = round(sig["ask"] * 100)
             big = ""
             if sig.get("tier") == "big":  # v1.6: say how big-gap signals have done on this board so far
@@ -279,6 +282,11 @@ class Board:
             if store is not None:
                 tr.settle_from(store.window, now)
         d.state["edge"] = tr.state()
+
+    def edge_mode(self) -> str:
+        """on | watch | off ([board] edge): v1.9 watches EDGE (a live record, no buy alerts) by default."""
+        mode = str(self.cfg.board.edge or "watch").strip().lower()
+        return mode if mode in ("on", "watch", "off") else "watch"
 
     def _pullout_step(self, d, now: float, settle: bool):
         tr = self.pullouts.get(d.spec.key)
@@ -359,7 +367,7 @@ class Board:
                 "markets": markets, "record": total, "lines": lines, "edge": self.edge_store.record(recent=0),
                 "pullout": self.pullout_store.record(recent=0), "record_rules": rules_total, "modes": modes_total,
                 "mode": self.mode, "mode_labels": tuning.MODE_LABELS, "modes_on": tuning.enabled(self.cfg.tuning),
-                "early_left_s": self.early_left_s(), "today": self._today,
+                "early_left_s": self.early_left_s(), "today": self._today, "edge_mode": self.edge_mode(),
                 "requests": None if self.sim is not None else (getattr(self.client, "requests", 0) or 0)
                 + sum(d.requests for d in self.desks if isinstance(d, EngineDesk)),
                 "throttled": self.limiter.throttled}

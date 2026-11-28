@@ -334,3 +334,12 @@ def test_the_demo_scales_the_early_line_with_its_short_windows(tmp_path):
     cfg = Config()
     cfg.storage.data_dir = str(tmp_path)
     assert Board(cfg, sim={"window_s": 120}).early_left_s() == 52.0  # 6:30 of 15:00 = 52 s of a 2-minute window
+
+
+def test_v19_natural_gas_and_brent_rules():
+    assert tuning.for_market("natgas", mode="strict").call_prob == 0.91
+    assert tuning.for_market("natgas", mode="very_strict").call_prob == 0.96
+    assert tuning.for_market("natgas").blend_market == 0.65  # still reads its blend with Kalshi
+    brent = tuning.for_market("brent")
+    assert (brent.call_prob, brent.study_s) == (0.87, 180.0)
+    assert tuning.for_market("brent", mode="strict").call_prob == 0.93 and tuning.for_market("brent", mode="very_strict").call_prob == 0.98

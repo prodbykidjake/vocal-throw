@@ -22,6 +22,22 @@ records with the WTI, natural gas or gold coaches, and they keep running as they
 
 It is a coach, not a bot: it never places orders and needs no Kalshi API key.
 
+## v1.9: check-up (28 Nov)
+
+Jake's board since 13 Nov (all three modes on the same windows): Standard 90.1% won (1,297 calls), Strict 94.0%,
+Very strict 97.1%. Sixty days of Kalshi history (28 Sep - 27 Nov) were replayed through each market's own model, and
+fresh rules were chosen on the first 60% of days and scored on the last 40%:
+- **Natural gas:** Strict now calls at 91% (was 89.2%): 93.8% won on the later days instead of 92.9%. Very strict
+  at 96% (was 93.9%): 97.6% instead of 95.8%. Slightly fewer calls.
+- **Brent** has its own rules (it had the defaults): Standard 87% after a 3:00 study (89.2% won instead of 88.2%),
+  Very strict 98% (96.4% instead of 95.4%).
+- **Every other market's rules held up**; none of the fresh choices beat them. WTI ran a little under its targets
+  and nothing fixed it: Very strict suits it.
+- **EDGE is now a test only** (no buy alerts; the box and record stay): since late October it about broke even
+  live (+0.3¢ a signal over 233) and lost about 2¢ a signal on the history's later days. `[board] edge = "on"`
+  brings the buy signal back.
+- **PULL OUT** stays at 30%: no other level did clearly better.
+
 ## v1.8.2: back to the original look
 
 The v1.8 restyle is retired: the board is back to the page from v1.7.1 (the calls, EDGE, PULL OUT and records were
@@ -293,7 +309,7 @@ phone out and get a new link.
 ## Setup (macOS, next to the other coaches)
 
 ```bash
-unzip -o ~/Downloads/kalshi-commodities-v1.8.2.zip -d ~
+unzip -o ~/Downloads/kalshi-commodities-v1.9.zip -d ~
 cd ~/kalshi-commodities
 source ~/.venv/bin/activate
 python -m cm15m probe     # first time: lists the 15-minute series and each live target (paste it to Claude)
