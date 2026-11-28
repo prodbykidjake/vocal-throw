@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commodities · 15 min</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap">
+<link rel="stylesheet" href="/ui/vendor/uPlot.min.css?v={{VERSION}}">
+<link rel="stylesheet" href="/ui/board.css?v={{VERSION}}">
+</head>
+<body>
+<div class="glow g1"></div><div class="glow g2"></div>
+<div id="po-banner" class="po-banner hidden" role="alert"></div>
+
+<header class="top">
+  <div class="brand">
+    <div class="logo">◆</div>
+    <div>
+      <div class="title">Commodities <span class="grad">15 min</span></div>
+      <div class="subtitle">a settlement call on every market · locked once made · scored when Kalshi settles</div>
+    </div>
+  </div>
+  <div class="hero-stats">
+    <div class="stat"><div class="stat-k">call record</div><div class="stat-v mono" id="total-record">0–0</div></div>
+    <div class="stat"><div class="stat-k">win rate</div><div class="stat-v mono" id="total-rate">--</div></div>
+    <div class="stat exp-stat"><div class="stat-k">Kalshi expected</div><div class="stat-v mono" id="total-exp">--</div></div>
+    <div class="stat rules-stat"><div class="stat-k" id="rules-label">Standard mode</div><div class="stat-v mono" id="rules-record">--</div><div class="stat-n" id="shadow-note"></div></div>
+    <div class="stat po-stat"><div class="stat-k">PULL OUT right</div><div class="stat-v mono" id="po-record">--</div></div>
+    <div class="stat edge-stat"><div class="stat-k">EDGE record</div><div class="stat-v mono" id="edge-record">0–0</div></div>
+    <div class="stat edge-stat"><div class="stat-k">EDGE profit</div><div class="stat-v mono" id="edge-pnl">--</div><div class="stat-n" id="edge-note"></div></div>
+    <div class="stat clock-stat"><div class="stat-k">window</div><div class="stat-v mono" id="clock">--:--</div></div>
+  </div>
+</header>
+
+<div class="modes" id="modes" aria-label="settlement-call strictness"></div>
+<nav class="lines" id="lines"></nav>
+
+<main>
+  <section id="cards" class="cards"></section>
+  <footer id="board-foot" class="foot"></footer>
+</main>
+
+<aside id="detail" class="drawer hidden" aria-modal="true" role="dialog">
+  <div class="drawer-panel">
+    <div class="drawer-head">
+      <div class="brand"><span id="d-badge" class="chip-badge">--</span>
+        <div><div class="drawer-title" id="d-title">--</div><div class="subtitle" id="d-sub"></div></div></div>
+      <button type="button" id="d-close" class="icon-btn" aria-label="Close">✕</button>
+    </div>
+    <div class="panel"><div class="panel-k">price vs target <span id="d-chart-note"></span></div><div id="d-chart" class="chart"></div></div>
+    <div class="panel"><div class="panel-k">what the model sees</div><div id="d-model" class="panel-text"></div><div id="d-vol" class="panel-text dim"></div></div>
+    <div class="panel"><div class="panel-k">call history</div>
+      <table class="table" id="d-calls"><thead><tr><th>window</th><th>call</th><th>model</th><th>Kalshi</th><th>left</th><th>kind</th><th>result</th></tr></thead><tbody></tbody></table></div>
+    <div class="panel"><div class="panel-k">stats</div><div id="d-stats" class="panel-text"></div></div>
+    <div class="panel"><div class="panel-k">log</div><div id="d-log" class="log"></div></div>
+  </div>
+</aside>
+
+<script src="/ui/vendor/uPlot.iife.min.js?v={{VERSION}}"></script>
+<script src="/ui/board.js?v={{VERSION}}"></script>
+</body>
+</html>

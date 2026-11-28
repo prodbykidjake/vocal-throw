@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FX · 15 min</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap">
+<link rel="stylesheet" href="/ui/vendor/uPlot.min.css?v={{VERSION}}">
+<link rel="stylesheet" href="/ui/board.css?v={{VERSION}}">
+</head>
+<body>
+<div class="page">
+<header class="top">
+  <div class="brand">
+    <div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M17 6.5A7 7 0 1 0 17 17.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M14.5 9A3.6 3.6 0 1 0 14.5 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".55"/></svg></div>
+    <div class="title">FX <span class="light">15 min</span></div>
+  </div>
+  <div id="alert" class="alert hidden" role="alert"></div>
+  <div class="top-right">
+    <span class="live-pill" id="live-pill"><i></i>LIVE · KALSHI</span>
+    <div class="clock"><span class="clock-k">next<br>settlement</span><span class="clock-v mono" id="clock">--:--</span></div>
+  </div>
+</header>
+
+<section class="tiles">
+  <div class="tile"><div class="tile-k">win rate</div><div class="tile-v mono" id="total-rate">--</div><div class="tile-n mono">Kalshi expected <span id="total-exp">--</span></div></div>
+  <div class="tile"><div class="tile-k">call record</div><div class="tile-v mono" id="total-record">0 – 0</div><div class="tile-n mono"><span id="rules-label">Standard mode</span> <span id="rules-record">--</span> <span id="shadow-note" class="hidden"></span></div></div>
+  <div class="tile gold"><div class="tile-k">edge profit</div><div class="tile-v mono" id="edge-pnl">--</div><div class="tile-n mono"><span id="edge-note"></span> · <span id="edge-record">0–0</span></div></div>
+  <div class="tile"><div class="tile-k">pull out</div><div class="tile-v mono" id="po-record">--</div><div class="tile-n mono">right when it flashed</div></div>
+  <div class="tile"><div class="tile-k">today</div><div class="tile-v mono" id="today-record">--</div><div class="tile-n mono">calls settled since midnight ET</div></div>
+</section>
+
+<section class="controls">
+  <div class="modes" id="modes" aria-label="settlement-call strictness"></div>
+  <nav class="lines" id="lines"></nav>
+</section>
+<div class="mode-note" id="mode-note"></div>
+
+<div class="section-head">
+  <div><div class="eyebrow">live markets</div><h2>Decision windows</h2></div>
+  <div class="updating"><i></i><span id="updating">--</span></div>
+</div>
+
+<main>
+  <section id="cards" class="cards"></section>
+  <footer id="board-foot" class="foot"></footer>
+</main>
+</div>
+
+<aside id="detail" class="drawer hidden" aria-modal="true" role="dialog">
+  <div class="drawer-panel">
+    <div class="drawer-head">
+      <div class="brand"><span id="d-badge" class="chip-badge">--</span>
+        <div><div class="drawer-title" id="d-title">--</div><div class="subtitle" id="d-sub"></div></div></div>
+      <button type="button" id="d-close" class="icon-btn" aria-label="Close">✕</button>
+    </div>
+    <div class="panel"><div class="panel-k">price vs target <span id="d-chart-note"></span></div><div id="d-chart" class="chart"></div></div>
+    <div class="panel"><div class="panel-k">what the model sees</div><div id="d-model" class="panel-text"></div><div id="d-vol" class="panel-text dim"></div></div>
+    <div class="panel"><div class="panel-k">call history</div>
+      <table class="table" id="d-calls"><thead><tr><th>window</th><th>call</th><th>model</th><th>Kalshi</th><th>left</th><th>kind</th><th>result</th></tr></thead><tbody></tbody></table></div>
+    <div class="panel"><div class="panel-k">stats</div><div id="d-stats" class="panel-text"></div></div>
+    <div class="panel"><div class="panel-k">log</div><div id="d-log" class="log"></div></div>
+  </div>
+</aside>
+
+<script src="/ui/vendor/uPlot.iife.min.js?v={{VERSION}}"></script>
+<script src="/ui/board.js?v={{VERSION}}"></script>
+</body>
+</html>

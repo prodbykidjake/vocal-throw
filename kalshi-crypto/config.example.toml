@@ -1,0 +1,64 @@
+# Copy to config.toml (git-ignored). Every key is optional; these are the defaults.
+
+[kalshi]
+max_requests_per_s = 10.0       # shared by every market on the board (Kalshi allows ~20; the commodities board uses ~8)
+poll_s = 2.0                    # each market's order book, staggered across markets
+average_poll_s = 5.0            # Kalshi's 60-second average, which the exchanges' price is matched to
+discovery_s = 10.0              # how often each market re-reads its window list
+category = "Crypto"             # Kalshi category searched for 15-minute series
+# Optional, for the EXACT index the markets settle on (CF Benchmarks BRTI, ETHUSD_RTI, ...): a Kalshi API key.
+# Make one on kalshi.com (Account & security -> API Keys -> Create Key), save the private key file it gives you in
+# your home folder, and put its ID and the file's path here. Never paste the key into a chat or commit it; the board
+# only reads the index with it and never places orders. Leave both empty to use the exchanges' price.
+# api_key_id = "your-key-id"
+# private_key_path = "~/kalshi-key.pem"
+
+[feed]
+source = "auto"                 # auto = the exact index when the key is set, else "calibrated": the exchanges' price
+                                # matched second by second to Kalshi's own settlement average (its chart series)
+                                # | calibrated | kalshi-index | exchanges (the exchanges alone)
+exchanges = ["coinbase", "kraken", "bitstamp"]   # the index's own exchanges: their median best bid/ask midpoint
+quote_max_age_s = 20.0          # an exchange quote older than this leaves the median
+stale_after_s = 8.0             # the live price older than this: no new calls
+
+[board]
+markets = []                    # empty = every 15-minute crypto market; or e.g. ["btc", "eth", "sol"]
+muted = []                      # markets whose calls never notify (each card also has a 🔔 toggle)
+edge_gap = 0.08                 # EDGE: buy only when the model's chance beats that side's ask by this much ...
+edge_min_p = 0.75               # ... and is at least this (checked at each whole minute 3:00-13:00 of a window)
+call_mode = "standard"          # settlement-call strictness to start with: standard | strict | very_strict
+                                # (the switch on the page wins and is remembered in data/board.json)
+# releases to treat as reports for one coin, ET (FOMC and CPI are built in; jobs reports are not):
+# extra_events = { btc = ["2026-11-06 08:30 Jobs report"], eth = ["2026-11-06 08:30 Jobs report"] }
+
+[trading]
+call_join_min_s = 300           # no call for a window the board first saw with less than this left
+call_min_left_s = 60            # and never a call with less than this left
+event_entries = "block"         # no new calls in a window holding a scheduled report or Kalshi's maintenance | "allow"
+min_warmup_minutes = 30         # (the exchanges' one-minute candles usually cover this at start-up)
+settle_avg_s = 60               # Kalshi settles on the average of the index's last 60 one-second prints
+# the bar, the hold (10 s), the study and the 2:00 lean call are set per coin by [tuning] below
+
+# Each coin's call bar and study period (cx15m/tuning.py). Uncomment to change one coin, or set enabled = false to
+# go back to the original rules (72% bar, 3:00 study, a lean call at 2:00 left).
+# [tuning]
+# enabled = true
+# [tuning.btc]
+# call_prob = 0.85              # call when one side holds this for call_hold_s ...
+# study_s = 300                 # ... after studying the window this long
+# late_call = false             # true = the old lean call at 2:00 left when it never gets sure enough
+# hold_s = 10                   # seconds in a row one side must stay over the bar
+# blend_market = 0.0            # > 0 = the call reads a blend with Kalshi's mid (Kalshi's weight)
+
+[server]
+host = "127.0.0.1"
+port = 8792                     # WTI 8787, natural gas 8788, gold 8789, commodities 8790, WTI junior 8791
+open_browser = true
+phone = false                   # true = also reachable from your phone with a private link (same as `serve --phone`)
+
+[notify]
+desktop = true
+sound = true
+
+[storage]
+data_dir = "data"               # one database per market: data/btc.db, data/eth.db, ...
